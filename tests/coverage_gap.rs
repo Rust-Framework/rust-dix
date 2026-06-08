@@ -1,6 +1,6 @@
 mod common;
 
-use rdi::*;
+use lrdi::*;
 use std::sync::Arc;
 
 #[test]
@@ -191,7 +191,8 @@ fn get_keyed_panics_on_missing() {
 #[test]
 fn rdi_register_named_and_remove_via_provider() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
-    let svc: Arc<dyn std::any::Any + Send + Sync> = Arc::new(Arc::new(common::MyService { value: 5 }));
+    let svc: Arc<dyn std::any::Any + Send + Sync> =
+        Arc::new(Arc::new(common::MyService { value: 5 }));
     p.rdi_register_named("test", svc.clone());
     assert!(p.get_named_any("test").is_some());
     p.rdi_remove_named("test");
@@ -220,9 +221,9 @@ fn scope_get_keyed_panics_on_missing() {
 
 #[test]
 fn module_singleton_with_trait() {
-    #[rdi::module]
+    #[lrdi::module]
     mod svc {
-        rdi::inject!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
+        lrdi::inject!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
     }
     let p = svc::__rdi_build_provider_svc().unwrap();
     let plugin: Arc<dyn common::IPlugin> = p.get::<dyn common::IPlugin>();
@@ -231,9 +232,9 @@ fn module_singleton_with_trait() {
 
 #[test]
 fn module_scoped_lifetime() {
-    #[rdi::module]
+    #[lrdi::module]
     mod scoped_mod {
-        rdi::inject!(scoped: super::common::MyService);
+        lrdi::inject!(scoped: super::common::MyService);
     }
     let p = Arc::new(scoped_mod::__rdi_build_provider_scoped_mod().unwrap());
     let scope = p.scope();
@@ -242,9 +243,9 @@ fn module_scoped_lifetime() {
 
 #[test]
 fn module_transient_lifetime() {
-    #[rdi::module]
+    #[lrdi::module]
     mod trans_mod {
-        rdi::inject!(transient: super::common::MyService);
+        lrdi::inject!(transient: super::common::MyService);
     }
     let p = trans_mod::__rdi_build_provider_trans_mod().unwrap();
     let _svc: Arc<common::MyService> = p.get();
@@ -252,10 +253,10 @@ fn module_transient_lifetime() {
 
 #[test]
 fn module_multiple_registrations() {
-    #[rdi::module]
+    #[lrdi::module]
     mod multi {
-        rdi::inject!(singleton: super::common::Logger);
-        rdi::inject!(singleton: super::common::MyService);
+        lrdi::inject!(singleton: super::common::Logger);
+        lrdi::inject!(singleton: super::common::MyService);
     }
     let p = multi::__rdi_build_provider_multi().unwrap();
     let _log: Arc<common::Logger> = p.get();
@@ -264,9 +265,9 @@ fn module_multiple_registrations() {
 
 #[test]
 fn module_keyed_singleton() {
-    #[rdi::module]
+    #[lrdi::module]
     mod keyed_mod {
-        rdi::inject!(keyed "x": singleton: super::common::MyService);
+        lrdi::inject!(keyed "x": singleton: super::common::MyService);
     }
     let p = keyed_mod::__rdi_build_provider_keyed_mod().unwrap();
     let svc: Arc<common::MyService> = p.get_keyed("x");

@@ -1,13 +1,17 @@
 mod common;
 
-use rdi::*;
+use lrdi::*;
 use std::sync::Arc;
 
 #[test]
 fn wrapper_get_keyed_fallback_to_root() {
     let root = Arc::new(
         ServiceCollection::new()
-            .keyed("a", |_| Arc::new(common::Logger { prefix: "root".into() }))
+            .keyed("a", |_| {
+                Arc::new(common::Logger {
+                    prefix: "root".into(),
+                })
+            })
             .build()
             .unwrap(),
     );
@@ -21,8 +25,12 @@ fn wrapper_get_keyed_fallback_to_root() {
 fn wrapper_get_named_child_first() {
     let root = Arc::new(ServiceCollection::new().build().unwrap());
     let child = Arc::new(ServiceCollection::new().build().unwrap());
-    let root_svc = Arc::new(common::Logger { prefix: "root".into() });
-    let child_svc = Arc::new(common::Logger { prefix: "child".into() });
+    let root_svc = Arc::new(common::Logger {
+        prefix: "root".into(),
+    });
+    let child_svc = Arc::new(common::Logger {
+        prefix: "child".into(),
+    });
     root.register_named("log", root_svc);
     child.register_named("log", child_svc.clone());
     let w = ServiceProviderWrapper::new(child.clone(), root.clone());

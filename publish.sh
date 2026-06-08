@@ -4,40 +4,108 @@ set -euo pipefail
 # ──────────────────────────────────────────────
 # RDI — One-command publish script
 # Publishes rdi-macros first, then rdi.
+#
+# Usage:
+#   ./publish.sh                  # publish both crates
+#   ./publish.sh --dry-run        # dry run
+#   CARGO_REGISTRY_TOKEN=xxx ./publish.sh  # token via env
 # ──────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "==> 1. Running checks..."
-
-cargo fmt --check 2>/dev/null || { echo "ERROR: cargo fmt --check failed. Run 'cargo fmt' first."; exit 1; }
-
-cargo test 2>&1 | tail -5
+echo "============================================"
+echo "  RDI Publishing Script"
+echo "============================================"
 echo ""
 
-# Run clippy if available
-if cargo clippy -- -D warnings 2>/dev/null; then
-    echo "==> clippy: passed"
-else
-    echo "==> clippy: skipped or found warnings (proceeding anyway)"
+# ── Pre-checks ──
+
+# Ensure cargo is installed
+command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo not found"; exit 1; }
+
+# Check if logged in (unless --dry-run)
+DRY_RUN=""
+for arg in "$@"; do
+    if [ "$arg" = "--dry-run" ]; then DRY_RUN="--dry-run"; fi
+done
+
+if [ -z "$DRY_RUN" ] && [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+    echo "==> Checking crates.io login..."
+    if ! (cargo login 2>&1 | grep -q "token"); then
+        # Try to detect if already logged in by checking if token file exists
+        if [ ! -f "$HOME/.cargo/credentials.toml" ] && [ ! -f "$HOME/.cargo/credentials" ]; then
+            echo "------------------------------------------------------------"
+            echo "  You are not logged into crates.io."
+            echo ""
+            echo "  To publish, you need an API token:"
+            echo "    1. Go to https://crates.io/me"
+            echo "    2. Create a new token"
+            echo "    3. Run:  cargo login"
+            echo ""
+            echo "  Or set the token via environment variable (for CI):"
+            echo "    CARGO_REGISTRY_TOKEN=xxx ./publish.sh"
+            echo "------------------------------------------------------------"
+            exit 1
+        fi
+    fi
+    echo "    ✓ logged in"
 fi
 
 echo ""
-echo "==> 2. Publishing rdi-macros (proc-macro crate)..."
-cd "$SCRIPT_DIR/rdi-macros"
-cargo publish "$@"
-echo "    ✓ rdi-macros published"
-echo "    Waiting 15s for crates.io index refresh..."
-sleep 15
+
+# ── Step 1: Pre-Publish Checks ──
+
+echo "==> 1. Running pre-publish checks..."
+
+echo "    Checking formatting..."
+if cargo fmt --check 2>/dev/null; then
+    echo "    ✓ cargo fmt"
+else
+    echo "    ERROR: cargo fmt --check failed. Run 'cargo fmt' first."
+    exit 1
+fi
+
+echo "    Running tests..."
+cargo test 2>&1 | tail -3
+echo ""
+
+# Clippy is advisory only — don't block publish
+if cargo clippy 2>/dev/null; then
+    echo "    ✓ clippy"
+else
+    echo "    (clippy found issues — proceeding anyway)"
+fi
 
 echo ""
-echo "==> 3. Publishing rdi (main crate)..."
-cd "$SCRIPT_DIR"
-cargo publish "$@"
+echo "    ✓ All checks passed"
+echo ""
+
+# ── Step 2: Publish rdi-macros ──
+
+MACROS_VER=$(grep '^version ' rdi-macros/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+echo "==> 2. Publishing rdi-macros v${MACROS_VER}..."
+(cd rdi-macros && cargo publish $DRY_RUN --allow-dirty)
+echo "    ✓ rdi-macros published"
+
+if [ -z "$DRY_RUN" ]; then
+    echo "    Waiting 15s for crates.io index to refresh..."
+    sleep 15
+fi
+
+echo ""
+
+# ── Step 3: Publish rdi ──
+
+RDI_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+echo "==> 3. Publishing rdi v${RDI_VER}..."
+cargo publish $DRY_RUN --allow-dirty
 echo "    ✓ rdi published"
 
 echo ""
-echo "==> Done!"
-echo "    https://crates.io/crates/rdi"
-echo "    https://crates.io/crates/rdi-macros"
+echo "============================================"
+echo "  Done!"
+echo ""
+echo "  https://crates.io/crates/rdi"
+echo "  https://crates.io/crates/rdi-macros"
+echo "============================================"

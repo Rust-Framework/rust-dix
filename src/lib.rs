@@ -1,4 +1,4 @@
-//! RDI — Rust Dependency Injection Framework
+//! LRDI — Rust Dependency Injection Framework
 //!
 //! A dependency injection container for Rust inspired by
 //! Microsoft.Extensions.DependencyInjection (MEDI).
@@ -6,7 +6,7 @@
 //! # Quick start
 //!
 //! ```rust
-//! use rdi::*;
+//! use lrdi::*;
 //! use std::sync::Arc;
 //!
 //! struct Logger(String);
@@ -26,7 +26,7 @@
 //! - **Three lifetimes**: Singleton, Scoped, Transient
 //! - **Keyed services**: multiple instances of the same type, distinguished by key
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
-//! - **Compile-time module scanning**: `#[rdi::module]` collects service registrations
+//! - **Compile-time module scanning**: `#[lrdi::module]` collects service registrations
 //! - **Cross-DLL support**: named service registry for cdylib plugins
 //!
 //! # Crate layout
@@ -45,8 +45,8 @@
 //! # Proc-macros
 //!
 //! - `#[derive(Inject)]` — auto-generates constructor injection code
-//! - `#[rdi::module]` — compile-time module scanning
-//! - `rdi::inject!(...)` — declare services inside `#[rdi::module]`
+//! - `#[lrdi::module]` — compile-time module scanning
+//! - `lrdi::inject!(...)` — declare services inside `#[lrdi::module]`
 
 pub mod bridge;
 pub mod collection;
@@ -115,4 +115,4 @@ pub use error::RdiError;
 
 // ── Proc-macros ──
 
-pub use rdi_macros::{inject, module, Inject};
+pub use lrdi_macros::{inject, module, Inject};

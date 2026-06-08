@@ -1,7 +1,7 @@
 //! Architecture pattern integration tests.
 //! Each pattern is self-contained with its own local types.
 
-use rdi::*;
+use lrdi::*;
 use std::sync::Arc;
 
 // ── Strategy Pattern ──

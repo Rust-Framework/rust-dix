@@ -1,7 +1,7 @@
 mod common;
 
-use rdi::*;
-use rdi_macros::Inject;
+use lrdi::*;
+use lrdi_macros::Inject;
 use std::sync::Arc;
 
 #[derive(Inject)]
@@ -18,8 +18,16 @@ struct FullFeatured {
 #[test]
 fn inject_full_featured() {
     let p = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "main".into() }))
-        .keyed("special", |_| Arc::new(common::Logger { prefix: "special".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "main".into(),
+            })
+        })
+        .keyed("special", |_| {
+            Arc::new(common::Logger {
+                prefix: "special".into(),
+            })
+        })
         .build()
         .unwrap();
     let obj = __rdi_construct_FullFeatured(&p);

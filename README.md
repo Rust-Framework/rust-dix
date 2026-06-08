@@ -1,15 +1,15 @@
-# RDI — Rust Dependency Injection Framework
+# LRDI — Rust Dependency Injection Framework
 
-RDI 是一个面向接口的 Rust 依赖注入框架，受到 **Microsoft.Extensions.DependencyInjection** 启发，支持三种生命周期、键控服务、构造器注入和编译期模块扫描。
+LRDI 是一个面向接口的 Rust 依赖注入框架，受到 **Microsoft.Extensions.DependencyInjection** 启发，支持三种生命周期、键控服务、构造器注入和编译期模块扫描。
 
 - `IServiceResolver` trait 统一了 `ServiceProvider`、`Scope`、`ServiceProviderWrapper` 的解析接口
 - `#[derive(Inject)]` 自动生成构造器注入代码
-- `#[rdi::module]` 编译期收集模块内的服务注册声明
+- `#[lrdi::module]` 编译期收集模块内的服务注册声明
 
 ## 快速开始
 
 ```rust
-use rdi::*;
+use lrdi::*;
 use std::sync::Arc;
 
 struct Logger { prefix: String }
@@ -87,8 +87,8 @@ assert!(Arc::ptr_eq(&a, &b));
 通过派生宏自动生成构造函数，避免手动拼接依赖：
 
 ```rust
-use rdi::*;
-use rdi_macros::Inject;
+use lrdi::*;
+use lrdi_macros::Inject;
 
 #[derive(Inject)]
 struct MyWorker {
@@ -112,27 +112,27 @@ struct MyWorker {
 | `#[inject(key = "...")]` | 键控注入 |
 | `#[inject(provider)]` | 注入 `Arc<dyn IServiceResolver>` |
 
-生成的构造函数签名为 `__rdi_construct_MyWorker(resolver: &dyn IServiceResolver) -> Arc<MyWorker>`，可直接与 `ServiceProvider` 或 `Scope` 配合使用。
+生成的构造函数签名为 `__lrdi_construct_MyWorker(resolver: &dyn IServiceResolver) -> Arc<MyWorker>`，可直接与 `ServiceProvider` 或 `Scope` 配合使用。
 
-## 编译期模块扫描 — #[rdi::module]
+## 编译期模块扫描 — #[lrdi::module]
 
-`#[rdi::module]` 属性宏在编译期收集模块内的 `rdi::inject!()` 声明，自动生成一个 `__rdi_build_provider_{模块名}()` 函数，避免手工拼接 `ServiceCollection` 调用链。
+`#[lrdi::module]` 属性宏在编译期收集模块内的 `lrdi::inject!()` 声明，自动生成一个 `__lrdi_build_provider_{模块名}()` 函数，避免手工拼接 `ServiceCollection` 调用链。
 
 ```rust
-#[rdi::module]
+#[lrdi::module]
 mod services {
-    rdi::inject!(singleton: MyService);
-    rdi::inject!(singleton: dyn IPlugin => MyPlugin);
-    rdi::inject!(keyed "verbose": singleton: Logger);
+    lrdi::inject!(singleton: MyService);
+    lrdi::inject!(singleton: dyn IPlugin => MyPlugin);
+    lrdi::inject!(keyed "verbose": singleton: Logger);
 }
 
-let provider = services::__rdi_build_provider_services().unwrap();
+let provider = services::__lrdi_build_provider_services().unwrap();
 ```
 
 支持 `trait => impl` 语法将 trait object 映射到具体实现：
 
 ```rust
-rdi::inject!(singleton: dyn IPlugin => MyPlugin);
+lrdi::inject!(singleton: dyn IPlugin => MyPlugin);
 ```
 
 ## 多容器桥接 — ServiceProviderWrapper
@@ -160,10 +160,10 @@ let bus = provider.get_named::<EventBus>("EventBus");
 
 ## 插件 / 外部系统集成 — IServiceLocator / ServiceLocatorBridge
 
-`IServiceLocator` trait 为外部系统提供了统一的 DI 访问接口。`ServiceLocatorBridge` 将 RDI 的 provider 适配为 `Arc<dyn IServiceLocator>`，方便传递给不直接依赖 RDI 的模块。
+`IServiceLocator` trait 为外部系统提供了统一的 DI 访问接口。`ServiceLocatorBridge` 将 LRDI 的 provider 适配为 `Arc<dyn IServiceLocator>`，方便传递给不直接依赖 LRDI 的模块。
 
 ```rust
-use rdi::*;
+use lrdi::*;
 
 let bridge = Arc::new(ServiceLocatorBridge::new(
     Arc::new(RdiProvider::Root(provider)),

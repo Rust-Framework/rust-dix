@@ -1,8 +1,8 @@
 mod common;
 
-use rdi::*;
-use std::sync::Arc;
+use lrdi::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[test]
 fn collection_singleton_value() {
@@ -57,7 +57,9 @@ fn collection_keyed_scoped() {
 fn collection_add_with_explicit_lifetime() {
     let p = ServiceCollection::new()
         .add(ServiceLifetime::Singleton, |_| {
-            Arc::new(common::Logger { prefix: "explicit".into() })
+            Arc::new(common::Logger {
+                prefix: "explicit".into(),
+            })
         })
         .build()
         .unwrap();
@@ -74,10 +76,16 @@ fn collection_default_is_empty() {
 #[test]
 fn composite_resolution() {
     let p = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "comp".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "comp".into(),
+            })
+        })
         .transient(|_| {
             Arc::new(common::CompositeService {
-                logger: Arc::new(common::Logger { prefix: "comp".into() }),
+                logger: Arc::new(common::Logger {
+                    prefix: "comp".into(),
+                }),
             })
         })
         .build()

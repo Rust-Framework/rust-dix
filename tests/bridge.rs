@@ -1,6 +1,6 @@
 mod common;
 
-use rdi::*;
+use lrdi::*;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -49,10 +49,7 @@ fn rdiprovider_register_and_remove_named() {
     rp.register_named_any("test", svc);
     let retrieved = rp.get_named_any("test");
     assert!(retrieved.is_some());
-    let down: Arc<common::MyService> = retrieved
-        .unwrap()
-        .downcast::<common::MyService>()
-        .unwrap();
+    let down: Arc<common::MyService> = retrieved.unwrap().downcast::<common::MyService>().unwrap();
     assert_eq!(down.value, 3);
     rp.remove_named("test");
     assert!(rp.get_named_any("test").is_none());

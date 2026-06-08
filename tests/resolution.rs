@@ -1,6 +1,6 @@
 mod common;
 
-use rdi::*;
+use lrdi::*;
 use std::sync::Arc;
 
 #[test]
@@ -113,7 +113,11 @@ fn provider_has_correct_keyed_count() {
 fn multiple_singletons_independent() {
     let p = ServiceCollection::new()
         .singleton(|_| Arc::new(common::MyService { value: 10 }))
-        .singleton(|_| Arc::new(common::Logger { prefix: "log".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "log".into(),
+            })
+        })
         .build()
         .unwrap();
     assert_eq!(p.get::<common::MyService>().value, 10);
@@ -122,7 +126,7 @@ fn multiple_singletons_independent() {
 
 #[test]
 fn trait_object_multiple_impls() {
-    use common::{IPlugin, TestPlugin, AltPlugin};
+    use common::{AltPlugin, IPlugin, TestPlugin};
     let p = ServiceCollection::new()
         .singleton::<dyn IPlugin>(|_| Arc::new(TestPlugin))
         .keyed::<dyn IPlugin>("alt", |_| Arc::new(AltPlugin))
