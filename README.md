@@ -1,35 +1,38 @@
-<!-- markdownlint-disable MD033 MD041 -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rf2026/RDI/main/assets/logo-dark.svg">
+    <img alt="LRDI" src="https://raw.githubusercontent.com/rf2026/RDI/main/assets/logo-light.svg" width="400">
+  </picture>
+</p>
 
-<div align="center">
+<h1 align="center">LRDI · Rust 依赖注入框架</h1>
 
-# LRDI
+<p align="center">
+  <a href="https://crates.io/crates/lrdi"><img alt="Crates.io" src="https://img.shields.io/crates/v/lrdi.svg?style=flat-square"></a>
+  <a href="https://docs.rs/lrdi"><img alt="Docs" src="https://img.shields.io/docsrs/lrdi?style=flat-square"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
+</p>
 
-**Rust Dependency Injection Framework** · **Rust 依赖注入框架**
-
-[![Crates.io][crates-badge]][crates-url]
-[![MIT License][license-badge]][license-url]
-
-[Documentation][docs-url] · [Crates.io][crates-url] · [Repository][repo-url]
-
-</div>
+<p align="center">
+  <a href="#english">English</a> ·
+  <a href="#chinese">中文</a>
+</p>
 
 ---
 
-**LRDI** is a Rust dependency injection framework inspired by
-**Microsoft.Extensions.DependencyInjection (MEDI)**.
+<h2 id="english">English</h2>
 
-**LRDI** 是一个受 **Microsoft.Extensions.DependencyInjection** 启发的 Rust 依赖注入框架。
+**LRDI** is a Cargo workspace delivering a dependency injection framework for
+Rust, inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
-This repository is a Cargo workspace that contains:
+### What's in this workspace
 
-此仓库是一个 Cargo workspace，包含以下 crate：
+| Crate | What it does | Who needs it |
+|-------|-------------|--------------|
+| [`lrdi`](./crates/lrdi/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
+| [`lrdi-macros`](./crates/lrdi-macros/) | Procedural macros — `#[derive(Inject)]`, `#[lrdi::module]` | Anyone using `lrdi` who wants compile-time code generation instead of manual wiring |
 
-| Crate | Description | 说明 |
-|-------|-------------|------|
-| [`lrdi`](crates/lrdi) | Main library — service collection, provider, scopes, resolver | 主库——服务集合、容器、作用域、解析器 |
-| [`lrdi-macros`](crates/lrdi-macros) | Procedural macros — `#[derive(Inject)]`, `#[lrdi::module]`, `lrdi::inject!` | 过程宏——构造器注入、编译期模块扫描 |
-
-## Quick Start · 快速开始
+### Quick Start
 
 ```rust
 use lrdi::*;
@@ -52,42 +55,69 @@ let logger: Arc<Logger> = provider.get();
 lrdi = "0.1"
 ```
 
----
+### When should you use LRDI?
 
-## Crate Layout · 项目结构
-
-```
-lrdi/
-├── Cargo.toml                         # Workspace manifest
-├── crates/
-│   ├── lrdi/                          # Main crate
-│   │   ├── Cargo.toml
-│   │   ├── README.md
-│   │   ├── src/
-│   │   └── tests/
-│   └── lrdi-macros/                   # Proc-macro crate
-│       ├── Cargo.toml
-│       └── src/
-├── publish.sh
-├── rustfmt.toml
-└── README.md                          # This file
-```
-
-For detailed documentation, see the [crates/lrdi/README.md](crates/lrdi/README.md).
-
-详细文档请参阅 [crates/lrdi/README.md](crates/lrdi/README.md)。
+- **You are building a medium-to-large Rust application** where manually
+  constructing dependencies becomes tedious and error-prone.
+- **You need testability** — swap real implementations with mocks by changing
+  one registration line.
+- **You are designing a plugin system** — named services and layered containers
+  let host and plugin each have their own DI container.
+- **You come from the .NET ecosystem** and want the same
+  `IServiceCollection` / `IServiceProvider` patterns in Rust.
 
 ---
 
-## License · 许可
+<h2 id="chinese">中文</h2>
 
-Licensed under the MIT License.
+**LRDI** 是一个 Cargo 工作空间（workspace），提供一个受
+Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框架。
 
-MIT 协议授权。
+### 工作空间包含的 crate
 
-[crates-badge]: https://img.shields.io/crates/v/lrdi.svg
-[crates-url]: https://crates.io/crates/lrdi
-[license-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[license-url]: https://opensource.org/licenses/MIT
-[docs-url]: https://docs.rs/lrdi
-[repo-url]: https://gitcode.com/rf2026/RDI
+| Crate | 功能 | 适用人群 |
+|-------|------|---------|
+| [`lrdi`](./crates/lrdi/) | 核心 DI 容器 — 注册、构建、解析、作用域 | 任何希望解耦、可测试、可插拔架构的 Rust 应用 |
+| [`lrdi-macros`](./crates/lrdi-macros/) | 过程宏 — `#[derive(Inject)]`、`#[lrdi::module]` | 使用 `lrdi` 并希望编译期自动生成代码的用户 |
+
+### 快速开始
+
+```toml
+[dependencies]
+lrdi = "0.1"
+```
+
+```rust
+use lrdi::*;
+use std::sync::Arc;
+
+struct Logger { prefix: String }
+struct Worker { logger: Arc<Logger> }
+
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(Logger { prefix: "INFO".into() }))
+    .transient(|p| Arc::new(Worker { logger: p.get() }))
+    .build()
+    .unwrap();
+
+let logger: Arc<Logger> = provider.get();
+```
+
+### 什么时候用 LRDI？
+
+- **你在构建中等规模以上的 Rust 应用**，手动拼接依赖链变得繁琐且易出错。
+- **你需要可测试性** — 改一行注册代码就能用 mock 替换真实实现。
+- **你在设计插件系统** — 命名服务和分层容器让宿主和插件各自拥有独立的 DI 容器。
+- **你来自 .NET 生态**，希望在 Rust 中使用同样的 `IServiceCollection` / `IServiceProvider` 模式。
+
+### 目录
+
+- [在哪些场景下灵活应用？](./crates/lrdi/README.md#-在哪些场景下灵活应用)
+- [crates/lrdi — 主库完整文档](./crates/lrdi/README.md)
+- [crates/lrdi-macros — 过程宏文档](./crates/lrdi-macros/README.md)
+
+---
+
+## License
+
+MIT.

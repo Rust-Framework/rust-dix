@@ -1,51 +1,29 @@
-<!-- markdownlint-disable MD033 MD041 -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rf2026/RDI/main/assets/logo-dark.svg">
+    <img alt="LRDI" src="https://raw.githubusercontent.com/rf2026/RDI/main/assets/logo-light.svg" width="400">
+  </picture>
+</p>
 
-<div align="center">
+<h1 align="center">lrdi · Rust 依赖注入容器</h1>
 
-# LRDI
+<p align="center">
+  <a href="https://crates.io/crates/lrdi"><img alt="Crates.io" src="https://img.shields.io/crates/v/lrdi.svg?style=flat-square"></a>
+  <a href="https://docs.rs/lrdi"><img alt="Docs" src="https://img.shields.io/docsrs/lrdi?style=flat-square"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
+</p>
 
-**Rust Dependency Injection Framework** · **Rust 依赖注入框架**
-
-[![Crates.io][crates-badge]][crates-url]
-[![MIT License][license-badge]][license-url]
-
-[Documentation][docs-url] · [Crates.io][crates-url] · [Repository][repo-url]
-
-</div>
-
----
-
-**LRDI** is a Rust dependency injection framework inspired by
-**Microsoft.Extensions.DependencyInjection (MEDI)**. It provides three service
-lifetimes, keyed services, constructor injection via derive macro, compile-time
-module scanning, and cross-DLL / plugin integration.
-
-**LRDI** 是一个受 **Microsoft.Extensions.DependencyInjection** 启发的 Rust
-依赖注入框架，支持三种生命周期、键控服务、派生宏构造器注入、编译期模块扫描以及跨 DLL / 插件集成。
+<p align="center">
+  <a href="#english">English</a> ·
+  <a href="#chinese">中文</a>
+</p>
 
 ---
 
-## Quick Start · 快速开始
+<h2 id="english">English</h2>
 
-```rust
-use lrdi::*;
-use std::sync::Arc;
-
-struct Logger { prefix: String }
-struct Worker { logger: Arc<Logger> }
-
-let provider = ServiceCollection::new()
-    .singleton(|_| Arc::new(Logger { prefix: "INFO".into() }))
-    .transient(|p| Arc::new(Worker { logger: p.get() }))
-    .build()
-    .unwrap();
-
-let logger: Arc<Logger> = provider.get();
-```
-
----
-
-## Installation · 添加依赖
+`lrdi` is the core crate of the LRDI framework — a Rust dependency injection
+container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
@@ -54,62 +32,140 @@ lrdi = "0.1"
 
 ---
 
-## Features · 功能特性
+### When should you use this?
 
-| English | 中文 |
-|---------|------|
-| Three lifetimes (Singleton, Scoped, Transient) | 三种生命周期（Singleton、Scoped、Transient） |
-| Keyed services — multiple instances of the same type | 键控服务——同类型多实例 |
-| `#[derive(Inject)]` — auto-generate constructor injection | `#[derive(Inject)]` 自动生成构造器注入 |
-| `#[lrdi::module]` — compile-time module scanning | `#[lrdi::module]` 编译期模块扫描 |
-| `ServiceProviderWrapper` — child-first layered container | `ServiceProviderWrapper` 子容器优先的分层容器 |
-| Named service registry — cross-DLL / cdylib plugins | 命名服务注册——跨 DLL / cdylib 插件 |
-| `IServiceLocator` / `ServiceLocatorBridge` — external system integration | `IServiceLocator` / `ServiceLocatorBridge` 外部系统集成 |
+**1. You want to decouple service creation from usage**
+
+Instead of `MyService::new(dep1, dep2, dep3)` scattered across your codebase,
+you declare once how services are constructed and let the container wire them
+up automatically.
+
+```rust
+// Without DI: every call site must know how to build everything
+let svc = MyService::new(
+    Arc::new(Logger::new("app")),
+    Arc::new(Cache::new(1024)),
+);
+
+// With DI: declare once, resolve anywhere
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(Logger::new("app")))
+    .singleton(|_| Arc::new(Cache::new(1024)))
+    .transient(|p| Arc::new(MyService::new(p.get(), p.get())))
+    .build()
+    .unwrap();
+
+let svc: Arc<MyService> = provider.get();
+```
+
+**2. You need to swap implementations for testing**
+
+Change one registration line — no need to touch the code that consumes the
+service.
+
+```rust
+#[cfg(test)]
+fn test_provider() -> ServiceProvider {
+    ServiceCollection::new()
+        .singleton(|_| Arc::new(MockDatabase::new()))
+        .transient(|p| Arc::new(MyApi::new(p.get())))
+        .build()
+        .unwrap()
+}
+```
+
+**3. You have objects with different lifetimes**
+
+Some services should be shared globally (database pool), some per-request
+(HTTP context), some created fresh each time (value objects). LRDI gives you
+three lifetimes to model this naturally.
+
+| Lifetime | Behavior | Typical use |
+|----------|----------|-------------|
+| **Singleton** | Created once, shared everywhere | Database pool, config, event bus |
+| **Scoped** | Created once per scope, shared within scope | HTTP request context, unit of work, transaction |
+| **Transient** | Created every time you resolve it | Value objects, DTOs, lightweight stateless services |
+
+```rust
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(Pool::new()))           // one pool for the app
+    .scoped(|_| Arc::new(RequestContext::new()))     // one per request
+    .transient(|_| Arc::new(Query::new()))           // new each time
+    .build()
+    .unwrap();
+```
+
+**4. You want multiple instances of the same type**
+
+Keyed services let you register several implementations of the same trait,
+each distinguished by a string key.
+
+```rust
+let provider = ServiceCollection::new()
+    .keyed::<dyn Strategy>("fast", |_| Arc::new(FastPath))
+    .keyed::<dyn Strategy>("safe", |_| Arc::new(SafePath))
+    .build()
+    .unwrap();
+
+let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
+let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
+```
+
+**5. You are building a plugin / modular system**
+
+- **Layered containers**: child-first, root-fallback resolution for plugin
+  isolation. The plugin sees its own services first; host services are visible
+  as fallback.
+- **Named services**: register services by string name — critical for cdylib
+  plugins where Rust's `TypeId` differs across compilation units.
+- **`IServiceLocator`**: pass a unified DI interface to external modules that
+  don't depend on LRDI directly.
 
 ---
 
-## API Overview · API 速览
+### Quick Reference · API
 
-### Registering Services · 注册服务
+#### Registration (`ServiceCollection`)
 
-`ServiceCollection` is the entry point, analogous to MEDI's `IServiceCollection`.
-Chain calls and finish with `.build()`.
+| Method | Lifetime | Use when |
+|--------|----------|----------|
+| `.singleton(f)` | Singleton | You need exactly one instance |
+| `.scoped(f)` | Scoped | You need one instance per scope |
+| `.transient(f)` | Transient | You need a new instance every time |
+| `.keyed(k, f)` | Singleton | You need multiple named instances |
+| `.keyed_scoped(k, f)` | Scoped | Multiple named scoped instances |
+| `.keyed_transient(k, f)` | Transient | Multiple named transient instances |
+| `.instance(arc)` | Singleton | You already have a built `Arc<T>` |
+| `.try_add(f)` | Singleton | Only register if not already present |
+| `.singleton_value(v)` | Singleton | Register a plain value (wraps in `Arc`) |
+| `.add(lt, f)` | *any* | Specify lifetime explicitly |
 
-`ServiceCollection` 是注册入口，类比 MEDI 的 `IServiceCollection`。链式调用，以 `.build()` 结尾。
+The factory closure `f` receives `&dyn IServiceResolver` so you can resolve
+dependencies:
 
-| Method · 方法 | Lifetime · 生命周期 | Description · 说明 |
-|---------------|----------------|-------------------|
-| `.singleton(f)` | Singleton | Single instance globally · 全局唯一实例 |
-| `.scoped(f)` | Scoped | Shared within one `Scope` · 同一 `Scope` 内复用 |
-| `.transient(f)` | Transient | New instance every resolution · 每次解析创建新实例 |
-| `.keyed(k, f)` | Singleton | Keyed registration · 键控注册 |
-| `.instance(arc)` | Singleton | Inject a pre-built `Arc<T>` · 直接注入已构建的 `Arc<T>` |
-| `.try_add(f)` | Singleton | Skip if type already registered · 同类型未注册时才添加 |
+```rust
+ServiceCollection::new()
+    .singleton(|_| Arc::new(Pool::new()))
+    .transient(|p| Arc::new(Repo::new(p.get::<Pool>())))
+    .build()
+    .unwrap();
+```
 
-The factory closure receives `&dyn IServiceResolver`, which can be used to
-resolve dependencies.
+#### Resolution (`ServiceProvider` / `Scope`)
 
-工厂闭包接收 `&dyn IServiceResolver` 参数，可用于解析依赖。
-
-### Resolving Services · 解析服务
-
-`ServiceProvider` is the built root container, analogous to MEDI's `IServiceProvider`.
-
-`ServiceProvider` 是构建后的根容器，类比 MEDI 的 `IServiceProvider`。
-
-| Method · 方法 | Returns · 返回 | On missing · 未注册时 |
-|---------------|------------|-------------------|
-| `.get::<T>()` | `Arc<T>` | panics |
-| `.get_service::<T>()` | `Option<Arc<T>>` | returns `None` |
-| `.get_required_service::<T>()` | `Arc<T>` | panics |
-| `.get_keyed::<T>(key)` | `Arc<T>` | panics |
-| `.get_all::<T>()` | `Vec<Arc<T>>` | empty vec · 空数组 |
-| `.get_services::<T>()` | `Vec<Arc<T>>` | alias · 别名 |
-| `.create_scope()` | `Scope` | — |
+| Method | Returns | Behavior |
+|--------|---------|----------|
+| `.get::<T>()` | `Arc<T>` | Panics if not registered |
+| `.get_service::<T>()` | `Option<Arc<T>>` | Returns `None` if not registered |
+| `.get_required_service::<T>()` | `Arc<T>` | Panics with descriptive message |
+| `.get_keyed::<T>(key)` | `Arc<T>` | Panics if key not found |
+| `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | Returns `None` if key not found |
+| `.get_all::<T>()` | `Vec<Arc<T>>` | All registered instances (keyed + unkeyed) |
+| `.get_named::<T>(name)` | `Arc<T>` | Named resolution (cross-DLL) |
+| `.get_named_any::<T>(name)` | `Option<Arc<T>>` | Named, returns `None` if missing |
+| `.create_scope()` | `Scope` | New scope for scoped services |
 
 `T` can be a concrete type or `dyn Trait`:
-
-`T` 支持具体类型和 `dyn Trait`：
 
 ```rust
 let svc: Arc<MyService> = provider.get();
@@ -117,228 +173,424 @@ let plugin: Arc<dyn IPlugin> = provider.get();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
 
-### Scopes · 作用域
-
-`Scope` is created by `ServiceProvider::create_scope()`, analogous to MEDI's
-`IServiceScope`. Scoped services are cached within the same scope and released
-when the scope is dropped.
-
-`Scope` 由 `ServiceProvider::create_scope()` 创建，类比 MEDI 的 `IServiceScope`。
-Scoped 生命周期的服务在作用域内缓存复用，作用域销毁后缓存释放。
-
-```rust
-let scope = provider.create_scope();
-let a = scope.get::<ScopedCounter>();
-let b = scope.get::<ScopedCounter>();
-assert!(Arc::ptr_eq(&a, &b));
-```
-
-### Three Lifetimes · 三种生命周期
-
-| Lifetime · 生命周期 | Behavior · 行为 |
-|-----------------|-------------|
-| **Singleton** | Single instance at container level, factory runs once · 容器级别全局唯一，工厂仅执行一次 |
-| **Scoped** | Unique per `Scope`, independent across scopes · 每个 `Scope` 内唯一，不同作用域各自独立 |
-| **Transient** | New instance each time, no caching · 每次解析创建新实例，不做缓存 |
-
 ---
 
-## Constructor Injection · 构造器注入
+### Flexible Application Patterns
 
-The `#[derive(Inject)]` derive macro auto-generates a constructor function,
-saving you from manually wiring up dependencies.
-
-通过派生宏自动生成构造函数，避免手动拼接依赖：
+#### 🔹 Three-layered architecture (Controller → Service → Repository)
 
 ```rust
-use lrdi::*;
-use lrdi_macros::Inject;
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(DbPool::new(&config)))
+    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>())))
+    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>())))
+    .transient(|p| Arc::new(UserController::new(p.get::<UserService>())))
+    .build()
+    .unwrap();
+```
 
-#[derive(Inject)]
-struct MyWorker {
-    logger: Arc<Logger>,                        // required · 必选注入
-    #[inject(optional)]
-    cache: Option<Arc<Cache>>,                  // optional · 可选注入
-    #[inject(key = "verbose")]
-    tracer: Arc<Logger>,                        // keyed · 键控注入
-    #[inject(provider)]
-    resolver: Arc<dyn IServiceResolver>,        // inject container itself · 注入容器自身
-    #[inject(skip)]
-    name: String,                               // skip, use Default · 跳过（用 Default）
+#### 🔹 Strategy pattern with keyed services
+
+```rust
+let provider = ServiceCollection::new()
+    .keyed::<dyn PaymentGateway>("credit", |_| Arc::new(CreditCardGateway))
+    .keyed::<dyn PaymentGateway>("alipay", |_| Arc::new(AlipayGateway))
+    .keyed::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
+    .build()
+    .unwrap();
+
+fn checkout(provider: &ServiceProvider, method: &str) {
+    let gateway: Arc<dyn PaymentGateway> = provider.get_keyed(method);
+    gateway.charge(100);
 }
 ```
 
-| Attribute · 属性 | Description · 说明 |
-|--------------|-------------------|
-| (none · 无标记) | Required injection, panics if not registered · 必选注入，未注册则 panic |
-| `#[inject(skip)]` | Skip injection, use `Default::default()` · 跳过注入，使用 `Default::default()` |
-| `#[inject(optional)]` | Optional injection, returns `None` if not registered · 可选注入，未注册返回 `None` |
-| `#[inject(key = "...")]` | Keyed injection · 键控注入 |
-| `#[inject(provider)]` | Inject `Arc<dyn IServiceResolver>` · 注入容器自身 |
-
-The generated constructor has the signature:
-
-生成的构造函数签名为：
+#### 🔹 Scoped per-request (web server)
 
 ```rust
-fn __lrdi_construct_MyWorker(resolver: &dyn IServiceResolver) -> Arc<MyWorker>
-```
-
-It works directly with `ServiceProvider` and `Scope`.
-
-可直接与 `ServiceProvider` 或 `Scope` 配合使用。
-
----
-
-## Compile-time Module Scanning · 编译期模块扫描
-
-The `#[lrdi::module]` attribute macro collects `lrdi::inject!()` declarations
-inside a module at compile time and auto-generates a
-`__lrdi_build_provider_{module_name}()` function, removing the need to
-manually chain `ServiceCollection` calls.
-
-`#[lrdi::module]` 属性宏在编译期收集模块内的 `lrdi::inject!()` 声明，
-自动生成一个 `__lrdi_build_provider_{模块名}()` 函数，避免手工拼接 `ServiceCollection` 调用链。
-
-```rust
-#[lrdi::module]
-mod services {
-    lrdi::inject!(singleton: MyService);
-    lrdi::inject!(singleton: dyn IPlugin => MyPlugin);
-    lrdi::inject!(keyed "verbose": singleton: Logger);
+fn handle_request(container: &ServiceProvider) {
+    let scope = container.create_scope();
+    let ctx: Arc<RequestContext> = scope.get();
+    let svc: Arc<MyService> = scope.get();
+    // ctx and MyService share the same scope — scoped services are cached
+    // Drops when scope goes out of scope
 }
-
-let provider = services::__lrdi_build_provider_services().unwrap();
 ```
 
-The `trait => impl` syntax maps a trait object to its implementation:
-
-支持 `trait => impl` 语法将 trait object 映射到具体实现：
+#### 🔹 Plugin isolation with ServiceProviderWrapper
 
 ```rust
-lrdi::inject!(singleton: dyn IPlugin => MyPlugin);
+let host_provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(HostService::new()))
+    .build().unwrap();
+
+let plugin_provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(PluginService::new()))
+    .build().unwrap();
+
+let wrapper = ServiceProviderWrapper::new(plugin_provider, host_provider);
+// PluginService resolved from plugin container
+// HostService falls back to host container
 ```
 
----
-
-## Layered Containers · 分层容器
-
-`ServiceProviderWrapper` combines a child and a root `ServiceProvider`, providing
-**child-first, root-fallback** resolution — useful for plugin isolation.
-
-`ServiceProviderWrapper` 组合一个 child 和一个 root `ServiceProvider`，
-提供**子容器优先、根容器回退**的分层解析——适用于插件隔离场景。
+#### 🔹 Cross-DLL plugin with named services
 
 ```rust
-let wrapper = ServiceProviderWrapper::new(child_provider, root_provider);
-let ps: Arc<PluginService> = wrapper.get();   // child first · 子容器优先
-let hs: Arc<HostService> = wrapper.get();     // root fallback · 根容器回退
+// Host process
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(EventBus::new()))
+    .build().unwrap();
+provider.register_named("event_bus", provider.get::<EventBus>());
+
+// Plugin loaded from cdylib (separate compilation unit)
+let bus = host.get_named::<EventBus>("event_bus");
 ```
 
----
-
-## Cross-DLL Named Services · 跨 DLL 命名服务
-
-Rust's `TypeId` is not consistent across compilation units. `ServiceProvider`
-provides string-keyed named service registration for cdylib plugin scenarios.
-
-由于 Rust 的 `TypeId` 跨编译单元不一致，`ServiceProvider` 提供基于字符串的命名服务注册，
-适用于 cdylib 插件场景。
+#### 🔹 External system integration via IServiceLocator
 
 ```rust
-// Host side · 主程序侧
-provider.register_named("EventBus", event_bus.clone());
-
-// Plugin side · 插件侧
-let bus = provider.get_named::<EventBus>("EventBus");
-```
-
----
-
-## External System Integration · 外部系统集成
-
-`IServiceLocator` provides a unified DI access interface for external systems.
-`ServiceLocatorBridge` adapts LRDI's provider into an `Arc<dyn IServiceLocator>`,
-making it easy to pass to modules that don't directly depend on LRDI.
-
-`IServiceLocator` trait 为外部系统提供了统一的 DI 访问接口。
-`ServiceLocatorBridge` 将 LRDI 的 provider 适配为 `Arc<dyn IServiceLocator>`，
-方便传递给不直接依赖 LRDI 的模块。
-
-```rust
-use lrdi::*;
-
-let bridge = Arc::new(ServiceLocatorBridge::new(
+let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
     Arc::new(RdiProvider::Root(provider)),
 ));
-let locator: Arc<dyn IServiceLocator> = bridge;
+// Pass to third-party code or FFI boundary
 ```
 
 ---
 
-## Crate Layout · 项目结构
+### Architecture
 
 ```
-lrdi/
-├── Cargo.toml                         # Workspace manifest
-├── crates/
-│   ├── lrdi/                          # Main crate · 主 crate
-│   │   ├── Cargo.toml
-│   │   ├── README.md
-│   │   ├── src/                       # Source code
-│   │   └── tests/                     # Integration tests
-│   └── lrdi-macros/                   # Proc-macro crate
-│       ├── Cargo.toml
-│       └── src/
+┌──────────────────────────────────────────────┐
+│               ServiceCollection               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+│  │singleton │ │  scoped  │ │  transient   │ │
+│  │ .keyed() │ │.keyed_*()│ │ .instance()  │ │
+│  └──────────┘ └──────────┘ └──────────────┘ │
+│                   │ .build()                  │
+│                   ▼                           │
+│              ServiceProvider                  │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+│  │  .get()  │ │.get_keyed│ │ .create_scope│ │
+│  │ .get_all │ │.get_named│ │              │ │
+│  └──────────┘ └──────────┘ └──────┬───────┘ │
+│                                    │         │
+└────────────────────────────────────┼─────────┘
+                                     │
+                                     ▼
+                               ┌──────────┐
+                               │   Scope  │
+                               │ .get()   │
+                               │ scoped   │
+                               │ cached   │
+                               └──────────┘
 ```
-
-| Module · 模块 | Description · 说明 |
-|------------|-------------------|
-| [`ServiceCollection`] | Register services with a builder API |
-| [`ServiceProvider`] | The root DI container |
-| [`Scope`] / [`ServiceScope`] | Scoped container (one per scope) |
-| [`IServiceResolver`] | Resolution trait (implemented by `ServiceProvider` & `Scope`) |
-| [`ServiceProviderWrapper`] | Child-first layered container |
-| [`ServiceLifetime`] | Enum: Singleton, Scoped, Transient |
-| [`IServiceLocator`] / [`ServiceLocatorBridge`] | Cross-DLL / plugin integration |
-| [`RdiError`] | Error types |
 
 ---
 
-## Design Philosophy · 设计理念
+### Relationship with lrdi-macros
 
-- **MEDI-aligned API** — Familiar to developers coming from the .NET ecosystem.
-  Key abstractions map directly: `IServiceCollection` → `ServiceCollection`,
-  `IServiceProvider` → `ServiceProvider`, `IServiceScope` → `Scope`,
-  `IServiceResolver` → resolution trait.
+`lrdi` works with or without [`lrdi-macros`](../lrdi-macros/). The macros
+provide two compile-time conveniences:
 
-- **Zero-cost abstractions** — Proc-macros do their work at compile time;
-  runtime resolution is a simple `Arc` lookup.
+- **`#[derive(Inject)]`** — Generate the factory function automatically from
+  struct fields, eliminating boilerplate when defining services.
+- **`#[lrdi::module]`** — Collect `lrdi::inject!()` declarations at compile
+  time and generate a complete provider builder, eliminating manual
+  `ServiceCollection` chaining.
 
-- **Plugin-first** — Named service registry and `ServiceLocatorBridge` are
-  first-class features, not afterthoughts.
-
-- **MEDI 对齐的 API** — 对 .NET 生态开发者友好。核心抽象直接对应：
-  `IServiceCollection` → `ServiceCollection`、`IServiceProvider` → `ServiceProvider`、
-  `IServiceScope` → `Scope`、`IServiceResolver` → 解析 trait。
-
-- **零成本抽象** — 过程宏在编译期完成工作，运行时解析就是简单的 `Arc` 查找。
-
-- **插件优先** — 命名服务注册和 `ServiceLocatorBridge` 是一等特性，而非事后补充。
+See [`lrdi-macros/README.md`](../lrdi-macros/README.md) for details.
 
 ---
 
-## License · 许可
+### License
 
-Licensed under the MIT License. See [LICENSE](LICENSE) for details.
+MIT.
 
-MIT 协议授权。详见 [LICENSE](LICENSE)。
+---
 
-<!-- Badges -->
+<h2 id="chinese">中文</h2>
 
-[crates-badge]: https://img.shields.io/crates/v/lrdi.svg
-[crates-url]: https://crates.io/crates/lrdi
-[license-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[license-url]: https://opensource.org/licenses/MIT
-[docs-url]: https://docs.rs/lrdi
-[repo-url]: https://gitcode.com/rf2026/RDI
+`lrdi` 是 LRDI 框架的核心 crate — 一个受 Microsoft.Extensions.DependencyInjection
+(MEDI) 启发的 Rust 依赖注入容器。
+
+```toml
+[dependencies]
+lrdi = "0.1"
+```
+
+---
+
+### 什么时候用这个库？
+
+**1. 你希望将服务的创建与使用解耦**
+
+不需要在代码中到处写 `MyService::new(dep1, dep2, dep3)`，只需声明一次构建方式，
+容器自动完成依赖装配。
+
+```rust
+// 不用 DI：每个调用方都必须知道如何构建所有依赖
+let svc = MyService::new(
+    Arc::new(Logger::new("app")),
+    Arc::new(Cache::new(1024)),
+);
+
+// 用 DI：声明一次，随处解析
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(Logger::new("app")))
+    .singleton(|_| Arc::new(Cache::new(1024)))
+    .transient(|p| Arc::new(MyService::new(p.get(), p.get())))
+    .build()
+    .unwrap();
+
+let svc: Arc<MyService> = provider.get();
+```
+
+**2. 你需要为测试替换实现**
+
+改一行注册代码，不用动消费服务的代码。
+
+```rust
+#[cfg(test)]
+fn test_provider() -> ServiceProvider {
+    ServiceCollection::new()
+        .singleton(|_| Arc::new(MockDatabase::new()))
+        .transient(|p| Arc::new(MyApi::new(p.get())))
+        .build()
+        .unwrap()
+}
+```
+
+**3. 你的对象有不同的生命周期**
+
+有些服务应该全局共享（数据库连接池），有些应该每次请求一个（HTTP 上下文），
+有些应该每次都是新的（值对象）。LRDI 提供了三种生命周期来自然建模。
+
+| 生命周期 | 行为 | 典型场景 |
+|----------|------|---------|
+| **Singleton** | 创建一次，全局共享 | 数据库连接池、配置、事件总线 |
+| **Scoped** | 每个作用域创建一次，作用域内共享 | HTTP 请求上下文、工作单元、事务 |
+| **Transient** | 每次解析都创建新实例 | 值对象、DTO、轻量无状态服务 |
+
+```rust
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(Pool::new()))           // 整个应用一个连接池
+    .scoped(|_| Arc::new(RequestContext::new()))     // 每次请求一个上下文
+    .transient(|_| Arc::new(Query::new()))           // 每次都新建
+    .build()
+    .unwrap();
+```
+
+**4. 你需要同类型的多个实例**
+
+键控服务让你为同一个 trait 注册多个实现，用字符串键区分。
+
+```rust
+let provider = ServiceCollection::new()
+    .keyed::<dyn Strategy>("fast", |_| Arc::new(FastPath))
+    .keyed::<dyn Strategy>("safe", |_| Arc::new(SafePath))
+    .build()
+    .unwrap();
+
+let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
+let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
+```
+
+**5. 你在构建插件 / 模块化系统**
+
+- **分层容器**：子容器优先、根容器回退的解析策略，用于插件隔离。
+  插件自己的服务优先可见，宿主服务作为回退。
+- **命名服务**：通过字符串名称注册服务 — 对于 cdylib 插件至关重要，
+  因为 Rust 的 `TypeId` 跨编译单元不一致。
+- **`IServiceLocator`**：将统一的 DI 接口传递给不直接依赖 LRDI 的外部模块。
+
+---
+
+### 快速参考 · API
+
+#### 注册（`ServiceCollection`）
+
+| 方法 | 生命周期 | 使用场景 |
+|--------|----------|---------|
+| `.singleton(f)` | Singleton | 全局只需要一个实例 |
+| `.scoped(f)` | Scoped | 每个作用域一个实例 |
+| `.transient(f)` | Transient | 每次解析都新建 |
+| `.keyed(k, f)` | Singleton | 同类型多个命名实例 |
+| `.keyed_scoped(k, f)` | Scoped | 多个命名 scoped 实例 |
+| `.keyed_transient(k, f)` | Transient | 多个命名 transient 实例 |
+| `.instance(arc)` | Singleton | 已有构建好的 `Arc<T>` |
+| `.try_add(f)` | Singleton | 只注册不存在的类型 |
+| `.singleton_value(v)` | Singleton | 注册普通值（自动包 `Arc`） |
+| `.add(lt, f)` | *任意* | 显式指定生命周期 |
+
+工厂闭包 `f` 接收 `&dyn IServiceResolver`，可以解析依赖：
+
+```rust
+ServiceCollection::new()
+    .singleton(|_| Arc::new(Pool::new()))
+    .transient(|p| Arc::new(Repo::new(p.get::<Pool>())))
+    .build()
+    .unwrap();
+```
+
+#### 解析（`ServiceProvider` / `Scope`）
+
+| 方法 | 返回 | 行为 |
+|--------|---------|------|
+| `.get::<T>()` | `Arc<T>` | 未注册则 panic |
+| `.get_service::<T>()` | `Option<Arc<T>>` | 未注册返回 `None` |
+| `.get_required_service::<T>()` | `Arc<T>` | 带描述信息的 panic |
+| `.get_keyed::<T>(key)` | `Arc<T>` | 找不到 key 则 panic |
+| `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | 找不到 key 返回 `None` |
+| `.get_all::<T>()` | `Vec<Arc<T>>` | 所有已注册实例 |
+| `.get_named::<T>(name)` | `Arc<T>` | 命名解析（跨 DLL） |
+| `.get_named_any::<T>(name)` | `Option<Arc<T>>` | 命名解析，不 panic |
+| `.create_scope()` | `Scope` | 新建作用域 |
+
+`T` 支持具体类型和 trait object：
+
+```rust
+let svc: Arc<MyService> = provider.get();
+let plugin: Arc<dyn IPlugin> = provider.get();
+let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
+```
+
+---
+
+### 在哪些场景下灵活应用？
+
+#### 🔹 三层架构（Controller → Service → Repository）
+
+```rust
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(DbPool::new(&config)))
+    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>())))
+    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>())))
+    .transient(|p| Arc::new(UserController::new(p.get::<UserService>())))
+    .build()
+    .unwrap();
+```
+
+每层依赖由容器自动注入，单元测试时可以逐层替换 mock。
+
+#### 🔹 策略模式 + 键控服务
+
+```rust
+let provider = ServiceCollection::new()
+    .keyed::<dyn PaymentGateway>("credit", |_| Arc::new(CreditCardGateway))
+    .keyed::<dyn PaymentGateway>("alipay", |_| Arc::new(AlipayGateway))
+    .keyed::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
+    .build()
+    .unwrap();
+
+fn checkout(provider: &ServiceProvider, method: &str) {
+    let gateway: Arc<dyn PaymentGateway> = provider.get_keyed(method);
+    gateway.charge(100);
+}
+```
+
+增加新的支付方式只需注册一个新 key，无需修改 checkout 函数。
+
+#### 🔹 请求级别的 Scoped 生命周期（Web 服务）
+
+```rust
+fn handle_request(container: &ServiceProvider) {
+    let scope = container.create_scope();
+    let ctx: Arc<RequestContext> = scope.get();
+    let svc: Arc<MyService> = scope.get();
+    // ctx 和 MyService 共享同一个 scope，scoped 服务被缓存
+    // scope 离开作用域时自动释放
+}
+```
+
+适用于 Actix-web、Axum 等框架的每个请求上下文。
+
+#### 🔹 插件隔离 — ServiceProviderWrapper
+
+```rust
+let host_provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(HostService::new()))
+    .build().unwrap();
+
+let plugin_provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(PluginService::new()))
+    .build().unwrap();
+
+let wrapper = ServiceProviderWrapper::new(plugin_provider, host_provider);
+// PluginService 从插件容器解析
+// HostService 回退到宿主容器
+```
+
+插件只能看到自己的服务，宿主的全局服务作为回退——天然的隔离边界。
+
+#### 🔹 跨 DLL 插件的命名服务
+
+```rust
+// 宿主进程
+let provider = ServiceCollection::new()
+    .singleton(|_| Arc::new(EventBus::new()))
+    .build().unwrap();
+provider.register_named("event_bus", provider.get::<EventBus>());
+
+// 插件（独立编译的 cdylib）
+let bus = host.get_named::<EventBus>("event_bus");
+```
+
+跨编译单元时 `TypeId` 不同，不能用类型解析，命名服务是解决方案。
+
+#### 🔹 通过 IServiceLocator 集成外部系统
+
+```rust
+let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
+    Arc::new(RdiProvider::Root(provider)),
+));
+// 传递给第三方代码或 FFI 边界
+```
+
+---
+
+### 架构
+
+```
+┌──────────────────────────────────────────────┐
+│               ServiceCollection               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+│  │singleton │ │  scoped  │ │  transient   │ │
+│  │ .keyed() │ │.keyed_*()│ │ .instance()  │ │
+│  └──────────┘ └──────────┘ └──────────────┘ │
+│                   │ .build()                  │
+│                   ▼                           │
+│              ServiceProvider                  │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+│  │  .get()  │ │.get_keyed│ │ .create_scope│ │
+│  │ .get_all │ │.get_named│ │              │ │
+│  └──────────┘ └──────────┘ └──────┬───────┘ │
+│                                    │         │
+└────────────────────────────────────┼─────────┘
+                                     │
+                                     ▼
+                               ┌──────────┐
+                               │   Scope  │
+                               │ .get()   │
+                               │ scoped   │
+                               │ cached   │
+                               └──────────┘
+```
+
+---
+
+### 与 lrdi-macros 的关系
+
+`lrdi` 可以独立使用，也可以配合 [`lrdi-macros`](../lrdi-macros/) 使用。
+过程宏提供两个编译期便利：
+
+- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，消除定义服务时的样板代码。
+- **`#[lrdi::module]`** — 编译期收集 `lrdi::inject!()` 声明，生成完整的 provider
+  构建函数，消除手动拼接 `ServiceCollection` 调用链。
+
+详见 [`lrdi-macros/README.md`](../lrdi-macros/README.md)。
+
+---
+
+### 许可
+
+MIT。
