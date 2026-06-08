@@ -109,12 +109,9 @@ impl ServiceCollection {
 
     pub fn build(self) -> Result<crate::provider::ServiceProvider, crate::error::RdiError> {
         let mut s = crate::store::ServiceStore::new();
-        let mut n = 0usize;
-        for d in self.descriptors {
-            let ck = n;
-            n += 1;
+        for (n, d) in self.descriptors.into_iter().enumerate() {
             let e = crate::entry::ServiceEntry {
-                cache_key: ck,
+                cache_key: n,
                 key: d.key,
                 type_name: d.type_name,
                 factory: d.factory,

@@ -1,6 +1,5 @@
 mod common;
 
-use lrdi::*;
 use std::sync::Arc;
 
 #[test]

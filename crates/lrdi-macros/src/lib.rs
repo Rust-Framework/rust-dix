@@ -63,21 +63,19 @@ fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
         }
         if l.ident == "Option" {
             if let syn::PathArguments::AngleBracketed(a) = &l.arguments {
-                if let Some(syn::GenericArgument::Type(i)) = a.args.first() {
-                    if let syn::Type::Path(ip) = i {
-                        if ip
-                            .path
-                            .segments
-                            .last()
-                            .map(|s| s.ident == "Arc")
-                            .unwrap_or(false)
+                if let Some(syn::GenericArgument::Type(syn::Type::Path(ip))) = a.args.first() {
+                    if ip
+                        .path
+                        .segments
+                        .last()
+                        .map(|s| s.ident == "Arc")
+                        .unwrap_or(false)
+                    {
+                        if let syn::PathArguments::AngleBracketed(ia) =
+                            &ip.path.segments.last().unwrap().arguments
                         {
-                            if let syn::PathArguments::AngleBracketed(ia) =
-                                &ip.path.segments.last().unwrap().arguments
-                            {
-                                if let Some(syn::GenericArgument::Type(t)) = ia.args.first() {
-                                    return (quote! {#t}, true);
-                                }
+                            if let Some(syn::GenericArgument::Type(t)) = ia.args.first() {
+                                return (quote! {#t}, true);
                             }
                         }
                     }
@@ -88,21 +86,12 @@ fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
     (quote! {#ty}, false)
 }
 
+#[derive(Default)]
 struct IA {
     skip: bool,
     optional: bool,
     provider: bool,
     key: Option<String>,
-}
-impl Default for IA {
-    fn default() -> Self {
-        Self {
-            skip: false,
-            optional: false,
-            provider: false,
-            key: None,
-        }
-    }
 }
 fn parse_ia(f: &Field) -> IA {
     let mut a = IA::default();

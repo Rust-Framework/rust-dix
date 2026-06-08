@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ──────────────────────────────────────────────
 # RDI — One-command publish script
-# Publishes rdi-macros first, then rdi.
+# Publishes lrdi-macros first, then lrdi.
 #
 # Usage:
 #   ./publish.sh                  # publish both crates
@@ -81,12 +81,13 @@ echo ""
 echo "    ✓ All checks passed"
 echo ""
 
-# ── Step 2: Publish rdi-macros ──
+# ── Step 2: Publish lrdi-macros ──
 
-MACROS_VER=$(grep '^version ' rdi-macros/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-echo "==> 2. Publishing rdi-macros v${MACROS_VER}..."
-(cd rdi-macros && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ rdi-macros published"
+MACROS_DIR="crates/lrdi-macros"
+MACROS_VER=$(grep '^version ' "$MACROS_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+echo "==> 2. Publishing lrdi-macros v${MACROS_VER}..."
+(cd "$MACROS_DIR" && cargo publish $DRY_RUN --allow-dirty)
+echo "    ✓ lrdi-macros published"
 
 if [ -z "$DRY_RUN" ]; then
     echo "    Waiting 15s for crates.io index to refresh..."
@@ -95,17 +96,18 @@ fi
 
 echo ""
 
-# ── Step 3: Publish rdi ──
+# ── Step 3: Publish lrdi ──
 
-RDI_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-echo "==> 3. Publishing rdi v${RDI_VER}..."
-cargo publish $DRY_RUN --allow-dirty
-echo "    ✓ rdi published"
+RDI_DIR="crates/lrdi"
+RDI_VER=$(grep '^version ' "$RDI_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+echo "==> 3. Publishing lrdi v${RDI_VER}..."
+(cd "$RDI_DIR" && cargo publish $DRY_RUN --allow-dirty)
+echo "    ✓ lrdi published"
 
 echo ""
 echo "============================================"
 echo "  Done!"
 echo ""
-echo "  https://crates.io/crates/rdi"
-echo "  https://crates.io/crates/rdi-macros"
+echo "  https://crates.io/crates/lrdi"
+echo "  https://crates.io/crates/lrdi-macros"
 echo "============================================"

@@ -228,6 +228,7 @@ trait Image: Send + Sync {
 }
 
 struct RealImage {
+    #[allow(dead_code)]
     name: &'static str,
 }
 impl Image for RealImage {

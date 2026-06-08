@@ -1,0 +1,21 @@
+﻿[package]
+name = "lrdi"
+version.workspace = true
+edition.workspace = true
+description = "A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+include = ["README.md", "src/**/*", "tests/**/*"]
+categories = ["rust-patterns", "asynchronous"]
+keywords = ["di", "dependency-injection", "ioc", "medi", "service-provider"]
+
+[dependencies]
+thiserror.workspace = true
+lrdi-macros = { path = "../lrdi-macros", version = "0.1.0" }
+
+[features]
+default = []
+
+[lib]
+doc = true
