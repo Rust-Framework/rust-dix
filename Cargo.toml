@@ -11,7 +11,7 @@ members = [
 version = "0.1.3"
 edition = "2021"
 license = "MIT"
-repository = "https://gitcode.com/rf2026/RDI"
+repository = "https://gitcode.com/rf2026/lrdi"
 
 [workspace.dependencies]
 thiserror = "1"
