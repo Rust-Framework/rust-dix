@@ -1,0 +1,21 @@
+﻿[package]
+name = "rdi"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
+license = "MIT"
+repository = "https://github.com/your-username/rdi"
+documentation = "https://docs.rs/rdi"
+readme = "README.md"
+categories = ["rust-patterns", "asynchronous"]
+keywords = ["di", "dependency-injection", "ioc", "medi", "service-provider"]
+
+[dependencies]
+thiserror = "1"
+rdi-macros = { path = "rdi-macros" }
+
+[features]
+default = []
+
+[lib]
+doc = true

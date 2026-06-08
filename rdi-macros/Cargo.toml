@@ -1,0 +1,16 @@
+﻿[package]
+name = "rdi-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for rdi — a Rust dependency injection framework"
+license = "MIT"
+repository = "https://github.com/your-username/rdi"
+documentation = "https://docs.rs/rdi-macros"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
