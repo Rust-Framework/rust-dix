@@ -1,10 +1,3 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rf2026/RDI/main/assets/logo-dark.svg">
-    <img alt="LRDI" src="https://raw.githubusercontent.com/rf2026/RDI/main/assets/logo-light.svg" width="400">
-  </picture>
-</p>
-
 <h1 align="center">lrdi · Rust 依赖注入容器</h1>
 
 <p align="center">
