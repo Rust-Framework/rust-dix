@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="LRDI" width="80">
+</p>
+
 <h1 align="center">LRDI · Rust 依赖注入框架</h1>
 
 <p align="center">

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../assets/logo.svg" alt="LRDI" width="80">
+</p>
+
 <h1 align="center">lrdi-macros · 编译期依赖注入代码生成</h1>
 
 <p align="center">
