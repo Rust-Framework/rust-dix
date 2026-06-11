@@ -458,14 +458,100 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         }
     };
 
-    let factory_fn = quote! {
-        #[doc(hidden)]
-        fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
-            let v: ::std::sync::Arc<#name> = #fn_name(resolver);
-            ::std::sync::Arc::new(v)
-                as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+    // Generate factory function(s) — for AsTrait/AsTraits, upcast to dyn Trait first
+    let factory_fns: Vec<proc_macro2::TokenStream> = match &args {
+        InjectArgs::Plain { .. } => {
+            vec![quote! {
+                #[doc(hidden)]
+                fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+                    let v: ::std::sync::Arc<#name> = #fn_name(resolver);
+                    ::std::sync::Arc::new(v)
+                        as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+                }
+            }]
+        }
+        InjectArgs::AsTrait { trait_ty, .. } => {
+            vec![quote! {
+                #[doc(hidden)]
+                fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+                    let v: ::std::sync::Arc<#name> = #fn_name(resolver);
+                    let v2: ::std::sync::Arc<#trait_ty> = v;
+                    ::std::sync::Arc::new(v2)
+                        as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+                }
+            }]
+        }
+        InjectArgs::AsTraits { trait_tys, .. } => {
+            trait_tys.iter().enumerate().map(|(i, trait_ty)| {
+                let fn_name = if i == 0 {
+                    factory_name.clone()
+                } else {
+                    format_ident!("__rdi_factory_{}_{}", name, i)
+                };
+                quote! {
+                    #[doc(hidden)]
+                    fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+                        let v: ::std::sync::Arc<#name> = #fn_name(resolver);
+                        let v2: ::std::sync::Arc<#trait_ty> = v;
+                        ::std::sync::Arc::new(v2)
+                            as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+                    }
+                }
+            }).collect()
         }
     };
+
+    let type_name_fn_name = format_ident!("__rdi_type_name_{}", name);
+
+    let (type_name_helper, trait_tys_for_subs): (proc_macro2::TokenStream, Vec<syn::Type>) =
+        match &args {
+            InjectArgs::Plain { .. } => {
+                let helper = quote! {
+                    #[doc(hidden)]
+                    fn #type_name_fn_name() -> &'static str {
+                        ::std::any::type_name::<#name>()
+                    }
+                };
+                (helper, vec![])
+            }
+            InjectArgs::AsTrait { trait_ty, .. } => {
+                let helper = quote! {
+                    #[doc(hidden)]
+                    fn #type_name_fn_name() -> &'static str {
+                        ::std::any::type_name::<#trait_ty>()
+                    }
+                };
+                (helper, vec![trait_ty.clone()])
+            }
+            InjectArgs::AsTraits { trait_tys, .. } => {
+                let first = &trait_tys[0];
+                let helper = quote! {
+                    #[doc(hidden)]
+                    fn #type_name_fn_name() -> &'static str {
+                        ::std::any::type_name::<#first>()
+                    }
+                };
+                // Generate extra helpers for remaining traits
+                let extra: Vec<proc_macro2::TokenStream> = trait_tys[1..]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| {
+                        let hn = format_ident!("__rdi_type_name_{}_{}", name, i + 1);
+                        quote! {
+                            #[doc(hidden)]
+                            fn #hn() -> &'static str {
+                                ::std::any::type_name::<#ty>()
+                            }
+                        }
+                    })
+                    .collect();
+                let all_helpers = quote! {
+                    #helper
+                    #(#extra)*
+                };
+                (all_helpers, trait_tys.clone())
+            }
+        };
 
     let submissions = match &args {
         InjectArgs::Plain { .. } => {
@@ -474,7 +560,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                     lrdi::ServiceRegistration {
                         lifetime: #lt_ident,
                         type_id: ::std::any::TypeId::of::<#name>(),
-                        type_name: ::std::any::type_name::<#name>(),
+                        type_name_fn: #type_name_fn_name,
                         factory: #factory_name,
                     }
                 }
@@ -486,21 +572,26 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                     lrdi::ServiceRegistration {
                         lifetime: #lt_ident,
                         type_id: ::std::any::TypeId::of::<#trait_ty>(),
-                        type_name: ::std::any::type_name::<#trait_ty>(),
+                        type_name_fn: #type_name_fn_name,
                         factory: #factory_name,
                     }
                 }
             }
         }
-        InjectArgs::AsTraits { trait_tys, .. } => {
+        InjectArgs::AsTraits { .. } => {
             let mut subs = Vec::new();
-            for trait_ty in trait_tys {
+            for (i, trait_ty) in trait_tys_for_subs.iter().enumerate() {
+                let helper = if i == 0 {
+                    type_name_fn_name.clone()
+                } else {
+                    format_ident!("__rdi_type_name_{}_{}", name, i)
+                };
                 subs.push(quote! {
                     lrdi::inventory::submit! {
                         lrdi::ServiceRegistration {
                             lifetime: #lt_ident,
                             type_id: ::std::any::TypeId::of::<#trait_ty>(),
-                            type_name: ::std::any::type_name::<#trait_ty>(),
+                            type_name_fn: #helper,
                             factory: #factory_name,
                         }
                     }
@@ -513,7 +604,8 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
     Ok(quote! {
         #item
         #constructor
-        #factory_fn
+        #type_name_helper
+        #(#factory_fns)*
         #submissions
     })
 }

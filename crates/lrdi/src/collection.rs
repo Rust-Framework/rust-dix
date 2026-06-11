@@ -132,7 +132,7 @@ impl ServiceCollection {
             let factory: ServiceFactory = Arc::new(move |r| (reg.factory)(r));
             descriptors.push(ServiceDescriptor {
                 type_id: reg.type_id,
-                type_name: reg.type_name,
+                type_name: (reg.type_name_fn)(),
                 key: None,
                 factory,
                 lifetime: reg.lifetime,

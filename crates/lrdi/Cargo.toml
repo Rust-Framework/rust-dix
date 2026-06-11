@@ -13,7 +13,7 @@ keywords = ["di", "dependency-injection", "ioc", "medi", "service-provider"]
 [dependencies]
 thiserror.workspace = true
 inventory = "0.3"
-lrdi-macros = { path = "../lrdi-macros", version = "0.2.4" }
+lrdi-macros = { path = "../lrdi-macros", version = "0.2.5" }
 
 [features]
 default = []
