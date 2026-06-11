@@ -117,10 +117,11 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 
 ### Quick Reference · API
 
-#### Registration (`ServiceCollection`)
+### Registration (`ServiceCollection`)
 
 | Method | Lifetime | Use when |
 |--------|----------|----------|
+| `.from_injected()` | *mixed* | Collect all `#[lrdi::inject]` annotations (see below) |
 | `.singleton(f)` | Singleton | You need exactly one instance |
 | `.scoped(f)` | Scoped | You need one instance per scope |
 | `.transient(f)` | Transient | You need a new instance every time |
@@ -142,6 +143,29 @@ ServiceCollection::new()
     .build()
     .unwrap();
 ```
+
+#### `#[lrdi::inject]` — Attribute-based auto-registration (recommended)
+
+The preferred way to register services is to annotate structs directly:
+
+```rust
+use lrdi::*;
+
+#[lrdi::inject(singleton)]     // registers as concrete type
+struct Config { url: String }
+
+#[lrdi::inject(transient, as = dyn UserRepo)]  // registers as trait
+struct PgUserRepo { db: Arc<DbPool> }
+
+#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // multi-trait
+struct BootLoader;
+
+// Then build from all annotations in one call:
+let provider = ServiceCollection::from_injected().build().unwrap();
+```
+
+The `#[lrdi::inject]` attribute automatically generates constructor code
+(like `#[derive(Inject)]`) and registers the service via `inventory`.
 
 #### Resolution (`ServiceProvider` / `Scope`)
 
@@ -282,13 +306,16 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 ### Relationship with lrdi-macros
 
 `lrdi` works with or without [`lrdi-macros`](../lrdi-macros/). The macros
-provide two compile-time conveniences:
+provide three compile-time conveniences:
 
+- **`#[lrdi::inject(...)]`** (recommended) — Attribute macro that combines
+  constructor generation + auto-registration. One annotation on a struct is
+  all you need — `ServiceCollection::from_injected()` collects everything.
 - **`#[derive(Inject)]`** — Generate the factory function automatically from
-  struct fields, eliminating boilerplate when defining services.
+  struct fields. Used internally by `#[lrdi::inject]`.
 - **`#[lrdi::module]`** — Collect `lrdi::inject!()` declarations at compile
-  time and generate a complete provider builder, eliminating manual
-  `ServiceCollection` chaining.
+  time and generate a complete provider builder. Useful for external types,
+  conditional compilation, and centralized management.
 
 See [`lrdi-macros/README.md`](../lrdi-macros/README.md) for details.
 

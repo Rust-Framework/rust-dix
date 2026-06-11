@@ -24,7 +24,7 @@ Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框�
 | Crate | 功能 | 适用人群 |
 |-------|------|---------|
 | [`lrdi`](./crates/lrdi/) | 核心 DI 容器 — 注册、构建、解析、作用域 | 任何希望解耦、可测试、可插拔架构的 Rust 应用 |
-| [`lrdi-macros`](./crates/lrdi-macros/) | 过程宏 — `#[derive(Inject)]`、`#[lrdi::module]` | 使用 `lrdi` 并希望编译期自动生成代码的用户 |
+| [`lrdi-macros`](./crates/lrdi-macros/) | 过程宏 — `#[derive(Inject)]`、`#[lrdi::inject]`、`#[lrdi::module]` | 使用 `lrdi` 并希望编译期自动生成代码的用户 |
 
 ### 快速开始
 
@@ -37,17 +37,32 @@ lrdi = "0.1"
 use lrdi::*;
 use std::sync::Arc;
 
+// 用 #[lrdi::inject(...)] 标注你的结构体
+#[lrdi::inject(singleton)]
 struct Logger { prefix: String }
+
+#[lrdi::inject(transient)]
 struct Worker { logger: Arc<Logger> }
 
-let provider = ServiceCollection::new()
-    .singleton(|_| Arc::new(Logger { prefix: "INFO".into() }))
-    .transient(|p| Arc::new(Worker { logger: p.get() }))
+// 一步自动发现并构建
+let provider = ServiceCollection::from_injected()
     .build()
     .unwrap();
 
 let logger: Arc<Logger> = provider.get();
 ```
+
+### 特性
+
+| 特性 | 描述 |
+|------|------|
+| `#[lrdi::inject]` | 基于属性宏的自动注册 — 标注结构体后调用 `ServiceCollection::from_injected()` |
+| `#[derive(Inject)]` | 派生宏实现构造器注入（高级功能） |
+| `#[lrdi::module]` | 编译期模块扫描，收集 `lrdi::inject!(...)` 声明（高级功能） |
+| **三种生命周期** | Singleton、Scoped、Transient |
+| **键控服务** | 同一类型的多个实例以字符串 key 区分 |
+| **跨 DLL 支持** | 为 cdylib 插件系统提供的命名服务注册表 |
+| **分层容器** | 通过 `ServiceProviderWrapper` 实现子优先解析 |
 
 ### 什么时候用 LRDI？
 

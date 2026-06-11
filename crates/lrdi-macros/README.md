@@ -32,11 +32,59 @@ lrdi = "0.1"       # re-exports all macros — you usually don't need lrdi-macro
 
 ### Macros
 
+#### `#[lrdi::inject(...)]` — Attribute-based auto-registration (recommended)
+
+**What it does**: Combines constructor generation and service registration in
+one attribute. Annotate a struct with a lifetime and optional interface binding,
+and the macro generates both the constructor function and an `inventory`
+submission entry. `ServiceCollection::from_injected()` collects all entries at
+startup.
+
+```rust
+use lrdi::*;
+
+// Concrete type, singleton
+#[lrdi::inject(singleton)]
+struct Config;
+
+// Interface binding, transient
+#[lrdi::inject(transient, as = dyn UserRepo)]
+struct PgUserRepo { db: Arc<DbPool> }
+
+// Multi-interface binding
+#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]
+struct BootLoader;
+
+// Collect everything in one call
+let provider = ServiceCollection::from_injected().build().unwrap();
+```
+
+**Supported syntax**:
+
+| Attribute | Registers as |
+|-----------|-------------|
+| `#[lrdi::inject(singleton)]` | Concrete type, Singleton |
+| `#[lrdi::inject(transient)]` | Concrete type, Transient |
+| `#[lrdi::inject(scoped)]` | Concrete type, Scoped |
+| `#[lrdi::inject(transient, as = dyn Trait)]` | `dyn Trait`, Transient |
+| `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` | Multiple traits, Singleton |
+
+This macro subsumes `#[derive(Inject)]` — it internally generates the same
+constructor function (`__rdi_construct_{Type}`) using the same field attribute
+syntax (`#[inject(skip)]`, `#[inject(optional)]`, `#[inject(key = "...")]`,
+etc.). You do NOT need both.
+
+---
+
 #### `#[derive(Inject)]` — Auto-generated constructor
 
 **What it does**: Reads the struct fields and their `#[inject(...)]` attributes,
-then generates a factory function `__lrdi_construct_{TypeName}()` that resolves
+then generates a factory function `__rdi_construct_{TypeName}()` that resolves
 each field from the container.
+
+> **Note**: This derive macro is subsumed by `#[lrdi::inject(...)]`. You only
+> need `#[derive(Inject)]` if you want to generate the constructor without
+> automatic registration.
 
 **Without it**, you write factory closures manually:
 
@@ -54,22 +102,20 @@ let provider = ServiceCollection::new()
 **With it**, the macro generates the exact same code:
 
 ```rust
-use lrdi_macros::Inject;
-
 #[derive(Inject)]
 struct MyService {
     logger: Arc<Logger>,
     #[inject(key = "main")]
     cache: Arc<Cache>,
 }
-// Generates: __lrdi_construct_MyService(resolver) -> Arc<MyService>
+// Generates: __rdi_construct_MyService(resolver) -> Arc<MyService>
 ```
 
 The generated function can be used anywhere you'd write a factory closure:
 
 ```rust
 let provider = ServiceCollection::new()
-    .singleton(__lrdi_construct_MyService)
+    .singleton(__rdi_construct_MyService)
     .build().unwrap();
 ```
 
@@ -83,12 +129,6 @@ let provider = ServiceCollection::new()
 | `#[inject(key = "k")]` | `Arc<T>` | Keyed resolution, panics if key missing |
 | `#[inject(optional, key = "k")]` | `Option<Arc<T>>` | Optional keyed resolution |
 | `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | Injects the container itself |
-
-**When to use it**:
-
-- You have many service structs with repetitive wiring
-- You want the DI configuration colocated with the struct definition
-- You want compile-time validation that all fields are injectable
 
 ---
 
@@ -168,11 +208,12 @@ or want to declare DI configuration declaratively.
 
 | Approach | Pros | Cons |
 |----------|------|------|
+| `#[lrdi::inject]` (recommended) | Zero boilerplate, auto-registration | Requires `inventory`; `String` fields need `#[inject(skip)]` |
 | Manual factories | Full control, explicit | Boilerplate for many services |
-| `#[derive(Inject)]` | Zero boilerplate for constructors | Only works with named fields |
-| `#[lrdi::module]` | Declarative, colocated | Less flexible for dynamic registration |
+| `#[derive(Inject)]` | Zero boilerplate for constructors | Manual registration still needed |
+| `#[lrdi::module]` | Declarative, centralized | Less flexible for dynamic registration |
 
-You can mix all three freely in the same project.
+All approaches can be mixed freely in the same project.
 
 ---
 

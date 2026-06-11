@@ -1,6 +1,337 @@
 # LRDI 过程宏深度指南
 
-## 一、`#[derive(Inject)]` 完整指南
+## 一、`#[lrdi::inject]` 属性宏完整指南（推荐方式）
+
+`#[lrdi::inject(...)]` 是 LRDI **推荐的首选方式**。它是一个属性宏（attribute macro），同时完成两件事：
+
+1. **自动生成构造函数**（同 `#[derive(Inject)]`）
+2. **自动将服务注册到全局 `inventory`**，无需手写 `ServiceCollection` 注册
+
+使用方式：
+
+```rust
+use lrdi::*;
+
+// 只需一行属性，即完成构造函数生成 + 服务注册
+#[lrdi::inject(singleton)]
+struct MyService {
+    logger: Arc<Logger>,
+}
+
+// 构建时自动收集所有 #[lrdi::inject] 注册
+let provider = ServiceCollection::from_injected().build()?;
+let svc: Arc<MyService> = provider.get::<MyService>();
+```
+
+---
+
+### 1.1 宏展开原理
+
+`#[lrdi::inject(...)]` 由 `inject_attr` 入口函数驱动（源码位置：`crates/lrdi-macros/src/lib.rs`）。展开过程分为以下阶段：
+
+**第一阶段：解析属性参数**
+
+根据属性参数内容，确定 `InjectArgs` 变体：
+
+```rust
+enum InjectArgs {
+    Plain {
+        lifetime: LT,
+    },
+    AsTrait {
+        lifetime: LT,
+        trait_ty: syn::Type,
+    },
+    AsTraits {
+        lifetime: LT,
+        trait_tys: Vec<syn::Type>,
+    },
+}
+```
+
+支持的语法格式：
+
+- `#[lrdi::inject(singleton)]` → `InjectArgs::Plain`
+- `#[lrdi::inject(singleton, as = dyn ITrait)]` → `InjectArgs::AsTrait`
+- `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` → `InjectArgs::AsTraits`
+
+**第二阶段：解析结构体字段**
+
+与 `#[derive(Inject)]` 共用相同的 `parse_ia` 函数和 `IA` 结构体，遍历字段上的 `#[inject(...)]` 属性。解析逻辑完全一致：
+
+```rust
+#[derive(Default)]
+struct IA {
+    skip: bool,
+    optional: bool,
+    provider: bool,
+    key: Option<String>,
+}
+```
+
+**第三阶段：生成构造器函数**
+
+生成 `__rdi_construct_{Name}` 函数（与 `#[derive(Inject)]` 完全相同）：
+
+```rust
+#[doc(hidden)]
+pub fn __rdi_construct_{Name}(resolver: &dyn lrdi::IServiceResolver)
+    -> ::std::sync::Arc<{Name}>
+{
+    ::std::sync::Arc::new({Name} { /* 字段初始化表达式 */ })
+}
+```
+
+**第四阶段：生成工厂函数**
+
+生成一个工厂包装函数，返回 `Arc<dyn Any + Send + Sync>` 以兼容 `ServiceRegistration`：
+
+```rust
+#[doc(hidden)]
+fn __rdi_factory_{Name}(resolver: &dyn lrdi::IServiceResolver)
+    -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+{
+    let v: ::std::sync::Arc<{Name}> = __rdi_construct_{Name}(resolver);
+    ::std::sync::Arc::new(v)
+        as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+}
+```
+
+**第五阶段：生成 inventory 注册代码**
+
+根据 `InjectArgs` 变体，生成 `inventory::submit!` 调用：
+
+- `Plain`：以结构体自身的 `TypeId` 和 `type_name` 注册
+- `AsTrait`：以 trait 的 `TypeId` 和 `type_name` 注册
+- `AsTraits`：为每个 trait 分别生成一个 `submit!` 调用（同一 factory 多注册）
+
+```rust
+lrdi::inventory::submit! {
+    lrdi::ServiceRegistration {
+        lifetime: lrdi::ServiceLifetime::Singleton,  // 根据参数确定
+        type_id: ::std::any::TypeId::of::<MyService>(),
+        type_name: ::std::any::type_name::<MyService>(),
+        factory: __rdi_factory_MyService,
+    }
+}
+```
+
+最终输出为：原结构体定义 + 构造器函数 + 工厂函数 + inventory 注册代码。
+
+---
+
+### 1.2 语法完整参考
+
+#### 语法 1：普通注册
+
+```rust
+#[lrdi::inject(singleton)]
+struct MyService {
+    logger: Arc<Logger>,
+    #[inject(skip)]
+    label: String,
+}
+```
+
+生命周期可选值：`singleton`、`scoped`、`transient`。
+
+等价于手动编写：
+```rust
+#[derive(Inject)]
+struct MyService { ... }
+// + 手动注册：
+// ServiceCollection::new().singleton(|_| __rdi_construct_MyService(&resolver))
+// 或简写：.singleton(|_| Arc::new(MyService::default()))
+```
+
+#### 语法 2：注册为 trait 接口
+
+```rust
+// 单 trait 注册
+#[lrdi::inject(singleton, as = dyn IPlugin)]
+struct TestPlugin { /* ... */ }
+
+// 多 trait 注册（同一实例注册为多个接口）
+#[lrdi::inject(singleton, as = [dyn IPlugin, dyn ILogger])]
+struct DualPlugin { /* ... */ }
+```
+
+当使用 `as = dyn Trait` 时，inventory 以 `dyn Trait` 的 `TypeId` 注册，因此 `ServiceCollection::from_injected()` 收集后，可通过 `provider.get::<dyn IPlugin>()` 解析。多 trait 语法会为每个 trait 生成独立的 `submit!` 调用，所有指向同一工厂函数。
+
+#### 语法 3：字段 `#[inject(...)]` 属性
+
+`#[lrdi::inject]` 内部字段的 `#[inject(...)]` 属性与 `#[derive(Inject)]` **完全一致**：
+
+| 属性 | 字段类型 | 含义 |
+|------|---------|------|
+| 无标记 | `Arc<T>` | 必须注册，否则 panic |
+| `#[inject(skip)]` | 任意（需 `Default`） | 使用 `Default::default()` |
+| `#[inject(optional)]` | `Option<Arc<T>>` | 可选，未注册时返回 `None` |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控解析，必须注册 |
+| `#[inject(optional, key = "k")]` | `Option<Arc<T>>` | 键控可选 |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 直接注入 resolver |
+
+---
+
+### 1.3 `ServiceCollection::from_injected()` 收集注册
+
+`ServiceCollection::from_injected()` 是联结 `#[lrdi::inject]` 属性和 `ServiceCollection` 的关键 API。它遍历 `inventory` 中所有 `ServiceRegistration` 项目，组装为 `ServiceCollection`：
+
+```rust
+pub fn from_injected() -> Self {
+    let mut descriptors = Vec::new();
+    for reg in inventory::iter::<ServiceRegistration> {
+        let factory: ServiceFactory = Arc::new(move |r| (reg.factory)(r));
+        descriptors.push(ServiceDescriptor {
+            type_id: reg.type_id,
+            type_name: reg.type_name,
+            key: None,
+            factory,
+            lifetime: reg.lifetime,
+        });
+    }
+    Self { descriptors }
+}
+```
+
+**使用方式：**
+
+```rust
+let provider = ServiceCollection::from_injected()
+    // 可额外手动注册（覆盖或补充）
+    .singleton(|_| Arc::new(ExtraService::default()))
+    .build()?;
+```
+
+**注意事项：**
+
+- `from_injected()` 收集所有使用了 `#[lrdi::inject]` 的 struct 注册，**跨 crate 有效**（依赖 inventory 的全局注册机制）
+- 返回的 `ServiceCollection` 可以继续链式调用其他注册方法
+- 若同时使用 `from_injected()` 和手动注册相同类型，后者会覆盖前者（因为 `ServiceCollection` 后续注册追加到描述符列表尾部，`build()` 时后注册的生效）
+- 要求 `Cargo.toml` 中使用 `inventory` 特性或依赖 lrdi 的默认特性
+
+---
+
+### 1.4 实战：完整示例
+
+```rust
+use lrdi::*;
+use std::sync::Arc;
+
+// ── 普通注册 ──
+#[lrdi::inject(singleton)]
+struct Logger {
+    prefix: String,
+}
+
+impl Default for Logger {
+    fn default() -> Self {
+        Logger { prefix: "app".into() }
+    }
+}
+
+// ── Trait 接口注册 ──
+trait IPlugin: Send + Sync {
+    fn name(&self) -> &'static str;
+}
+
+#[lrdi::inject(singleton, as = dyn IPlugin)]
+struct TestPlugin {
+    #[inject(skip)]
+    name: &'static str,
+}
+
+impl IPlugin for TestPlugin {
+    fn name(&self) -> &'static str { self.name }
+}
+
+impl Default for TestPlugin {
+    fn default() -> Self {
+        TestPlugin { name: "test" }
+    }
+}
+
+// ── 多 trait 注册 ──
+trait ILogger: Send + Sync {
+    fn log(&self, msg: &str);
+}
+
+#[lrdi::inject(singleton, as = [dyn IPlugin, dyn ILogger])]
+struct DualService;
+
+impl IPlugin for DualService {
+    fn name(&self) -> &'static str { "dual" }
+}
+
+impl ILogger for DualService {
+    fn log(&self, msg: &str) { println!("{msg}"); }
+}
+
+impl Default for DualService { fn default() -> Self { DualService } }
+
+// ── 字段注入完整示例 ──
+#[lrdi::inject(singleton)]
+struct OrderService {
+    logger: Arc<Logger>,
+    #[inject(optional)]
+    notifier: Option<Arc<Logger>>,
+    #[inject(key = "audit")]
+    audit: Arc<Logger>,
+    #[inject(skip)]
+    label: String,
+    #[inject(provider)]
+    resolver: Arc<dyn IServiceResolver>,
+}
+
+// ── 构建 provider ──
+fn main() -> Result<(), RdiError> {
+    let provider = ServiceCollection::from_injected()
+        .keyed("audit", |_| Arc::new(Logger { prefix: "audit".into() }))
+        .build()?;
+
+    let svc: Arc<OrderService> = provider.get::<OrderService>();
+    println!("Logger prefix: {}", svc.logger.prefix);
+    Ok(())
+}
+```
+
+---
+
+### 1.5 与 `#[derive(Inject)]` 的关系
+
+| 对比维度 | `#[lrdi::inject(singleton)]` | `#[derive(Inject)]` |
+|---------|------------------------------|---------------------|
+| **宏类型** | 属性宏 (attribute macro) | 派生宏 (derive macro) |
+| **构造函数生成** | ✅ 自动生成 | ✅ 自动生成 |
+| **服务注册** | ✅ `inventory::submit!` 自动注册 | ❌ 需要手动注册 |
+| **需额外代码** | 无 | 需手写 `.singleton(|_| __rdi_construct_X(&resolver))` |
+| **跨 crate 收集** | ✅ `from_injected()` 自动收集 | ❌ 需手动组合 |
+| **推荐度** | ⭐ **首选** | 仅用于特殊需求 |
+
+**结论：** 对于绝大多数场景，推荐直接使用 `#[lrdi::inject(...)]`。仅在需要精细控制注册时机或需要与旧代码兼容时才使用 `#[derive(Inject)]`。
+
+---
+
+### 1.6 编译错误排查
+
+| 错误信息 | 原因 | 解决方法 |
+|---------|------|---------|
+| `"only structs are supported"` | 对 `enum` 或 `union` 使用了 `#[lrdi::inject]` | 仅对 `struct` 使用此宏 |
+| `"named fields required"` | 结构体不是命名字段形式 | 改为命名字段结构体 |
+| `unknown lifetime: ...` | 生命周期参数拼写错误 | 使用 `singleton`、`scoped` 或 `transient` |
+| `#[inject]` 属性解析失败 | 字段属性拼写错误 | 仅支持 `skip`、`optional`、`key`、`provider` |
+| `Default` 缺失 | `#[inject(skip)]` 或 `#[lrdi::inject]` 要求 `Default` | 实现 `Default` trait |
+| 运行时 panic `"svc not registered"` | 依赖未注册 | 检查 `from_injected()` 或手动注册 |
+| 运行时 panic `"keyed not found"` | 键控依赖未注册 | 确保键名拼写匹配 |
+
+---
+
+## 二、`#[derive(Inject)]` 完整指南（被 `#[lrdi::inject]` 包含）
+
+> **说明：** `#[derive(Inject)]` 是 LRDI 的底层派生宏。它仅生成构造函数（`__rdi_construct_*`），不处理服务注册。
+> **推荐使用 `#[lrdi::inject(...)]` 替代**，后者在相同构造函数生成能力的基础上，额外自动完成 inventory 注册，
+> 并通过 `ServiceCollection::from_injected()` 统一收集，减少样板代码。
+> 以下内容保留供需要手动控制注册流程或理解底层原理时参考。
 
 ### 1.1 宏展开原理
 
@@ -280,7 +611,17 @@ pub fn __rdi_construct_MyService(resolver: &dyn lrdi::IServiceResolver)
 
 ---
 
-## 二、`#[lrdi::module]` 完整指南
+## 三、`#[lrdi::module]` 完整指南（特定场景）
+
+> **说明：** `#[lrdi::module]` 是特定场景下使用的宏方案，主要用于以下场景：
+> - **外部类型注册**：注册不在当前 crate 定义的服务（如第三方库类型）
+> - **条件编译**：通过模块级的 `#[cfg(...)]` 控制整组注册
+> - **特性开关**：结合 Cargo feature flag 控制模块激活
+> - **跨 DLL 插件导出**：模块自动生成 `build` 函数，适合插件按模块组织
+>
+> **常规场景优先使用 `#[lrdi::inject(...)]`**：对于当前 crate 内定义的服务，直接使用 `#[lrdi::inject(singleton)]` 属性宏更加简洁，
+> 同时自动完成 inventory 注册并通过 `ServiceCollection::from_injected()` 统一收集。
+> 以下内容保留供需要在模块级组织注册、使用 `inject!` 声明语法或理解底层原理时参考。
 
 ### 2.1 宏展开原理
 
@@ -681,45 +1022,57 @@ fn build_with_feature_toggle(enable_cache: bool) -> Result<Arc<ServiceProvider>,
 
 ---
 
-## 三、宏混合使用策略
+## 四、宏混合使用策略
 
-### 3.1 三种方式对比
+### 4.1 四种方式对比
 
-| 维度 | 手动工厂 | `#[derive(Inject)]` | `#[lrdi::module]` |
-|------|---------|-------------------|-------------------|
-| **控制粒度** | 最细，完全可控 | 消除构造器样板 | 消除注册样板 |
-| **代码量** | 最多 | 中等（需手写注册） | 最少 |
-| **灵活性** | 最高 | 中等（需配合 `#[inject(provider)]`） | 较低（局限于 Default 构造） |
-| **编译期安全** | 运行时发现缺失 | 运行时 panic 缺失 | 编译期检测重复 key |
-| **适用场景** | 复杂依赖链 | 领域模型、服务类 | 基础设施、默认配置 |
+| 维度 | 手动工厂 | `#[lrdi::inject]`（推荐） | `#[derive(Inject)]` | `#[lrdi::module]` |
+|------|---------|------------------------|-------------------|-------------------|
+| **宏类型** | — | 属性宏 | 派生宏 | 属性宏 |
+| **构造函数生成** | 手写 | ✅ 自动 | ✅ 自动 | ❌ |
+| **自动注册** | ❌ 手写 | ✅ inventory | ❌ 手写 | ✅ 模块内声明 |
+| **控制粒度** | 最细，完全可控 | 中等 | 消除构造器样板 | 消除注册样板 |
+| **代码量** | 最多 | 最少 | 中等（需手写注册） | 较少 |
+| **灵活性** | 最高 | 较高 | 中等（需配合 `#[inject(provider)]`） | 较低（局限于 Default 构造） |
+| **编译期安全** | 运行时发现缺失 | 运行时 panic 缺失 | 运行时 panic 缺失 | 编译期检测重复 key |
+| **适用场景** | 复杂依赖链 | **通用首选** | 旧代码兼容、精细控制 | 外部类型、条件编译、插件 |
 
-### 3.2 推荐架构组合
+### 4.2 推荐架构组合
+
+选择优先级：`#[lrdi::inject]` > `#[lrdi::module]` > 手动 `ServiceCollection`
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  应用层（组合根）                                      │
-│  ┌─────────────────────────────────────────────────┐ │
-│  │  手动 ServiceCollection.build()                 │ │
-│  │  - 动态注册                                      │ │
-│  │  - 条件注册                                      │ │
-│  │  - 生命周期精细控制                                │ │
-│  └─────────────────────────────────────────────────┘ │
-│                        │                              │
-│  ┌─────────────────────▼───────────────────────────┐ │
-│  │  模块层                                           │ │
-│  │  #[lrdi::module] mod infra_module { ... }      │ │
-│  │  #[lrdi::module] mod plugin_module { ... }     │ │
-│  └─────────────────────────────────────────────────┘ │
-│                        │                              │
-│  ┌─────────────────────▼───────────────────────────┐ │
-│  │  领域层                                           │ │
-│  │  #[derive(Inject)] struct OrderService { ... }  │ │
-│  │  #[derive(Inject)] struct UserService { ... }   │ │
-│  └─────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  应用层（组合根）                                           │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │  ServiceCollection::from_injected() + 手动补充        │ │
+│  │  - 自动收集所有 #[lrdi::inject] 注册                  │ │
+│  │  - 动态注册 / 条件注册                                │ │
+│  │  - 生命周期精细控制                                   │ │
+│  └──────────────────────────────────────────────────────┘ │
+│                           │                                │
+│  ┌────────────────────────▼─────────────────────────────┐ │
+│  │  服务层                                                │ │
+│  │  #[lrdi::inject(singleton)] struct MyService { ... }  │ │
+│  │  #[lrdi::inject(singleton, as = dyn ITrait)]          │ │
+│  │  #[lrdi::inject(scoped, as = [dyn A, dyn B])]         │ │
+│  └───────────────────────────────────────────────────────┘ │
+│                           │                                │
+│  ┌────────────────────────▼─────────────────────────────┐ │
+│  │  模块层（特定场景）                                       │ │
+│  │  #[lrdi::module] mod infra_module { ... }             │ │
+│  │  #[lrdi::module] mod plugin_module { ... }            │ │
+│  └───────────────────────────────────────────────────────┘ │
+│                           │                                │
+│  ┌────────────────────────▼─────────────────────────────┐ │
+│  │  领域层（兼容旧代码）                                       │ │
+│  │  #[derive(Inject)] struct OrderService { ... }       │ │
+│  │  #[derive(Inject)] struct UserService { ... }        │ │
+│  └───────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
 ```
 
-### 3.3 完整混合示例
+### 4.3 完整混合示例
 
 ```rust
 use lrdi::*;
@@ -737,9 +1090,9 @@ struct CacheConfig { ttl_secs: u64 }
 #[derive(Default)]
 struct Logger { prefix: String }
 
-// ─── 领域服务：使用 #[derive(Inject)] ──────────────
+// ─── 推荐方式：使用 #[lrdi::inject] 自动注册 ─────
 
-#[derive(Inject)]
+#[lrdi::inject(singleton)]
 struct OrderProcessor {
     logger: Arc<Logger>,
     db_config: Arc<DatabaseConfig>,
@@ -747,7 +1100,7 @@ struct OrderProcessor {
     cache_config: Option<Arc<CacheConfig>>,
 }
 
-// ─── 基础设施模块：使用 #[lrdi::module] ────────────
+// ─── 基础设施模块：使用 #[lrdi::module] 注册外部类型 ─
 
 #[lrdi::module]
 mod infra {
@@ -755,14 +1108,14 @@ mod infra {
     lrdi::inject!(singleton: super::DatabaseConfig);
 }
 
-// ─── 组合根：手动 ServiceCollection ────────────────
+// ─── 组合根：from_injected + 手动补充 ──────────────
 
 fn build_app(use_cache: bool) -> Result<Arc<ServiceProvider>, RdiError> {
-    // 先获取基础设施 provider
-    let infra_provider = infra::__rdi_build_provider_infra()?;
+    let mut col = ServiceCollection::from_injected();
 
-    // 手动构建，条件注册
-    let mut col = ServiceCollection::new()
+    // 手动注册 #[lrdi::module] 中的服务
+    let infra_provider = infra::__rdi_build_provider_infra()?;
+    col = col
         .singleton(|_| Arc::clone(&infra_provider.get::<Logger>()))
         .singleton(|_| Arc::clone(&infra_provider.get::<DatabaseConfig>()));
 
@@ -775,9 +1128,8 @@ fn build_app(use_cache: bool) -> Result<Arc<ServiceProvider>, RdiError> {
 
 fn main() -> Result<(), RdiError> {
     let provider = build_app(true)?;
-    let order_proc = __rdi_construct_OrderProcessor(&provider);
+    let order_proc: Arc<OrderProcessor> = provider.get::<OrderProcessor>();
 
-    assert_eq!(order_proc.logger.prefix, "");
     assert!(order_proc.cache_config.is_some());  // 因 use_cache=true
     Ok(())
 }
@@ -785,10 +1137,17 @@ fn main() -> Result<(), RdiError> {
 
 ---
 
-## 四、源码映射速查表
+## 五、源码映射速查表
 
 | 宏/概念 | 源码位置 (`crates/lrdi-macros/src/lib.rs`) | 关键类型/函数 |
 |--------|------------------------------------------|-------------|
+| `#[lrdi::inject(...)]` 入口 | 第 369-376 行 | `inject_attr()` |
+| `#[lrdi::inject(...)]` 展开逻辑 | 第 378-512 行 | `expand_inject_attr()` |
+| 属性参数解析 | 第 320-366 行 | `InjectArgs { Plain, AsTrait, AsTraits }` |
+| 构造器 + 工厂生成 | 第 417-461 行 | `__rdi_construct_*`, `__rdi_factory_*` |
+| inventory 注册生成 | 第 463-504 行 | `ServiceRegistration { lifetime, type_id, type_name, factory }` |
+| `from_injected()` | `crates/lrdi/src/collection.rs` 第 128-141 行 | `inventory::iter::<ServiceRegistration>` |
+| `ServiceRegistration` | `crates/lrdi/src/registration.rs` | `inventory::collect!(ServiceRegistration)` |
 | `#[derive(Inject)]` 入口 | 第 10-15 行 | `inject_derive()` |
 | 核心展开逻辑 | 第 17-52 行 | `expand_inject()` |
 | 类型剥离 | 第 54-87 行 | `saw()` |

@@ -55,6 +55,7 @@ pub mod entry;
 pub mod error;
 pub mod lifetime;
 pub mod provider;
+pub mod registration;
 pub mod resolve;
 pub mod scope;
 pub mod service_locator;
@@ -113,6 +114,19 @@ pub use bridge::{RdiProvider, ServiceLocatorBridge};
 /// Error types returned from service resolution.
 pub use error::RdiError;
 
+// ── Runtime registration ──
+
+pub use registration::ServiceRegistration;
+
+/// Re-export of `inventory` so that `#[lrdi::inject]` generated code
+/// can call `lrdi::inventory::submit!` without requiring downstream crates
+/// to add `inventory` to their own `Cargo.toml`.
+#[doc(hidden)]
+pub use inventory;
+
 // ── Proc-macros ──
 
-pub use lrdi_macros::{inject, module, Inject};
+// Note: `inject_attr` is the attribute macro; `inject` is the declare macro
+// used inside `#[lrdi::module]`. Users write both as `#[lrdi::inject(...)]`
+// and `lrdi::inject!(...)` respectively.
+pub use lrdi_macros::{inject, inject_attr, module, Inject};

@@ -8,12 +8,13 @@
 
 1. [ServiceLifetime 枚举](#servicelifetime-枚举)
 2. [ServiceCollection（注册 API）](#servicecollection注册-api)
-3. [ServiceProvider（解析 API）](#serviceprovider解析-api)
-4. [Scope（作用域 API）](#scope作用域-api)
-5. [ServiceProviderWrapper（分层容器 API）](#serviceproviderwrapper分层容器-api)
-6. [IServiceResolver（核心 trait）](#iserviceresolver核心-trait)
-7. [IServiceLocator / ServiceLocatorBridge / RdiProvider](#iservicelocator--servicelocatorbridge--rdiprovider)
-8. [RdiError 错误类型](#rdierror-错误类型)
+3. [过程宏（Procedural Macros）](#过程宏procedural-macros)
+4. [ServiceProvider（解析 API）](#serviceprovider解析-api)
+5. [Scope（作用域 API）](#scope作用域-api)
+6. [ServiceProviderWrapper（分层容器 API）](#serviceproviderwrapper分层容器-api)
+7. [IServiceResolver（核心 trait）](#iserviceresolver核心-trait)
+8. [IServiceLocator / ServiceLocatorBridge / RdiProvider](#iservicelocator--servicelocatorbridge--rdiprovider)
+9. [RdiError 错误类型](#rdierror-错误类型)
 
 ---
 
@@ -467,6 +468,152 @@ pub fn build(self) -> Result<ServiceProvider, RdiError>
 5. 返回 `Ok(ServiceProvider)`
 
 **错误**：当前实现不会返回 `Err`（始终 `Ok(ServiceProvider)`），但签名保留扩展空间。
+
+### `from_injected()` — 从属性宏构建集合
+
+```rust
+pub fn from_injected() -> Self
+```
+
+收集当前 binary 中所有 `#[lrdi::inject(...)]` 标注的服务，构建 `ServiceCollection`。
+必须在应用入口处调用一次。之后可以链式调用其他注册方法补充服务。
+
+**实现机制**：遍历 `inventory` 迭代器中所有 `ServiceRegistration` 条目（由 `#[lrdi::inject(...)]`
+在编译期通过 `inventory::submit!` 提交），将其转换为 `ServiceDescriptor` 并存入新集合。
+
+**示例：**
+
+```rust
+use lrdi::*;
+use std::sync::Arc;
+
+#[lrdi::inject(S)]
+struct Logger { prefix: String }
+
+#[lrdi::inject(T)]
+struct Worker { logger: Arc<Logger> }
+
+let provider = ServiceCollection::from_injected()
+    .singleton(|_| Arc::new(ExtraService))
+    .build()
+    .unwrap();
+```
+
+---
+
+## 过程宏（Procedural Macros）
+
+定义于 `lrdi-macros` crate，通过 `lrdi` 重新导出。
+
+### `#[lrdi::inject(...)]` — 属性宏自动注册
+
+```rust
+// 语法格式：
+//   #[lrdi::inject(<lifetime>)]                // 按自身类型注册
+//   #[lrdi::inject(<lifetime>, as = <trait>)]  // 按 trait 注册
+//   #[lrdi::inject(<lifetime>, as = [<trait1>, <trait2>])]  // 按多个 trait 注册
+```
+
+**生命周期参数：**
+
+| 缩写 | 含义 |
+|------|------|
+| `S` | Singleton |
+| `Sc` | Scoped |
+| `T` | Transient |
+
+**功能：** 标注在 struct 上，在编译期生成三项代码：
+
+1. 一个构造函数 `__rdi_construct_<StructName>(resolver: &dyn IServiceResolver) -> Arc<StructName>`，
+   自动从 DI 容器解析所有命名字段
+2. 一个工厂函数，将构造函数包装为 `ServiceFactory` 签名
+3. 通过 `lrdi::inventory::submit!` 提交 `ServiceRegistration` 条目，供
+   `ServiceCollection::from_injected()` 收集
+
+**字段属性（`#[inject(...)]`）：**
+
+在 struct 字段上使用的辅助属性：
+
+| 属性 | 含义 |
+|------|------|
+| `#[inject(skip)]` | 该字段使用 `Default::default()`，不从容器解析 |
+| `#[inject(optional)]` | 该字段解析为 `Option<Arc<T>>`，服务未注册时返回 `None` |
+| `#[inject(provider)]` | 该字段注入 `dyn IServiceResolver` 本身 |
+| `#[inject(key = "...")]` | 该字段按 key 解析键控服务 |
+
+**示例：**
+
+```rust
+use lrdi::*;
+use std::sync::Arc;
+
+trait ILogger: Send + Sync { fn log(&self, msg: &str); }
+
+struct ConsoleLogger;
+impl ILogger for ConsoleLogger {
+    fn log(&self, msg: &str) { println!("{msg}"); }
+}
+
+// 按自身类型注册为 Singleton
+#[lrdi::inject(S)]
+struct Logger { prefix: String }
+
+// 按 trait 注册为 Singleton，字段可选
+#[lrdi::inject(S, as = dyn ILogger)]
+struct AppService {
+    #[inject(optional)]
+    logger: Option<Arc<dyn ILogger>>,
+    #[inject(skip)]
+    name: String,
+}
+
+let provider = ServiceCollection::from_injected()
+    .singleton_value("my_app")
+    .build()
+    .unwrap();
+
+let logger: Arc<Logger> = provider.get();
+```
+
+### `#[derive(Inject)]` — 派生宏构造器注入
+
+```rust
+#[derive(Inject)]
+struct MyService { /* ... */ }
+```
+
+为 struct 生成 `__rdi_construct_<StructName>(resolver: &dyn IServiceResolver) -> Arc<StructName>`
+构造函数。与 `#[lrdi::inject]` 的区别：**不自注册到容器**，仅生成构造函数代码，
+需手动通过 `ServiceCollection::new().transient(|p| __rdi_construct_MyService(p))` 等方式注册。
+
+字段属性 `#[inject(...)]` 的语义与 `#[lrdi::inject]` 相同。
+
+### `#[lrdi::module]` — 编译期模块扫描
+
+```rust
+#[lrdi::module]
+mod services {
+    lrdi::inject!(singleton: dyn ILogger => ConsoleLogger);
+    lrdi::inject!(transient: MyService);
+    lrdi::inject!(keyed "x": singleton: dyn IPlugin => XPlugin);
+}
+
+let provider = services::__rdi_build_provider_services();
+```
+
+`#[lrdi::module]` 扫描模块内所有 `lrdi::inject!(...)` 声明，生成一个
+`__rdi_build_provider_<mod_name>()` 函数，调用该函数即可获得预配置的 `ServiceProvider`。
+
+支持的 `lrdi::inject!(...)` 语法：
+
+| 语法 | 含义 |
+|------|------|
+| `singleton: MyType` | 按自身类型注册为 Singleton |
+| `scoped: MyType` | 按自身类型注册为 Scoped |
+| `transient: MyType` | 按自身类型注册为 Transient |
+| `singleton: dyn Trait => ImplStruct` | 按 trait 注册 Singleton |
+| `keyed "k": singleton: MyType` | 键控注册 |
+| `factory singleton: MyType => MyType { ... }` | 工厂表达式注册 |
 
 ---
 

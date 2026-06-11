@@ -3,7 +3,7 @@ name: lrdi-skill
 description: >
   使用 LRDI（Rust 依赖注入框架）构建松耦合、可测试、可插拔的 Rust 应用程序。
   涵盖 DI 容器注册/解析、生命周期管理、键控服务、分层容器、跨 DLL 插件、
-  过程宏（#[derive(Inject)]、#[lrdi::module]）以及策略、工厂、装饰器等
+  过程宏（#[derive(Inject)]、#[lrdi::inject]、#[lrdi::module]）以及策略、工厂、装饰器等
   设计模式的 LRDI 实现。当用户需要在 Rust 项目中引入依赖注入、构建插件系统、
   设计多层架构或实施可测试的服务解耦时使用此技能。
 ---
@@ -24,7 +24,7 @@ description: >
 - 为已有 Rust 项目添加 DI 容器配置
 - 实现插件系统、键控服务、分层容器
 - 编写使用 LRDI 的单元测试或集成测试
-- 使用 `#[derive(Inject)]` 或 `#[lrdi::module]` 过程宏
+- 使用 `#[derive(Inject)]`、`#[lrdi::inject]` 或 `#[lrdi::module]` 过程宏
 - 跨 DLL/cdylib 边界的服务共享
 - 从 .NET MEDI 迁移到 Rust
 - 实施策略、工厂、装饰器等设计模式
@@ -41,7 +41,7 @@ description: >
 |------|---------|------|
 | `reference/api.md` | 用户询问具体 API 签名、方法参数、返回值 | 所有公开 API 的完整签名、行为语义、代码示例 |
 | `guides/architecture.md` | 用户问"怎么设计架构"、"如何分层" | 架构原理、类型关系图、生命周期决策树、注册/解析流程图 |
-| `guides/macros.md` | 用户使用 `#[derive(Inject)]` 或 `#[lrdi::module]` | 过程宏的字段属性、声明语法、生成代码结构、编译错误排查 |
+| `guides/macros.md` | 用户使用 `#[derive(Inject)]`、`#[lrdi::inject]` 或 `#[lrdi::module]` | 过程宏的字段属性、声明语法、生成代码结构、编译错误排查 |
 | `guides/testing.md` | 用户写测试或 mock 服务 | 测试 provider 构建、mock 替换策略、测试隔离模式 |
 | `guides/plugin-system.md` | 用户构建插件系统、跨 DLL 服务 | 分层容器、命名服务、IServiceLocator、cdylib 插件生命周期 |
 | `patterns/design-patterns.md` | 用户问"怎么实现策略/工厂/装饰器..." | 12 种设计模式的完整 LRDI 实现代码 |
@@ -66,13 +66,28 @@ description: >
 ### 当用户要注册服务
 
 1. 确认服务类型：具体类型还是 `dyn Trait`？
-2. 选择注册方法：
+2. **首选方案**：使用 `#[lrdi::inject]` 属性宏标注在 struct 上，自动完成注册和构造
+   - `#[lrdi::inject(singleton)]` — 具体类型 Singleton
+   - `#[lrdi::inject(transient)]` — 具体类型 Transient
+   - `#[lrdi::inject(transient, as = dyn Trait)]` — 注册为接口 Transient
+   - 支持自动解析字段依赖（通过 `#[inject(...)]` 字段属性控制注入行为）
+3. **备选方案**：手动 `ServiceCollection` API
    - 具体类型 + 全局唯一 → `.singleton(|_| Arc::new(T))`
    - 具体类型 + 每次新建 → `.transient(|_| Arc::new(T))`  
    - `dyn Trait` → `.singleton::<dyn Trait>(|_| Arc::new(Impl))`
    - 同类型多实例 → `.keyed("name", |_| Arc::new(T))`
    - 已有 Arc 实例 → `.instance(arc)`
-3. **关键规则**：注册时的 `T` 类型决定了解析时的 `TypeId`。注册为 `dyn Trait` 才能以 `dyn Trait` 解析，注册为具体类型只能以具体类型解析。
+4. **关键规则**：注册时的 `T` 类型决定了解析时的 `TypeId`。注册为 `dyn Trait` 才能以 `dyn Trait` 解析，注册为具体类型只能以具体类型解析。
+
+### 注册语法参考
+
+| 语法 | 含义 |
+|------|------|
+| `#[lrdi::inject(singleton)]` | 注册为具体类型 Singleton |
+| `#[lrdi::inject(transient)]` | 注册为具体类型 Transient |
+| `#[lrdi::inject(scoped)]` | 注册为具体类型 Scoped |
+| `#[lrdi::inject(transient, as = dyn Trait)]` | 接口注册 Transient |
+| `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` | 多接口注册 Singleton |
 
 ### 当用户要解析服务
 
@@ -92,9 +107,14 @@ description: >
 ### 当用户使用过程宏
 
 1. 加载 `guides/macros.md`
-2. `#[derive(Inject)]`：标记结构体，字段用 `#[inject(...)]` 属性控制注入行为
-3. `#[lrdi::module]`：在 mod 块内用 `lrdi::inject!()` 声明式注册
-4. 检查编译错误：重复 key、非命名结构体、缺失 `Default` 实现
+2. **第一步（首选）**：`#[lrdi::inject(singleton)]` 直接标注在 struct 上，自动注册和构造
+   - 标注生命周期参数（`singleton` / `transient` / `scoped`）
+   - 指向接口：`#[lrdi::inject(transient, as = dyn Trait)]`
+   - 多接口注册：`#[lrdi::inject(singleton, as = [dyn A, dyn B])]`
+   - 字段通过 `#[inject(...)]` 属性控制依赖注入行为
+3. **第二步**：面向接口编程时，用 `#[lrdi::inject(transient, as = dyn Trait)]` 绑定具体实现
+4. **第三步（备选）**：复杂场景（简单工厂、键控服务、跨模块组装）用 `#[lrdi::module]` + `lrdi::inject!()`
+5. 检查编译错误：重复 key、非命名结构体、缺失 `Default` 实现
 
 ---
 
@@ -151,16 +171,28 @@ fn test_provider() -> ServiceProvider {
 
 ## 常见任务模板
 
-### 模板 1：最小化 LRDI 项目
+### 模板 1：最小化 LRDI 项目（`#[lrdi::inject]` 属性宏）
 ```rust
 use lrdi::*;
 use std::sync::Arc;
 
+#[lrdi::inject(singleton)]
+struct Config;
+
+#[lrdi::inject(transient)]
+struct AppService {
+    config: Arc<Config>,
+}
+
+impl AppService {
+    fn run(&self) {
+        println!("App started");
+    }
+}
+
 fn main() {
     let provider = Arc::new(
-        ServiceCollection::new()
-            .singleton(|_| Arc::new(Config::from_env()))
-            .transient(|p| Arc::new(AppService::new(p.get::<Config>())))
+        ServiceCollection::from_injected()
             .build()
             .unwrap()
     );
@@ -202,8 +234,10 @@ fn test_business_logic() {
 1. **panic: "service not registered: xxx"** → 检查注册时的类型是否与解析时的类型一致（规则 1）
 2. **panic: "keyed service not registered: xxx:yyy"** → 检查 key 名称拼写，或用 `try_get_keyed` 替代
 3. **`#[derive(Inject)]` 编译失败** → 检查是否用了元组结构体（不支持），加载 `guides/macros.md`
-4. **`#[lrdi::module]` 编译失败** → 检查是否有重复 key，检查 `inject!` 语法
-5. **服务未按预期缓存** → 检查生命周期设置，Singleton 在 provider 构建时即初始化
+4. **`#[lrdi::inject]` 编译失败** → 检查 struct 是否为命名结构体（不支持元组/单元结构体），检查 `as = dyn Trait` 中 Trait 路径是否正确
+5. **`#[lrdi::inject]` 无法推断依赖** → 检查字段类型是否已注册，或使用 `#[inject(provider)]` 手动获取
+6. **`#[lrdi::module]` 编译失败** → 检查是否有重复 key，检查 `inject!` 语法
+7. **服务未按预期缓存** → 检查生命周期设置，Singleton 在 provider 构建时即初始化
 
 ---
 
@@ -214,7 +248,7 @@ fn test_business_logic() {
     │
     ├── "怎么注册服务？" → 加载 reference/api.md → 选生命周期、选方法 → 写注册代码
     ├── "怎么设计架构？" → 加载 guides/architecture.md → 分层 → 选生命周期 → 写完整配置
-    ├── "怎么用宏？"     → 加载 guides/macros.md → 写 #[derive] 或 #[module] → 检查编译
+    ├── "怎么用宏？"     → 加载 guides/macros.md → 写 #[derive]、#[lrdi::inject] 或 #[module] → 检查编译
     ├── "怎么测试？"     → 加载 guides/testing.md → 构建 mock provider → 写测试
     ├── "做插件系统？"   → 加载 guides/plugin-system.md → 设计接口 → 分层容器 → 命名服务
     └── "实现设计模式？" → 加载 patterns/design-patterns.md → 选模式 → 套用代码模板

@@ -22,7 +22,7 @@ Rust, inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 | Crate | What it does | Who needs it |
 |-------|-------------|--------------|
 | [`lrdi`](./crates/lrdi/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
-| [`lrdi-macros`](./crates/lrdi-macros/) | Procedural macros — `#[derive(Inject)]`, `#[lrdi::module]` | Anyone using `lrdi` who wants compile-time code generation instead of manual wiring |
+| [`lrdi-macros`](./crates/lrdi-macros/) | Procedural macros — `#[derive(Inject)]`, `#[lrdi::inject]`, `#[lrdi::module]` | Anyone using `lrdi` who wants compile-time code generation instead of manual wiring |
 
 ## Quick Start
 
@@ -30,12 +30,15 @@ Rust, inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 use lrdi::*;
 use std::sync::Arc;
 
+// Annotate your structs with #[lrdi::inject(...)]
+#[lrdi::inject(singleton)]
 struct Logger { prefix: String }
+
+#[lrdi::inject(transient)]
 struct Worker { logger: Arc<Logger> }
 
-let provider = ServiceCollection::new()
-    .singleton(|_| Arc::new(Logger { prefix: "INFO".into() }))
-    .transient(|p| Arc::new(Worker { logger: p.get() }))
+// Auto-discover and build in one call
+let provider = ServiceCollection::from_injected()
     .build()
     .unwrap();
 
@@ -46,6 +49,18 @@ let logger: Arc<Logger> = provider.get();
 [dependencies]
 lrdi = "0.1"
 ```
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| `#[lrdi::inject]` | Attribute-macro-based auto-registration — annotate structs and call `ServiceCollection::from_injected()` |
+| `#[derive(Inject)]` | Derive-macro for constructor injection on structs (advanced) |
+| `#[lrdi::module]` | Compile-time module scanning to collect `lrdi::inject!(...)` declarations (advanced) |
+| **Three lifetimes** | Singleton, Scoped, Transient |
+| **Keyed services** | Multiple instances of the same type distinguished by a string key |
+| **Cross-DLL support** | Named service registry for cdylib plugin systems |
+| **Layered containers** | Child-first resolution via `ServiceProviderWrapper` |
 
 ## When should you use LRDI?
 

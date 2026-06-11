@@ -1,6 +1,7 @@
 use crate::descriptor::ServiceDescriptor;
 use crate::entry::ServiceFactory;
 use crate::lifetime::ServiceLifetime;
+use crate::registration::ServiceRegistration;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
@@ -120,6 +121,23 @@ impl ServiceCollection {
             s.entry(d.type_id).or_default().push(e);
         }
         crate::provider::ServiceProvider::new(s)
+    }
+
+    /// Build a `ServiceCollection` from all `#[lrdi::inject]` annotations
+    /// in the current binary (across all crates).
+    pub fn from_injected() -> Self {
+        let mut descriptors = Vec::new();
+        for reg in inventory::iter::<ServiceRegistration> {
+            let factory: ServiceFactory = Arc::new(move |r| (reg.factory)(r));
+            descriptors.push(ServiceDescriptor {
+                type_id: reg.type_id,
+                type_name: reg.type_name,
+                key: None,
+                factory,
+                lifetime: reg.lifetime,
+            });
+        }
+        Self { descriptors }
     }
 
     fn push<T: ?Sized + Send + Sync + 'static>(

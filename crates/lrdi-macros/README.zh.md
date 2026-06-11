@@ -29,10 +29,55 @@ lrdi = "0.1"       // 所有宏都被重新导出——通常不需要直接依�
 
 ### 宏
 
+#### `#[lrdi::inject(...)]` — 基于属性宏的自动注册（推荐）
+
+**功能**：在一个属性内同时完成构造函数生成和服务注册。标注生命周期和可选的
+接口绑定，宏即可生成构造函数和 `inventory` 注册条目。
+`ServiceCollection::from_injected()` 在启动时自动收集所有条目。
+
+```rust
+use lrdi::*;
+
+// 具体类型，Singleton
+#[lrdi::inject(singleton)]
+struct Config;
+
+// 接口绑定，Transient
+#[lrdi::inject(transient, as = dyn UserRepo)]
+struct PgUserRepo { db: Arc<DbPool> }
+
+// 多接口绑定
+#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]
+struct BootLoader;
+
+// 一步收集并构建
+let provider = ServiceCollection::from_injected().build().unwrap();
+```
+
+**支持的语法**：
+
+| 属性 | 注册方式 |
+|-----------|-------------|
+| `#[lrdi::inject(singleton)]` | 具体类型，Singleton |
+| `#[lrdi::inject(transient)]` | 具体类型，Transient |
+| `#[lrdi::inject(scoped)]` | 具体类型，Scoped |
+| `#[lrdi::inject(transient, as = dyn Trait)]` | `dyn Trait`，Transient |
+| `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` | 多 trait，Singleton |
+
+该宏包含 `#[derive(Inject)]` 的功能——内部生成相同的构造函数
+（`__rdi_construct_{类型}`），使用相同的字段属性语法
+（`#[inject(skip)]`、`#[inject(optional)]`、`#[inject(key = "...")]` 等），
+**无需同时使用两者**。
+
+---
+
 #### `#[derive(Inject)]` — 自动生成构造函数
 
 **功能**：读取结构体字段及其 `#[inject(...)]` 属性，生成一个工厂函数
-`__lrdi_construct_{类型名}()`，自动从容器中解析每个字段。
+`__rdi_construct_{类型名}()`，自动从容器中解析每个字段。
+
+> **注意**：此派生宏已被 `#[lrdi::inject(...)]` 包含。仅当你需要生成
+> 构造函数但不想自动注册时才使用 `#[derive(Inject)]`。
 
 **不使用宏**，需要手动写工厂闭包：
 
@@ -50,22 +95,20 @@ let provider = ServiceCollection::new()
 **使用宏**，自动生成完全相同的代码：
 
 ```rust
-use lrdi_macros::Inject;
-
 #[derive(Inject)]
 struct MyService {
     logger: Arc<Logger>,
     #[inject(key = "main")]
     cache: Arc<Cache>,
 }
-// 生成: __lrdi_construct_MyService(resolver) -> Arc<MyService>
+// 生成: __rdi_construct_MyService(resolver) -> Arc<MyService>
 ```
 
 生成的函数可以像工厂闭包一样使用：
 
 ```rust
 let provider = ServiceCollection::new()
-    .singleton(__lrdi_construct_MyService)
+    .singleton(__rdi_construct_MyService)
     .build().unwrap();
 ```
 
@@ -79,12 +122,6 @@ let provider = ServiceCollection::new()
 | `#[inject(key = "k")]` | `Arc<T>` | 键控解析，找不到 key 则 panic |
 | `#[inject(optional, key = "k")]` | `Option<Arc<T>>` | 可选键控解析 |
 | `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入容器自身 |
-
-**什么时候用**：
-
-- 你有很多服务结构体，手动拼接依赖重复且繁琐
-- 你希望 DI 配置与结构体定义放在一起
-- 你希望编译期验证所有字段都可注入
 
 ---
 
@@ -160,11 +197,12 @@ lrdi::inject!(singleton: MyService);
 
 | 方式 | 优点 | 缺点 |
 |------|------|------|
+| `#[lrdi::inject]`（推荐） | 零样板，自动注册 | 需要 `inventory`；`String` 字段需 `#[inject(skip)]` |
 | 手动工厂闭包 | 完全可控，显式 | 服务多时样板代码多 |
-| `#[derive(Inject)]` | 构造器零样板 | 仅支持命名结构体字段 |
-| `#[lrdi::module]` | 声明式，就近配置 | 动态注册灵活性较差 |
+| `#[derive(Inject)]` | 构造器零样板 | 仍需手动注册 |
+| `#[lrdi::module]` | 声明式，集中管理 | 动态注册灵活性较差 |
 
-三种方式可以在同一个项目中自由混用。
+所有方式可以在同一个项目中自由混用。
 
 ---
 

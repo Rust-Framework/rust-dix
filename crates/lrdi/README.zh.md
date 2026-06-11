@@ -115,6 +115,7 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 
 | 方法 | 生命周期 | 使用场景 |
 |--------|----------|---------|
+| `.from_injected()` | *混合* | 收集所有 `#[lrdi::inject]` 标注（推荐） |
 | `.singleton(f)` | Singleton | 全局只需要一个实例 |
 | `.scoped(f)` | Scoped | 每个作用域一个实例 |
 | `.transient(f)` | Transient | 每次解析都新建 |
@@ -135,6 +136,29 @@ ServiceCollection::new()
     .build()
     .unwrap();
 ```
+
+#### `#[lrdi::inject]` — 基于属性宏的自动注册（推荐）
+
+推荐的方式是直接在结构体上标注 `#[lrdi::inject(...)]`：
+
+```rust
+use lrdi::*;
+
+#[lrdi::inject(singleton)]             // 注册为具体类型
+struct Config { url: String }
+
+#[lrdi::inject(transient, as = dyn UserRepo)]  // 注册为 trait 接口
+struct PgUserRepo { db: Arc<DbPool> }
+
+#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // 多接口
+struct BootLoader;
+
+// 一步收集所有标注并构建：
+let provider = ServiceCollection::from_injected().build().unwrap();
+```
+
+`#[lrdi::inject]` 属性宏自动生成构造函数代码（类似 `#[derive(Inject)]`）
+并通过 `inventory` 自动注册到容器。
 
 #### 解析（`ServiceProvider` / `Scope`）
 
@@ -285,11 +309,13 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 ### 与 lrdi-macros 的关系
 
 `lrdi` 可以独立使用，也可以配合 [`lrdi-macros`](../lrdi-macros/) 使用。
-过程宏提供两个编译期便利：
+过程宏提供三个编译期便利：
 
-- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，消除定义服务时的样板代码。
+- **`#[lrdi::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
+  只需在结构体上标注一行，`ServiceCollection::from_injected()` 自动收集所有注册。
+- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，`#[lrdi::inject]` 内部使用。
 - **`#[lrdi::module]`** — 编译期收集 `lrdi::inject!()` 声明，生成完整的 provider
-  构建函数，消除手动拼接 `ServiceCollection` 调用链。
+  构建函数。适用于外部类型注册、条件编译和集中式管理。
 
 详见 [`lrdi-macros/README.md`](../lrdi-macros/README.md)。
 

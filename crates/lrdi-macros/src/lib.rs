@@ -4,7 +4,9 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, DeriveInput, Field, Fields, ItemMod, Token,
+    parse_macro_input,
+    punctuated::Punctuated,
+    DeriveInput, Field, Fields, ItemMod, Token,
 };
 
 #[proc_macro_derive(Inject, attributes(inject))]
@@ -311,4 +313,200 @@ impl Parse for ID {
             kind: IK::N { lt, ty, imp },
         })
     }
+}
+
+// ── `#[lrdi::inject(...)]` attribute macro ──
+
+/// Parsed arguments of `#[lrdi::inject(...)]`
+enum InjectArgs {
+    Plain {
+        lifetime: LT,
+    },
+    AsTrait {
+        lifetime: LT,
+        trait_ty: syn::Type,
+    },
+    AsTraits {
+        lifetime: LT,
+        trait_tys: Vec<syn::Type>,
+    },
+}
+
+impl Parse for InjectArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let lt: LT = input.parse()?;
+
+        if input.peek(Token![,]) {
+            let _: Token![,] = input.parse()?;
+            if input.peek(syn::Ident) && input.peek2(Token![=]) {
+                let _: syn::Ident = input.parse()?; // "as"
+                let _: Token![=] = input.parse()?;
+
+                if input.peek(syn::token::Bracket) {
+                    let content;
+                    let _ = syn::bracketed!(content in input);
+                    let tys: Punctuated<syn::Type, Token![,]> =
+                        content.parse_terminated(syn::Type::parse, Token![,])?;
+                    return Ok(InjectArgs::AsTraits {
+                        lifetime: lt,
+                        trait_tys: tys.into_iter().collect(),
+                    });
+                } else {
+                    let ty: syn::Type = input.parse()?;
+                    return Ok(InjectArgs::AsTrait {
+                        lifetime: lt,
+                        trait_ty: ty,
+                    });
+                }
+            }
+        }
+
+        Ok(InjectArgs::Plain { lifetime: lt })
+    }
+}
+
+#[proc_macro_attribute]
+pub fn inject_attr(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_inject_attr(
+        parse_macro_input!(attr as InjectArgs),
+        parse_macro_input!(item as syn::Item),
+    )
+    .unwrap_or_else(|e| e.to_compile_error())
+    .into()
+}
+
+fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_macro2::TokenStream> {
+    let struct_item = match &item {
+        syn::Item::Struct(s) => s,
+        _ => return Err(syn::Error::new_spanned(&item, "only structs are supported")),
+    };
+
+    let name = &struct_item.ident;
+    let fn_name = format_ident!("__rdi_construct_{}", name);
+    let factory_name = format_ident!("__rdi_factory_{}", name);
+
+    let named = match &struct_item.fields {
+        syn::Fields::Named(n) => n,
+        _ => return Err(syn::Error::new_spanned(name, "named fields required")),
+    };
+
+    let mut inits = Vec::new();
+    for field in named.named.iter() {
+        let attrs = parse_ia(field);
+        let fnm = field.ident.as_ref().unwrap();
+        let (inner, _) = saw(&field.ty);
+
+        let init = if attrs.skip {
+            quote! { #fnm: ::std::default::Default::default() }
+        } else if attrs.provider {
+            quote! { #fnm: resolver.clone() }
+        } else if attrs.optional {
+            if let Some(k) = &attrs.key {
+                quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
+            } else {
+                quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
+            }
+        } else if let Some(k) = &attrs.key {
+            quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("keyed not found")) }
+        } else {
+            quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("svc not registered")) }
+        };
+        inits.push(init);
+    }
+
+    let constructor = quote! {
+        #[doc(hidden)]
+        pub fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<#name> {
+            ::std::sync::Arc::new(#name { #(#inits),* })
+        }
+    };
+
+    let lt_ident = match args {
+        InjectArgs::Plain { lifetime: LT::S }
+        | InjectArgs::AsTrait {
+            lifetime: LT::S, ..
+        }
+        | InjectArgs::AsTraits {
+            lifetime: LT::S, ..
+        } => {
+            quote! { lrdi::ServiceLifetime::Singleton }
+        }
+        InjectArgs::Plain { lifetime: LT::Sc }
+        | InjectArgs::AsTrait {
+            lifetime: LT::Sc, ..
+        }
+        | InjectArgs::AsTraits {
+            lifetime: LT::Sc, ..
+        } => {
+            quote! { lrdi::ServiceLifetime::Scoped }
+        }
+        InjectArgs::Plain { lifetime: LT::T }
+        | InjectArgs::AsTrait {
+            lifetime: LT::T, ..
+        }
+        | InjectArgs::AsTraits {
+            lifetime: LT::T, ..
+        } => {
+            quote! { lrdi::ServiceLifetime::Transient }
+        }
+    };
+
+    let factory_fn = quote! {
+        #[doc(hidden)]
+        fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+            let v: ::std::sync::Arc<#name> = #fn_name(resolver);
+            ::std::sync::Arc::new(v)
+                as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+        }
+    };
+
+    let submissions = match &args {
+        InjectArgs::Plain { .. } => {
+            quote! {
+                lrdi::inventory::submit! {
+                    lrdi::ServiceRegistration {
+                        lifetime: #lt_ident,
+                        type_id: ::std::any::TypeId::of::<#name>(),
+                        type_name: ::std::any::type_name::<#name>(),
+                        factory: #factory_name,
+                    }
+                }
+            }
+        }
+        InjectArgs::AsTrait { trait_ty, .. } => {
+            quote! {
+                lrdi::inventory::submit! {
+                    lrdi::ServiceRegistration {
+                        lifetime: #lt_ident,
+                        type_id: ::std::any::TypeId::of::<#trait_ty>(),
+                        type_name: ::std::any::type_name::<#trait_ty>(),
+                        factory: #factory_name,
+                    }
+                }
+            }
+        }
+        InjectArgs::AsTraits { trait_tys, .. } => {
+            let mut submissions = Vec::new();
+            for trait_ty in trait_tys {
+                submissions.push(quote! {
+                    lrdi::inventory::submit! {
+                        lrdi::ServiceRegistration {
+                            lifetime: #lt_ident,
+                            type_id: ::std::any::TypeId::of::<#trait_ty>(),
+                            type_name: ::std::any::type_name::<#trait_ty>(),
+                            factory: #factory_name,
+                        }
+                    }
+                });
+            }
+            quote! { #(#submissions)* }
+        }
+    };
+
+    Ok(quote! {
+        #item
+        #constructor
+        #factory_fn
+        #submissions
+    })
 }
