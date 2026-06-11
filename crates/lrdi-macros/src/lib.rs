@@ -338,8 +338,8 @@ impl Parse for InjectArgs {
 
         if input.peek(Token![,]) {
             let _: Token![,] = input.parse()?;
-            if input.peek(syn::Ident) && input.peek2(Token![=]) {
-                let _: syn::Ident = input.parse()?; // "as"
+            if input.peek(Token![as]) {
+                let _: Token![as] = input.parse()?;
                 let _: Token![=] = input.parse()?;
 
                 if input.peek(syn::token::Bracket) {
