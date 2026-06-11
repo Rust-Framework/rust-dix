@@ -423,6 +423,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
 
     let constructor = quote! {
         #[doc(hidden)]
+        #[allow(non_snake_case)]
         pub fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<#name> {
             ::std::sync::Arc::new(#constructor_body)
         }
@@ -463,6 +464,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         InjectArgs::Plain { .. } => {
             vec![quote! {
                 #[doc(hidden)]
+                #[allow(non_snake_case)]
                 fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
                     let v: ::std::sync::Arc<#name> = #fn_name(resolver);
                     ::std::sync::Arc::new(v)
@@ -473,6 +475,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         InjectArgs::AsTrait { trait_ty, .. } => {
             vec![quote! {
                 #[doc(hidden)]
+                #[allow(non_snake_case)]
                 fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
                     let v: ::std::sync::Arc<#name> = #fn_name(resolver);
                     let v2: ::std::sync::Arc<#trait_ty> = v;
@@ -490,6 +493,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                 };
                 quote! {
                     #[doc(hidden)]
+                    #[allow(non_snake_case)]
                     fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
                         let v: ::std::sync::Arc<#name> = #fn_name(resolver);
                         let v2: ::std::sync::Arc<#trait_ty> = v;
@@ -508,6 +512,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
             InjectArgs::Plain { .. } => {
                 let helper = quote! {
                     #[doc(hidden)]
+                    #[allow(non_snake_case)]
                     fn #type_name_fn_name() -> &'static str {
                         ::std::any::type_name::<#name>()
                     }
@@ -517,6 +522,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
             InjectArgs::AsTrait { trait_ty, .. } => {
                 let helper = quote! {
                     #[doc(hidden)]
+                    #[allow(non_snake_case)]
                     fn #type_name_fn_name() -> &'static str {
                         ::std::any::type_name::<#trait_ty>()
                     }
@@ -527,6 +533,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                 let first = &trait_tys[0];
                 let helper = quote! {
                     #[doc(hidden)]
+                    #[allow(non_snake_case)]
                     fn #type_name_fn_name() -> &'static str {
                         ::std::any::type_name::<#first>()
                     }
@@ -539,6 +546,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                         let hn = format_ident!("__rdi_type_name_{}_{}", name, i + 1);
                         quote! {
                             #[doc(hidden)]
+                            #[allow(non_snake_case)]
                             fn #hn() -> &'static str {
                                 ::std::any::type_name::<#ty>()
                             }
