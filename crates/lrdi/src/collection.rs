@@ -125,6 +125,7 @@ impl ServiceCollection {
 
     /// Build a `ServiceCollection` from all `#[lrdi::inject]` annotations
     /// in the current binary (across all crates).
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub fn from_injected() -> Self {
         let mut descriptors = Vec::new();
         for reg in inventory::iter::<ServiceRegistration> {
@@ -140,6 +141,7 @@ impl ServiceCollection {
         Self { descriptors }
     }
 
+    /// Register a new singleton service.
     fn push<T: ?Sized + Send + Sync + 'static>(
         &mut self,
         lt: ServiceLifetime,

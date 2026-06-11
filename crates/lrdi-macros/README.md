@@ -36,26 +36,18 @@ lrdi = "0.1"       # re-exports all macros — you usually don't need lrdi-macro
 
 **What it does**: Combines constructor generation and service registration in
 one attribute. Annotate a struct with a lifetime and optional interface binding,
-and the macro generates both the constructor function and an `inventory`
-submission entry. `ServiceCollection::from_injected()` collects all entries at
-startup.
+and the macro generates the constructor function AND an `inventory` submission
+entry. `ServiceCollection::from_injected()` collects all entries at startup.
 
 ```rust
 use lrdi::*;
 
-// Concrete type, singleton
 #[lrdi::inject(singleton)]
 struct Config;
 
-// Interface binding, transient
 #[lrdi::inject(transient, as = dyn UserRepo)]
 struct PgUserRepo { db: Arc<DbPool> }
 
-// Multi-interface binding
-#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]
-struct BootLoader;
-
-// Collect everything in one call
 let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 

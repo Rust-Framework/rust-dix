@@ -493,9 +493,9 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
             }
         }
         InjectArgs::AsTraits { trait_tys, .. } => {
-            let mut submissions = Vec::new();
+            let mut subs = Vec::new();
             for trait_ty in trait_tys {
-                submissions.push(quote! {
+                subs.push(quote! {
                     lrdi::inventory::submit! {
                         lrdi::ServiceRegistration {
                             lifetime: #lt_ident,
@@ -506,7 +506,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                     }
                 });
             }
-            quote! { #(#submissions)* }
+            quote! { #(#subs)* }
         }
     };
 

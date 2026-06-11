@@ -30,24 +30,25 @@ Rust, inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 use lrdi::*;
 use std::sync::Arc;
 
-// Annotate your structs with #[lrdi::inject(...)]
+// Annotate your structs with #[lrdi::inject(...)] —
+// constructor + auto-registration, one attribute
 #[lrdi::inject(singleton)]
-struct Logger { prefix: String }
+struct Config;
 
 #[lrdi::inject(transient)]
-struct Worker { logger: Arc<Logger> }
+struct Worker { logger: Arc<Config> }
 
-// Auto-discover and build in one call
+// Auto-discover all #[lrdi::inject] annotations and build
 let provider = ServiceCollection::from_injected()
     .build()
     .unwrap();
 
-let logger: Arc<Logger> = provider.get();
+let logger: Arc<Config> = provider.get();
 ```
 
 ```toml
 [dependencies]
-lrdi = "0.1"
+lrdi = "0.2"
 ```
 
 ## Features

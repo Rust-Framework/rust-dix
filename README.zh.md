@@ -30,26 +30,27 @@ Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框�
 
 ```toml
 [dependencies]
-lrdi = "0.1"
+lrdi = "0.2"
 ```
 
 ```rust
 use lrdi::*;
 use std::sync::Arc;
 
-// 用 #[lrdi::inject(...)] 标注你的结构体
+// 用 #[lrdi::inject(...)] 标注你的结构体 —
+// 一个属性同时完成构造函数生成和自动注册
 #[lrdi::inject(singleton)]
-struct Logger { prefix: String }
+struct Config;
 
 #[lrdi::inject(transient)]
-struct Worker { logger: Arc<Logger> }
+struct Worker { logger: Arc<Config> }
 
-// 一步自动发现并构建
+// 自动发现所有 #[lrdi::inject] 标注并构建
 let provider = ServiceCollection::from_injected()
     .build()
     .unwrap();
 
-let logger: Arc<Logger> = provider.get();
+let logger: Arc<Config> = provider.get();
 ```
 
 ### 特性

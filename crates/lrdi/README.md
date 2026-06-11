@@ -165,12 +165,18 @@ let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 
 The `#[lrdi::inject]` attribute automatically generates constructor code
-(like `#[derive(Inject)]`) and registers the service via `inventory`.
+(like `#[derive(Inject)]`) and registers the service via `inventory`
+(on Linux, macOS, and Windows).
 Supports both named-field structs and unit structs (zero fields):
 
 ```rust
+// Unit struct — zero fields, works out of the box
 #[lrdi::inject(singleton, as = dyn IDynamicAuthorizer)]
-struct RoleAuthorizer;  // unit struct — no fields, just a marker
+struct RoleAuthorizer;
+
+// Named struct — fields resolved from DI container
+#[lrdi::inject(transient)]
+struct Worker { logger: Arc<Config> }
 ```
 
 #### Resolution (`ServiceProvider` / `Scope`)
