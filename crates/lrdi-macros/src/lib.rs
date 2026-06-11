@@ -385,39 +385,46 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
     let fn_name = format_ident!("__rdi_construct_{}", name);
     let factory_name = format_ident!("__rdi_factory_{}", name);
 
-    let named = match &struct_item.fields {
-        syn::Fields::Named(n) => n,
-        _ => return Err(syn::Error::new_spanned(name, "named fields required")),
-    };
+    let constructor_body = match &struct_item.fields {
+        syn::Fields::Named(n) => {
+            let mut inits = Vec::new();
+            for field in n.named.iter() {
+                let attrs = parse_ia(field);
+                let fnm = field.ident.as_ref().unwrap();
+                let (inner, _) = saw(&field.ty);
 
-    let mut inits = Vec::new();
-    for field in named.named.iter() {
-        let attrs = parse_ia(field);
-        let fnm = field.ident.as_ref().unwrap();
-        let (inner, _) = saw(&field.ty);
-
-        let init = if attrs.skip {
-            quote! { #fnm: ::std::default::Default::default() }
-        } else if attrs.provider {
-            quote! { #fnm: resolver.clone() }
-        } else if attrs.optional {
-            if let Some(k) = &attrs.key {
-                quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
-            } else {
-                quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
+                let init = if attrs.skip {
+                    quote! { #fnm: ::std::default::Default::default() }
+                } else if attrs.provider {
+                    quote! { #fnm: resolver.clone() }
+                } else if attrs.optional {
+                    if let Some(k) = &attrs.key {
+                        quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
+                    } else {
+                        quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
+                    }
+                } else if let Some(k) = &attrs.key {
+                    quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("keyed not found")) }
+                } else {
+                    quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("svc not registered")) }
+                };
+                inits.push(init);
             }
-        } else if let Some(k) = &attrs.key {
-            quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("keyed not found")) }
-        } else {
-            quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("svc not registered")) }
-        };
-        inits.push(init);
-    }
+            quote! { #name { #(#inits),* } }
+        }
+        syn::Fields::Unit => quote! { #name },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "named struct or unit struct required",
+            ))
+        }
+    };
 
     let constructor = quote! {
         #[doc(hidden)]
         pub fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<#name> {
-            ::std::sync::Arc::new(#name { #(#inits),* })
+            ::std::sync::Arc::new(#constructor_body)
         }
     };
 

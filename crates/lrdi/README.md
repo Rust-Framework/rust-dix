@@ -166,6 +166,12 @@ let provider = ServiceCollection::from_injected().build().unwrap();
 
 The `#[lrdi::inject]` attribute automatically generates constructor code
 (like `#[derive(Inject)]`) and registers the service via `inventory`.
+Supports both named-field structs and unit structs (zero fields):
+
+```rust
+#[lrdi::inject(singleton, as = dyn IDynamicAuthorizer)]
+struct RoleAuthorizer;  // unit struct — no fields, just a marker
+```
 
 #### Resolution (`ServiceProvider` / `Scope`)
 

@@ -158,7 +158,12 @@ let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 
 `#[lrdi::inject]` 属性宏自动生成构造函数代码（类似 `#[derive(Inject)]`）
-并通过 `inventory` 自动注册到容器。
+并通过 `inventory` 自动注册到容器。支持命名结构体和单元结构体（零字段）：
+
+```rust
+#[lrdi::inject(singleton, as = dyn IDynamicAuthorizer)]
+struct RoleAuthorizer;  // 单元结构体 — 零字段
+```
 
 #### 解析（`ServiceProvider` / `Scope`）
 

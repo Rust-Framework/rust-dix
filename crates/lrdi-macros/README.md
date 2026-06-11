@@ -69,6 +69,18 @@ let provider = ServiceCollection::from_injected().build().unwrap();
 | `#[lrdi::inject(transient, as = dyn Trait)]` | `dyn Trait`, Transient |
 | `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` | Multiple traits, Singleton |
 
+Supports both named-field structs and unit structs (zero fields):
+
+```rust
+#[lrdi::inject(singleton)]
+struct UnitService;  // unit struct — works!
+
+#[lrdi::inject(transient)]
+struct NamedService {
+    dep: Arc<UnitService>,
+}
+```
+
 This macro subsumes `#[derive(Inject)]` — it internally generates the same
 constructor function (`__rdi_construct_{Type}`) using the same field attribute
 syntax (`#[inject(skip)]`, `#[inject(optional)]`, `#[inject(key = "...")]`,

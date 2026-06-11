@@ -234,7 +234,7 @@ fn test_business_logic() {
 1. **panic: "service not registered: xxx"** → 检查注册时的类型是否与解析时的类型一致（规则 1）
 2. **panic: "keyed service not registered: xxx:yyy"** → 检查 key 名称拼写，或用 `try_get_keyed` 替代
 3. **`#[derive(Inject)]` 编译失败** → 检查是否用了元组结构体（不支持），加载 `guides/macros.md`
-4. **`#[lrdi::inject]` 编译失败** → 检查 struct 是否为命名结构体（不支持元组/单元结构体），检查 `as = dyn Trait` 中 Trait 路径是否正确
+4. **`#[lrdi::inject]` 编译失败** → 检查 struct 是否为命名结构体或单元结构体（不支持元组结构体），检查 `as = dyn Trait` 中 Trait 路径是否正确
 5. **`#[lrdi::inject]` 无法推断依赖** → 检查字段类型是否已注册，或使用 `#[inject(provider)]` 手动获取
 6. **`#[lrdi::module]` 编译失败** → 检查是否有重复 key，检查 `inject!` 语法
 7. **服务未按预期缓存** → 检查生命周期设置，Singleton 在 provider 构建时即初始化

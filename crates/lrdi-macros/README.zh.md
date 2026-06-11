@@ -64,6 +64,18 @@ let provider = ServiceCollection::from_injected().build().unwrap();
 | `#[lrdi::inject(transient, as = dyn Trait)]` | `dyn Trait`，Transient |
 | `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` | 多 trait，Singleton |
 
+同时支持命名结构体和单元结构体（零字段）：
+
+```rust
+#[lrdi::inject(singleton)]
+struct UnitService;  // 单元结构体 — 支持！
+
+#[lrdi::inject(transient)]
+struct NamedService {
+    dep: Arc<UnitService>,
+}
+```
+
 该宏包含 `#[derive(Inject)]` 的功能——内部生成相同的构造函数
 （`__rdi_construct_{类型}`），使用相同的字段属性语法
 （`#[inject(skip)]`、`#[inject(optional)]`、`#[inject(key = "...")]` 等），
