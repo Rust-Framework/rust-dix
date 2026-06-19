@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ──────────────────────────────────────────────
-# RDI — One-command publish script
-# Publishes lrdi-macros first, then lrdi.
+# rust-dicore — One-command publish script
+# Publishes rust-dicore-macros first, then rust-dicore.
 #
 # Usage:
 #   ./publish.sh                  # publish both crates
@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "============================================"
-echo "  RDI Publishing Script"
+echo "  rust-dicore Publishing Script"
 echo "============================================"
 echo ""
 
@@ -81,13 +81,13 @@ echo ""
 echo "    ✓ All checks passed"
 echo ""
 
-# ── Step 2: Publish lrdi-macros ──
+# ── Step 2: Publish rust-dicore-macros ──
 
-MACROS_DIR="crates/lrdi-macros"
+MACROS_DIR="crates/rust-dicore-macros"
 MACROS_VER=$(grep '^version ' "$MACROS_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-echo "==> 2. Publishing lrdi-macros v${MACROS_VER}..."
+echo "==> 2. Publishing rust-dicore-macros v${MACROS_VER}..."
 (cd "$MACROS_DIR" && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ lrdi-macros published"
+echo "    ✓ rust-dicore-macros published"
 
 if [ -z "$DRY_RUN" ]; then
     echo "    Waiting 15s for crates.io index to refresh..."
@@ -96,18 +96,18 @@ fi
 
 echo ""
 
-# ── Step 3: Publish lrdi ──
+# ── Step 3: Publish rust-dicore ──
 
-RDI_DIR="crates/lrdi"
+RDI_DIR="crates/rust-dicore"
 RDI_VER=$(grep '^version ' "$RDI_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-echo "==> 3. Publishing lrdi v${RDI_VER}..."
+echo "==> 3. Publishing rust-dicore v${RDI_VER}..."
 (cd "$RDI_DIR" && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ lrdi published"
+echo "    ✓ rust-dicore published"
 
 echo ""
 echo "============================================"
 echo "  Done!"
 echo ""
-echo "  https://crates.io/crates/lrdi"
-echo "  https://crates.io/crates/lrdi-macros"
+echo "  https://crates.io/crates/rust-dicore"
+echo "  https://crates.io/crates/rust-dicore-macros"
 echo "============================================"

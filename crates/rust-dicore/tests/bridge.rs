@@ -1,6 +1,6 @@
 mod common;
 
-use lrdi::*;
+use rust_dicore::*;
 use std::any::Any;
 use std::sync::Arc;
 

@@ -1,19 +1,19 @@
 ﻿[package]
-name = "lrdi"
+name = "rust-dicore"
 version.workspace = true
 edition.workspace = true
-description = "A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
+description = "rust-dicore: A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
 include = ["README.md", "src/**/*", "tests/**/*"]
 categories = ["rust-patterns", "asynchronous"]
-keywords = ["di", "dependency-injection", "ioc", "medi", "service-provider"]
+keywords = ["di", "dependency-injection", "ioc", "rust-dicore", "service-provider"]
 
 [dependencies]
 thiserror.workspace = true
 inventory = "0.3"
-lrdi-macros = { path = "../lrdi-macros", version = "0.2.6" }
+rust-dicore-macros = { path = "../rust-dicore-macros", version = "0.2.6" }
 
 [features]
 default = []

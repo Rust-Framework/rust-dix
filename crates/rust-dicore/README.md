@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="../assets/logo.svg" alt="LRDI" width="80">
+  <img src="../assets/logo.svg" alt="rust-dicore" width="80">
 </p>
 
-<h1 align="center">lrdi · Dependency Injection Container</h1>
+<h1 align="center">rust-dicore · Dependency Injection Container</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/lrdi"><img alt="Crates.io" src="https://img.shields.io/crates/v/lrdi.svg?style=flat-square"></a>
-  <a href="https://docs.rs/lrdi"><img alt="Docs" src="https://img.shields.io/docsrs/lrdi?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dicore"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dicore"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
@@ -14,12 +14,12 @@
   <a href="README.zh.md"><strong>中文</strong></a>
 </p>
 
-`lrdi` is the core crate of the LRDI framework — a Rust dependency injection
+`rust-dicore` is the core crate of the rust-dicore framework — a Rust dependency injection
 container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-lrdi = "0.1"
+rust-dicore = "0.1"
 ```
 
 ---
@@ -69,7 +69,7 @@ fn test_provider() -> ServiceProvider {
 **3. You have objects with different lifetimes**
 
 Some services should be shared globally (database pool), some per-request
-(HTTP context), some created fresh each time (value objects). LRDI gives you
+(HTTP context), some created fresh each time (value objects). rust-dicore gives you
 three lifetimes to model this naturally.
 
 | Lifetime | Behavior | Typical use |
@@ -111,7 +111,7 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 - **Named services**: register services by string name — critical for cdylib
   plugins where Rust's `TypeId` differs across compilation units.
 - **`IServiceLocator`**: pass a unified DI interface to external modules that
-  don't depend on LRDI directly.
+  don't depend on rust-dicore directly.
 
 ---
 
@@ -121,7 +121,7 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 
 | Method | Lifetime | Use when |
 |--------|----------|----------|
-| `.from_injected()` | *mixed* | Collect all `#[lrdi::inject]` annotations (see below) |
+| `.from_injected()` | *mixed* | Collect all `#[rust_dicore::inject]` annotations (see below) |
 | `.singleton(f)` | Singleton | You need exactly one instance |
 | `.scoped(f)` | Scoped | You need one instance per scope |
 | `.transient(f)` | Transient | You need a new instance every time |
@@ -144,38 +144,38 @@ ServiceCollection::new()
     .unwrap();
 ```
 
-#### `#[lrdi::inject]` — Attribute-based auto-registration (recommended)
+#### `#[rust_dicore::inject]` — Attribute-based auto-registration (recommended)
 
 The preferred way to register services is to annotate structs directly:
 
 ```rust
-use lrdi::*;
+use rust_dicore::*;
 
-#[lrdi::inject(singleton)]     // registers as concrete type
+#[rust_dicore::inject(singleton)]     // registers as concrete type
 struct Config { url: String }
 
-#[lrdi::inject(transient, as = dyn UserRepo)]  // registers as trait
+#[rust_dicore::inject(transient, as = dyn UserRepo)]  // registers as trait
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // multi-trait
+#[rust_dicore::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // multi-trait
 struct BootLoader;
 
 // Then build from all annotations in one call:
 let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 
-The `#[lrdi::inject]` attribute automatically generates constructor code
+The `#[rust_dicore::inject]` attribute automatically generates constructor code
 (like `#[derive(Inject)]`) and registers the service via `inventory`
 (on Linux, macOS, and Windows).
 Supports both named-field structs and unit structs (zero fields):
 
 ```rust
 // Unit struct — zero fields, works out of the box
-#[lrdi::inject(singleton, as = dyn IDynamicAuthorizer)]
+#[rust_dicore::inject(singleton, as = dyn IDynamicAuthorizer)]
 struct RoleAuthorizer;
 
 // Named struct — fields resolved from DI container
-#[lrdi::inject(transient)]
+#[rust_dicore::inject(transient)]
 struct Worker { logger: Arc<Config> }
 ```
 
@@ -315,25 +315,24 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 
 ---
 
-### Relationship with lrdi-macros
+### Relationship with rust-dicore-macros
 
-`lrdi` works with or without [`lrdi-macros`](../lrdi-macros/). The macros
+`rust-dicore` works with or without [`rust-dicore-macros`](../rust-dicore-macros/). The macros
 provide three compile-time conveniences:
 
-- **`#[lrdi::inject(...)]`** (recommended) — Attribute macro that combines
+- **`#[rust_dicore::inject(...)]`** (recommended) — Attribute macro that combines
   constructor generation + auto-registration. One annotation on a struct is
   all you need — `ServiceCollection::from_injected()` collects everything.
 - **`#[derive(Inject)]`** — Generate the factory function automatically from
-  struct fields. Used internally by `#[lrdi::inject]`.
-- **`#[lrdi::module]`** — Collect `lrdi::inject!()` declarations at compile
+  struct fields. Used internally by `#[rust_dicore::inject]`.
+- **`#[rust_dicore::module]`** — Collect `rust_dicore::inject!()` declarations at compile
   time and generate a complete provider builder. Useful for external types,
   conditional compilation, and centralized management.
 
-See [`lrdi-macros/README.md`](../lrdi-macros/README.md) for details.
+See [`rust-dicore-macros/README.md`](../rust-dicore-macros/README.md) for details.
 
 ---
 
 ### License
 
 MIT.
-

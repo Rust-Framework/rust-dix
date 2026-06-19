@@ -2,8 +2,8 @@
 
 mod common;
 
-use lrdi::*;
-use lrdi_macros::Inject;
+use rust_dicore::*;
+use rust_dicore_macros::Inject;
 use std::sync::Arc;
 
 #[derive(Inject)]

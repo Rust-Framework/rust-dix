@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="../assets/logo.svg" alt="LRDI" width="80">
+  <img src="../assets/logo.svg" alt="rust-dicore" width="80">
 </p>
 
-<h1 align="center">lrdi · Rust 依赖注入容器</h1>
+<h1 align="center">rust-dicore · Rust 依赖注入容器</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/lrdi"><img alt="Crates.io" src="https://img.shields.io/crates/v/lrdi.svg?style=flat-square"></a>
-  <a href="https://docs.rs/lrdi"><img alt="Docs" src="https://img.shields.io/docsrs/lrdi?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dicore"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dicore"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
@@ -14,12 +14,12 @@
   <a href="README.md"><strong>English</strong></a>
 </p>
 
-`lrdi` 是 LRDI 框架的核心 crate — 一个受 Microsoft.Extensions.DependencyInjection
+`rust-dicore` 是 rust-dicore 框架的核心 crate — 一个受 Microsoft.Extensions.DependencyInjection
 (MEDI) 启发的 Rust 依赖注入容器。
 
 ```toml
 [dependencies]
-lrdi = "0.1"
+rust-dicore = "0.1"
 ```
 
 ---
@@ -67,7 +67,7 @@ fn test_provider() -> ServiceProvider {
 **3. 你的对象有不同的生命周期**
 
 有些服务应该全局共享（数据库连接池），有些应该每次请求一个（HTTP 上下文），
-有些应该每次都是新的（值对象）。LRDI 提供了三种生命周期来自然建模。
+有些应该每次都是新的（值对象）。rust-dicore 提供了三种生命周期来自然建模。
 
 | 生命周期 | 行为 | 典型场景 |
 |----------|------|---------|
@@ -105,7 +105,7 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
   插件自己的服务优先可见，宿主服务作为回退。
 - **命名服务**：通过字符串名称注册服务 — 对于 cdylib 插件至关重要，
   因为 Rust 的 `TypeId` 跨编译单元不一致。
-- **`IServiceLocator`**：将统一的 DI 接口传递给不直接依赖 LRDI 的外部模块。
+- **`IServiceLocator`**：将统一的 DI 接口传递给不直接依赖 rust-dicore 的外部模块。
 
 ---
 
@@ -115,7 +115,7 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 
 | 方法 | 生命周期 | 使用场景 |
 |--------|----------|---------|
-| `.from_injected()` | *混合* | 收集所有 `#[lrdi::inject]` 标注（推荐） |
+| `.from_injected()` | *混合* | 收集所有 `#[rust_dicore::inject]` 标注（推荐） |
 | `.singleton(f)` | Singleton | 全局只需要一个实例 |
 | `.scoped(f)` | Scoped | 每个作用域一个实例 |
 | `.transient(f)` | Transient | 每次解析都新建 |
@@ -137,31 +137,31 @@ ServiceCollection::new()
     .unwrap();
 ```
 
-#### `#[lrdi::inject]` — 基于属性宏的自动注册（推荐）
+#### `#[rust_dicore::inject]` — 基于属性宏的自动注册（推荐）
 
-推荐的方式是直接在结构体上标注 `#[lrdi::inject(...)]`：
+推荐的方式是直接在结构体上标注 `#[rust_dicore::inject(...)]`：
 
 ```rust
-use lrdi::*;
+use rust_dicore::*;
 
-#[lrdi::inject(singleton)]             // 注册为具体类型
+#[rust_dicore::inject(singleton)]             // 注册为具体类型
 struct Config { url: String }
 
-#[lrdi::inject(transient, as = dyn UserRepo)]  // 注册为 trait 接口
+#[rust_dicore::inject(transient, as = dyn UserRepo)]  // 注册为 trait 接口
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[lrdi::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // 多接口
+#[rust_dicore::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // 多接口
 struct BootLoader;
 
 // 一步收集所有标注并构建：
 let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 
-`#[lrdi::inject]` 属性宏自动生成构造函数代码（类似 `#[derive(Inject)]`）
+`#[rust_dicore::inject]` 属性宏自动生成构造函数代码（类似 `#[derive(Inject)]`）
 并通过 `inventory` 自动注册到容器。支持命名结构体和单元结构体（零字段）：
 
 ```rust
-#[lrdi::inject(singleton, as = dyn IDynamicAuthorizer)]
+#[rust_dicore::inject(singleton, as = dyn IDynamicAuthorizer)]
 struct RoleAuthorizer;  // 单元结构体 — 零字段
 ```
 
@@ -311,18 +311,18 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 
 ---
 
-### 与 lrdi-macros 的关系
+### 与 rust-dicore-macros 的关系
 
-`lrdi` 可以独立使用，也可以配合 [`lrdi-macros`](../lrdi-macros/) 使用。
+`rust-dicore` 可以独立使用，也可以配合 [`rust-dicore-macros`](../rust-dicore-macros/) 使用。
 过程宏提供三个编译期便利：
 
-- **`#[lrdi::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
+- **`#[rust_dicore::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
   只需在结构体上标注一行，`ServiceCollection::from_injected()` 自动收集所有注册。
-- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，`#[lrdi::inject]` 内部使用。
-- **`#[lrdi::module]`** — 编译期收集 `lrdi::inject!()` 声明，生成完整的 provider
+- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，`#[rust_dicore::inject]` 内部使用。
+- **`#[rust_dicore::module]`** — 编译期收集 `rust_dicore::inject!()` 声明，生成完整的 provider
   构建函数。适用于外部类型注册、条件编译和集中式管理。
 
-详见 [`lrdi-macros/README.md`](../lrdi-macros/README.md)。
+详见 [`rust-dicore-macros/README.md`](../rust-dicore-macros/README.md)。
 
 ---
 

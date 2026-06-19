@@ -123,7 +123,7 @@ impl ServiceCollection {
         crate::provider::ServiceProvider::new(s)
     }
 
-    /// Build a `ServiceCollection` from all `#[lrdi::inject]` annotations
+    /// Build a `ServiceCollection` from all `#[rust_dicore::inject]` annotations
     /// in the current binary (across all crates).
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub fn from_injected() -> Self {

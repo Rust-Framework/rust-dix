@@ -1,6 +1,6 @@
 mod common;
 
-use lrdi::*;
+use rust_dicore::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

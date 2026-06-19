@@ -3,15 +3,15 @@
 resolver = "2"
 
 members = [
-    "crates/lrdi",
-    "crates/lrdi-macros",
+    "crates/rust-dicore",
+    "crates/rust-dicore-macros",
 ]
 
 [workspace.package]
 version = "0.2.6"
 edition = "2021"
 license = "MIT"
-repository = "https://gitcode.com/rf2026/lrdi"
+repository = "https://gitcode.com/rf2026/rust-dicore"
 
 [workspace.dependencies]
 thiserror = "1"

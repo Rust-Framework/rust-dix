@@ -1,5 +1,4 @@
-﻿//! RDI procedural macros.
-#![allow(unsafe_code)]
+﻿//! rust-di procedural macros.
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -49,7 +48,7 @@ fn expand_inject(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         inits.push(init);
     }
     Ok(
-        quote! {#[doc(hidden)]pub fn #fn_name(resolver:&dyn lrdi::IServiceResolver)->::std::sync::Arc<#name>{::std::sync::Arc::new(#name{#(#inits),*})}},
+        quote! {#[doc(hidden)]pub fn #fn_name(resolver:&dyn rust_dicore::IServiceResolver)->::std::sync::Arc<#name>{::std::sync::Arc::new(#name{#(#inits),*})}},
     )
 }
 
@@ -153,7 +152,7 @@ fn expand_md(mut m: ItemMod) -> syn::Result<proc_macro2::TokenStream> {
                     .map(|s| s.ident.to_string())
                     .collect::<Vec<_>>()
                     .join("::");
-                if ps == "inject" || ps == "lrdi::inject" {
+                if ps == "inject" || ps == "rust_dicore::inject" {
                     if let Ok(r) = syn::parse2::<ID>(mc.mac.tokens.clone()) {
                         rs.push(r);
                     }
@@ -170,19 +169,19 @@ fn expand_md(mut m: ItemMod) -> syn::Result<proc_macro2::TokenStream> {
             IK::N { lt, ty, imp } => {
                 let mt = lmt(*lt);
                 if let Some(imp_ty) = imp {
-                    ch.push(quote!{ .#mt::<#ty>(|_: &dyn lrdi::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt::<#ty>(|_: &dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
                 } else {
-                    ch.push(quote!{ .#mt(|_: &dyn lrdi::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt(|_: &dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
                 }
             }
             IK::K { key, lt, ty } => {
                 let mt = kmt(*lt);
-                ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn lrdi::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
             }
             IK::F { lt, f } => {
                 let mt = lmt(*lt);
                 ch.push(
-                    quote! { .#mt(move |_: &dyn lrdi::IServiceResolver| ::std::sync::Arc::new(#f)) },
+                    quote! { .#mt(move |_: &dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(#f)) },
                 );
             }
         }
@@ -190,8 +189,8 @@ fn expand_md(mut m: ItemMod) -> syn::Result<proc_macro2::TokenStream> {
     vd(&rs)?;
     let bi: syn::Item = syn::parse2(quote! {
         #[doc(hidden)]
-        pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<lrdi::ServiceProvider>, lrdi::RdiError> {
-            Ok(::std::sync::Arc::new(lrdi::ServiceCollection::new() #(#ch)* .build()?))
+        pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<rust_dicore::ServiceProvider>, rust_dicore::RdiError> {
+            Ok(::std::sync::Arc::new(rust_dicore::ServiceCollection::new() #(#ch)* .build()?))
         }
     })
     .unwrap();
@@ -315,9 +314,9 @@ impl Parse for ID {
     }
 }
 
-// ── `#[lrdi::inject(...)]` attribute macro ──
+// ── `#[rust_dicore::inject(...)]` attribute macro ──
 
-/// Parsed arguments of `#[lrdi::inject(...)]`
+/// Parsed arguments of `#[rust_dicore::inject(...)]`
 enum InjectArgs {
     Plain {
         lifetime: LT,
@@ -424,7 +423,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
     let constructor = quote! {
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        pub fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<#name> {
+        pub fn #fn_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<#name> {
             ::std::sync::Arc::new(#constructor_body)
         }
     };
@@ -437,7 +436,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         | InjectArgs::AsTraits {
             lifetime: LT::S, ..
         } => {
-            quote! { lrdi::ServiceLifetime::Singleton }
+            quote! { rust_dicore::ServiceLifetime::Singleton }
         }
         InjectArgs::Plain { lifetime: LT::Sc }
         | InjectArgs::AsTrait {
@@ -446,7 +445,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         | InjectArgs::AsTraits {
             lifetime: LT::Sc, ..
         } => {
-            quote! { lrdi::ServiceLifetime::Scoped }
+            quote! { rust_dicore::ServiceLifetime::Scoped }
         }
         InjectArgs::Plain { lifetime: LT::T }
         | InjectArgs::AsTrait {
@@ -455,7 +454,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         | InjectArgs::AsTraits {
             lifetime: LT::T, ..
         } => {
-            quote! { lrdi::ServiceLifetime::Transient }
+            quote! { rust_dicore::ServiceLifetime::Transient }
         }
     };
 
@@ -465,7 +464,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
             vec![quote! {
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+                fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
                     let v: ::std::sync::Arc<#name> = #fn_name(resolver);
                     ::std::sync::Arc::new(v)
                         as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
@@ -476,7 +475,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
             vec![quote! {
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                fn #factory_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+                fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
                     let v: ::std::sync::Arc<#name> = #fn_name(resolver);
                     let v2: ::std::sync::Arc<#trait_ty> = v;
                     ::std::sync::Arc::new(v2)
@@ -494,7 +493,7 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                 quote! {
                     #[doc(hidden)]
                     #[allow(non_snake_case)]
-                    fn #fn_name(resolver: &dyn lrdi::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+                    fn #fn_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
                         let v: ::std::sync::Arc<#name> = #fn_name(resolver);
                         let v2: ::std::sync::Arc<#trait_ty> = v;
                         ::std::sync::Arc::new(v2)
@@ -564,8 +563,8 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
     let submissions = match &args {
         InjectArgs::Plain { .. } => {
             quote! {
-                lrdi::inventory::submit! {
-                    lrdi::ServiceRegistration {
+                rust_dicore::inventory::submit! {
+                    rust_dicore::ServiceRegistration {
                         lifetime: #lt_ident,
                         type_id: ::std::any::TypeId::of::<#name>(),
                         type_name_fn: #type_name_fn_name,
@@ -576,8 +575,8 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         }
         InjectArgs::AsTrait { trait_ty, .. } => {
             quote! {
-                lrdi::inventory::submit! {
-                    lrdi::ServiceRegistration {
+                rust_dicore::inventory::submit! {
+                    rust_dicore::ServiceRegistration {
                         lifetime: #lt_ident,
                         type_id: ::std::any::TypeId::of::<#trait_ty>(),
                         type_name_fn: #type_name_fn_name,
@@ -595,8 +594,8 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
                     format_ident!("__rdi_type_name_{}_{}", name, i)
                 };
                 subs.push(quote! {
-                    lrdi::inventory::submit! {
-                        lrdi::ServiceRegistration {
+                    rust_dicore::inventory::submit! {
+                        rust_dicore::ServiceRegistration {
                             lifetime: #lt_ident,
                             type_id: ::std::any::TypeId::of::<#trait_ty>(),
                             type_name_fn: #helper,

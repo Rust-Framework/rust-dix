@@ -6,7 +6,7 @@
 //! # Quick start
 //!
 //! ```rust
-//! use lrdi::*;
+//! use rust_dicore::*;
 //! use std::sync::Arc;
 //!
 //! struct Logger(String);
@@ -26,7 +26,7 @@
 //! - **Three lifetimes**: Singleton, Scoped, Transient
 //! - **Keyed services**: multiple instances of the same type, distinguished by key
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
-//! - **Compile-time module scanning**: `#[lrdi::module]` collects service registrations
+//! - **Compile-time module scanning**: `#[rust_dicore::module]` collects service registrations
 //! - **Cross-DLL support**: named service registry for cdylib plugins
 //!
 //! # Crate layout
@@ -45,8 +45,8 @@
 //! # Proc-macros
 //!
 //! - `#[derive(Inject)]` — auto-generates constructor injection code
-//! - `#[lrdi::module]` — compile-time module scanning
-//! - `lrdi::inject!(...)` — declare services inside `#[lrdi::module]`
+//! - `#[rust_dicore::module]` — compile-time module scanning
+//! - `rust_dicore::inject!(...)` — declare services inside `#[rust_dicore::module]`
 
 pub mod bridge;
 pub mod collection;
@@ -56,7 +56,6 @@ pub mod error;
 pub mod lifetime;
 pub mod provider;
 pub mod registration;
-pub mod resolve;
 pub mod scope;
 pub mod service_locator;
 pub mod store;
@@ -118,8 +117,8 @@ pub use error::RdiError;
 
 pub use registration::ServiceRegistration;
 
-/// Re-export of `inventory` so that `#[lrdi::inject]` generated code
-/// can call `lrdi::inventory::submit!` without requiring downstream crates
+/// Re-export of `inventory` so that `#[rust_dicore::inject]` generated code
+/// can call `rust_dicore::inventory::submit!` without requiring downstream crates
 /// to add `inventory` to their own `Cargo.toml`.
 #[doc(hidden)]
 pub use inventory;
@@ -127,6 +126,6 @@ pub use inventory;
 // ── Proc-macros ──
 
 // Note: `inject_attr` is the attribute macro; `inject` is the declare macro
-// used inside `#[lrdi::module]`. Users write both as `#[lrdi::inject(...)]`
-// and `lrdi::inject!(...)` respectively.
-pub use lrdi_macros::{inject, inject_attr, module, Inject};
+// used inside `#[rust_dicore::module]`. Users write both as `#[rust_dicore::inject(...)]`
+// and `rust_dicore::inject!(...)` respectively.
+pub use rust_dicore_macros::{inject, inject_attr, module, Inject};

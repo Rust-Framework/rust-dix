@@ -4,7 +4,7 @@ use std::any::{Any, TypeId};
 use std::sync::Arc;
 
 /// A runtime service registration collected via `inventory::submit!`.
-/// Each `#[lrdi::inject(...)]` on a struct generates one submission.
+/// Each `#[rust_dicore::inject(...)]` on a struct generates one submission.
 ///
 /// `type_name_fn` is a function pointer (not a string) to avoid requiring
 /// `std::any::type_name::<T>()` in a const context (tracking issue #63084).

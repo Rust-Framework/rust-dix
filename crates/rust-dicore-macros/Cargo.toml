@@ -1,8 +1,8 @@
 ﻿[package]
-name = "lrdi-macros"
+name = "rust-dicore-macros"
 version.workspace = true
 edition.workspace = true
-description = "Procedural macros for lrdi — a Rust dependency injection framework"
+description = "Procedural macros for rust-dicore — a Rust dependency injection framework"
 license.workspace = true
 repository.workspace = true
 
