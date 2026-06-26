@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2024-06-26
+
+### Added
+
+- **Complete documentation system**: Added full docs/rust-dicore/ best practices guide
+  - 01-introduction: Framework overview and MEDI comparison
+  - 02-quickstart: Installation and first container
+  - 05-design-patterns: Strategy, factory, decorator patterns
+  - INDEX.json: Structured documentation index for navigation
+
+- **English/Chinese documentation links**: README.md ↔ README.zh.md cross-links verified
+
+### Changed
+
+- Updated dependency version example to `"0.3"` in README files
+
 ## [0.3.0] - 2024-06-26
 
 ### Breaking Changes
@@ -53,5 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.3.1]: https://gitcode.com/rf2026/rust-di/compare/v0.3.0...v0.3.1
 [0.3.0]: https://gitcode.com/rf2026/rust-di/compare/v0.2.6...v0.3.0
 [0.2.6]: https://gitcode.com/rf2026/rust-di/releases/tag/v0.2.6
