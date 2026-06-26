@@ -86,17 +86,24 @@ let provider = ServiceCollection::new()
 
 **4. 你需要同类型的多个实例**
 
-键控服务让你为同一个 trait 注册多个实现，用字符串键区分。
+键控服务让你为同一个 trait 注册多个实现，用字符串键区分。支持所有三种生命周期：
 
 ```rust
+// 键控服务支持三种生命周期
 let provider = ServiceCollection::new()
-    .keyed::<dyn Strategy>("fast", |_| Arc::new(FastPath))
-    .keyed::<dyn Strategy>("safe", |_| Arc::new(SafePath))
+    // Singleton keyed - 全局共享
+    .keyed_singleton::<dyn Strategy>("fast", |_| Arc::new(FastPath))
+    // Scoped keyed - Scope 内共享
+    .keyed_scoped::<dyn Strategy>("session", |_| Arc::new(SessionStrategy))
+    // Transient keyed - 每次新建
+    .keyed_transient::<dyn Strategy>("fresh", |_| Arc::new(FreshStrategy))
     .build()
     .unwrap();
 
 let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
-let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
+let session: Arc<dyn Strategy> = provider.create_scope().get_keyed("session");
+let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh");
+let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh");  // 不同实例
 ```
 
 **5. 你在构建插件 / 模块化系统**
@@ -116,12 +123,12 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 | 方法 | 生命周期 | 使用场景 |
 |--------|----------|---------|
 | `.from_injected()` | *混合* | 收集所有 `#[rust_dicore::inject]` 标注（推荐） |
-| `.singleton(f)` | Singleton | 全局只需要一个实例 |
-| `.scoped(f)` | Scoped | 每个作用域一个实例 |
-| `.transient(f)` | Transient | 每次解析都新建 |
-| `.keyed(k, f)` | Singleton | 同类型多个命名实例 |
-| `.keyed_scoped(k, f)` | Scoped | 多个命名 scoped 实例 |
-| `.keyed_transient(k, f)` | Transient | 多个命名 transient 实例 |
+| `.singleton(f)` | Singleton | 全局唯一实例（配置、连接池） |
+| `.scoped(f)` | Scoped | 每个 Scope 一个实例（请求上下文、事务） |
+| `.transient(f)` | Transient | 每次解析新建（轻量无状态服务） |
+| `.keyed_singleton(k, f)` | Singleton | 策略模式命名实例 |
+| `.keyed_scoped(k, f)` | Scoped | Scope 内策略实例 |
+| `.keyed_transient(k, f)` | Transient | 每次新建策略实例 |
 | `.instance(arc)` | Singleton | 已有构建好的 `Arc<T>` |
 | `.try_add(f)` | Singleton | 只注册不存在的类型 |
 | `.singleton_value(v)` | Singleton | 注册普通值（自动包 `Arc`） |
@@ -205,23 +212,48 @@ let provider = ServiceCollection::new()
 
 每层依赖由容器自动注入，单元测试时可以逐层替换 mock。
 
-#### 🔹 策略模式 + 键控服务
+#### 🔹 策略模式 + 键控服务（面向接口开发）
 
 ```rust
-let provider = ServiceCollection::new()
-    .keyed::<dyn PaymentGateway>("credit", |_| Arc::new(CreditCardGateway))
-    .keyed::<dyn PaymentGateway>("alipay", |_| Arc::new(AlipayGateway))
-    .keyed::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
+// contracts 层定义接口
+trait PaymentGateway: Send + Sync {
+    fn charge(&self, amount: f64) -> Result<(), String>;
+}
+
+// handlers 层实现接口，用 #[inject] 自动注册
+#[rust_dicore::inject(singleton, as = dyn PaymentGateway)]  // 默认策略
+struct CreditCardGateway;
+
+#[rust_dicore::inject(keyed_singleton "alipay", as = dyn PaymentGateway)]
+struct AlipayGateway;
+
+// 组合根补充 keyed 注册（或用 #[lrdi::module]）
+let provider = ServiceCollection::from_injected()
+    .keyed_singleton::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
     .build()
     .unwrap();
 
-fn checkout(provider: &ServiceProvider, method: &str) {
-    let gateway: Arc<dyn PaymentGateway> = provider.get_keyed(method);
-    gateway.charge(100);
+// 消费方依赖接口，不依赖具体实现
+#[rust_dicore::inject(transient)]
+struct OrderService {
+    #[inject(provider)]  // 按需解析策略
+    resolver: Arc<dyn IServiceResolver>,
+}
+
+impl OrderService {
+    fn checkout(&self, method: &str, amount: f64) {
+        let gateway: Arc<dyn PaymentGateway> = self.resolver
+            .try_get_keyed(method)
+            .unwrap_or_else(|| self.resolver.get());  // 回退默认
+        gateway.charge(amount);
+    }
 }
 ```
 
-增加新的支付方式只需注册一个新 key，无需修改 checkout 函数。
+**关键点**：
+- 接口定义在 contracts 层，实现消费接口
+- 增加新支付方式只需注册新 key，无需修改 `OrderService`
+- 符合开闭原则：对扩展开放，对修改关闭
 
 #### 🔹 请求级别的 Scoped 生命周期（Web 服务）
 
@@ -288,7 +320,7 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 │               ServiceCollection               │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
 │  │singleton │ │  scoped  │ │  transient   │ │
-│  │ .keyed() │ │.keyed_*()│ │ .instance()  │ │
+│  │.keyed_singleton│ │.keyed_*()│ │ .instance()  │ │
 │  └──────────┘ └──────────┘ └──────────────┘ │
 │                   │ .build()                  │
 │                   ▼                           │

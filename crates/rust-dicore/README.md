@@ -90,17 +90,24 @@ let provider = ServiceCollection::new()
 **4. You want multiple instances of the same type**
 
 Keyed services let you register several implementations of the same trait,
-each distinguished by a string key.
+each distinguished by a string key. All three lifetimes are supported:
 
 ```rust
+// Keyed with different lifetimes
 let provider = ServiceCollection::new()
-    .keyed::<dyn Strategy>("fast", |_| Arc::new(FastPath))
-    .keyed::<dyn Strategy>("safe", |_| Arc::new(SafePath))
+    // Singleton keyed - shared globally
+    .keyed_singleton::<dyn Strategy>("fast", |_| Arc::new(FastPath))
+    // Scoped keyed - shared within a scope
+    .keyed_scoped::<dyn Strategy>("session", |_| Arc::new(SessionStrategy))
+    // Transient keyed - new instance each time
+    .keyed_transient::<dyn Strategy>("fresh", |_| Arc::new(FreshStrategy))
     .build()
     .unwrap();
 
 let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
-let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
+let session: Arc<dyn Strategy> = provider.create_scope().get_keyed("session");
+let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh");
+let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh");  // different instance
 ```
 
 **5. You are building a plugin / modular system**
@@ -122,12 +129,12 @@ let safe: Arc<dyn Strategy> = provider.get_keyed("safe");
 | Method | Lifetime | Use when |
 |--------|----------|----------|
 | `.from_injected()` | *mixed* | Collect all `#[rust_dicore::inject]` annotations (see below) |
-| `.singleton(f)` | Singleton | You need exactly one instance |
-| `.scoped(f)` | Scoped | You need one instance per scope |
+| `.singleton(f)` | Singleton | You need exactly one instance shared globally |
+| `.scoped(f)` | Scoped | You need one instance per scope (request/transaction) |
 | `.transient(f)` | Transient | You need a new instance every time |
-| `.keyed(k, f)` | Singleton | You need multiple named instances |
-| `.keyed_scoped(k, f)` | Scoped | Multiple named scoped instances |
-| `.keyed_transient(k, f)` | Transient | Multiple named transient instances |
+| `.keyed_singleton(k, f)` | Singleton | Multiple named instances (strategy pattern) |
+| `.keyed_scoped(k, f)` | Scoped | Named instances scoped per request |
+| `.keyed_transient(k, f)` | Transient | Named instances created fresh each time |
 | `.instance(arc)` | Singleton | You already have a built `Arc<T>` |
 | `.try_add(f)` | Singleton | Only register if not already present |
 | `.singleton_value(v)` | Singleton | Register a plain value (wraps in `Arc`) |
@@ -292,7 +299,7 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 │               ServiceCollection               │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
 │  │singleton │ │  scoped  │ │  transient   │ │
-│  │ .keyed() │ │.keyed_*()│ │ .instance()  │ │
+│  │.keyed_singleton│ │.keyed_*()│ │ .instance()  │ │
 │  └──────────┘ └──────────┘ └──────────────┘ │
 │                   │ .build()                  │
 │                   ▼                           │

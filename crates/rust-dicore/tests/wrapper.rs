@@ -7,7 +7,7 @@ use std::sync::Arc;
 fn wrapper_get_keyed_fallback_to_root() {
     let root = Arc::new(
         ServiceCollection::new()
-            .keyed("a", |_| {
+            .keyed_singleton("a", |_| {
                 Arc::new(common::Logger {
                     prefix: "root".into(),
                 })
@@ -64,13 +64,13 @@ fn wrapper_get_named_any_child_first() {
 fn wrapper_get_all_combines_both() {
     let root = Arc::new(
         ServiceCollection::new()
-            .keyed("a", |_| Arc::new(common::MyService { value: 1 }))
+            .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
             .build()
             .unwrap(),
     );
     let child = Arc::new(
         ServiceCollection::new()
-            .keyed("b", |_| Arc::new(common::MyService { value: 2 }))
+            .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
             .build()
             .unwrap(),
     );

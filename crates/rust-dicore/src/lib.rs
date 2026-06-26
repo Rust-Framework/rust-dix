@@ -9,25 +9,90 @@
 //! use rust_dicore::*;
 //! use std::sync::Arc;
 //!
-//! struct Logger(String);
-//! struct Worker { log: Arc<Logger> }
+//! // Trait-based interface (recommended)
+//! trait ILogger: Send + Sync {
+//!     fn log(&self, msg: &str);
+//! }
 //!
+//! struct ConsoleLogger;
+//! impl ILogger for ConsoleLogger {
+//!     fn log(&self, msg: &str) { println!("[LOG] {}", msg); }
+//! }
+//!
+//! // Register as trait interface
 //! let provider = ServiceCollection::new()
-//!     .singleton(|_| Arc::new(Logger("INFO".into())))
-//!     .singleton(|_| Arc::new(Worker { log: Arc::new(Logger("INFO".into())) }))
+//!     .singleton::<dyn ILogger>(|_| Arc::new(ConsoleLogger))
 //!     .build()
 //!     .unwrap();
 //!
-//! let logger: Arc<Logger> = provider.get::<Logger>();
+//! // Resolve as trait
+//! let logger: Arc<dyn ILogger> = provider.get();
+//! logger.log("Hello");
+//! ```
+//!
+//! # Keyed services (strategy pattern)
+//!
+//! ```rust
+//! use rust_dicore::*;
+//! use std::sync::Arc;
+//!
+//! trait Strategy: Send + Sync { fn execute(&self) -> &'static str; }
+//!
+//! struct FastStrategy;
+//! impl Strategy for FastStrategy { fn execute(&self) -> "fast" }
+//!
+//! struct SafeStrategy;
+//! impl Strategy for SafeStrategy { fn execute(&self) -> "safe" }
+//!
+//! let provider = ServiceCollection::new()
+//!     .keyed_singleton::<dyn Strategy>("fast", |_| Arc::new(FastStrategy))
+//!     .keyed_singleton::<dyn Strategy>("safe", |_| Arc::new(SafeStrategy))
+//!     .build()
+//!     .unwrap();
+//!
+//! let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
+//! assert_eq!(fast.execute(), "fast");
+//! ```
+//!
+//! # Build-time validation
+//!
+//! LRDI validates dependencies during `build()` to catch errors early:
+//!
+//! ```rust,should_panic
+//! # use rust_dicore::*;
+//! # use std::sync::Arc;
+//! # struct A;
+//! # struct B;
+//! // Circular dependency detection
+//! let result = ServiceCollection::new()
+//!     .singleton(|r| {
+//!         let _b: Arc<B> = r.get();  // A depends on B
+//!         Arc::new(A)
+//!     })
+//!     .singleton(|r| {
+//!         let _a: Arc<A> = r.get();   // B depends on A → CIRCULAR!
+//!         Arc::new(B)
+//!     })
+//!     .build();
+//!
+//! assert!(result.is_err());
+//! if let Err(RdiError::CircularDependency(cycle)) = result {
+//!     println!("Circular dependency detected: {}", cycle);
+//! }
 //! ```
 //!
 //! # Features
 //!
 //! - **Three lifetimes**: Singleton, Scoped, Transient
-//! - **Keyed services**: multiple instances of the same type, distinguished by key
+//! - **Keyed services**: multiple implementations of the same trait by key
+//!   - `keyed_singleton(key, factory)` — shared globally
+//!   - `keyed_scoped(key, factory)` — shared within scope
+//!   - `keyed_transient(key, factory)` — new instance each time
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
 //! - **Compile-time module scanning**: `#[rust_dicore::module]` collects service registrations
 //! - **Cross-DLL support**: named service registry for cdylib plugins
+//! - **Layered containers**: child-first resolution via `ServiceProviderWrapper`
+//! - **Build-time validation**: circular dependency detection during `build()`
 //!
 //! # Crate layout
 //!
@@ -40,11 +105,12 @@
 //! | [`ServiceProviderWrapper`] | Child-first layered container |
 //! | [`ServiceLifetime`] | Enum: Singleton, Scoped, Transient |
 //! | [`IServiceLocator`] / [`ServiceLocatorBridge`] | Cross-DLL / plugin integration |
-//! | [`RdiError`] | Error types |
+//! | [`RdiError`] | Error types (includes `CircularDependency`) |
 //!
 //! # Proc-macros
 //!
 //! - `#[derive(Inject)]` — auto-generates constructor injection code
+//! - `#[rust_dicore::inject(...)]` — attribute macro for auto-registration
 //! - `#[rust_dicore::module]` — compile-time module scanning
 //! - `rust_dicore::inject!(...)` — declare services inside `#[rust_dicore::module]`
 

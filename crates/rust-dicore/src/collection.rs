@@ -40,7 +40,11 @@ impl ServiceCollection {
         self
     }
 
-    pub fn keyed<T: ?Sized + Send + Sync + 'static>(
+    /// Register a keyed singleton service.
+    /// 
+    /// The key distinguishes multiple implementations of the same trait.
+    /// Use `get_keyed::<T>(key)` or `try_get_keyed::<T>(key)` to resolve.
+    pub fn keyed_singleton<T: ?Sized + Send + Sync + 'static>(
         mut self,
         k: impl Into<String>,
         f: impl Fn(&dyn crate::entry::IServiceResolver) -> Arc<T> + Send + Sync + 'static,
@@ -49,6 +53,7 @@ impl ServiceCollection {
         self
     }
 
+    /// Register a keyed transient service (new instance each resolution).
     pub fn keyed_transient<T: ?Sized + Send + Sync + 'static>(
         mut self,
         k: impl Into<String>,
@@ -58,6 +63,7 @@ impl ServiceCollection {
         self
     }
 
+    /// Register a keyed scoped service (shared within a scope).
     pub fn keyed_scoped<T: ?Sized + Send + Sync + 'static>(
         mut self,
         k: impl Into<String>,
@@ -233,8 +239,8 @@ mod tests {
     #[test]
     fn keyed_svc() {
         let p = ServiceCollection::new()
-            .keyed("a", |_| Arc::new(G { n: "A".into() }))
-            .keyed("b", |_| Arc::new(G { n: "B".into() }))
+            .keyed_singleton("a", |_| Arc::new(G { n: "A".into() }))
+            .keyed_singleton("b", |_| Arc::new(G { n: "B".into() }))
             .build()
             .unwrap();
         assert_eq!(p.get_keyed::<G>("a").n, "A");
@@ -243,8 +249,8 @@ mod tests {
     #[test]
     fn get_all() {
         let p = ServiceCollection::new()
-            .keyed("x", |_| Arc::new(C { v: 1 }))
-            .keyed("y", |_| Arc::new(C { v: 2 }))
+            .keyed_singleton("x", |_| Arc::new(C { v: 1 }))
+            .keyed_singleton("y", |_| Arc::new(C { v: 2 }))
             .build()
             .unwrap();
         assert_eq!(p.get_all::<C>().len(), 2);

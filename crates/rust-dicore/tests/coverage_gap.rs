@@ -7,7 +7,7 @@ use std::sync::Arc;
 fn get_all_returns_all_entries() {
     let p = ServiceCollection::new()
         .singleton(|_| Arc::new(common::MyService { value: 1 }))
-        .keyed("extra", |_| Arc::new(common::MyService { value: 2 }))
+        .keyed_singleton("extra", |_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
     let all: Vec<Arc<common::MyService>> = p.get_all();
@@ -38,8 +38,8 @@ fn scope_get_none_on_missing() {
 fn scope_get_all_from_parent() {
     let p = Arc::new(
         ServiceCollection::new()
-            .keyed("a", |_| Arc::new(common::MyService { value: 1 }))
-            .keyed("b", |_| Arc::new(common::MyService { value: 2 }))
+            .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
+            .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
             .build()
             .unwrap(),
     );
@@ -132,13 +132,13 @@ fn wrapper_get_optional_none() {
 fn wrapper_get_keyed_child_priority() {
     let root = Arc::new(
         ServiceCollection::new()
-            .keyed("k", |_| Arc::new(common::MyService { value: 10 }))
+            .keyed_singleton("k", |_| Arc::new(common::MyService { value: 10 }))
             .build()
             .unwrap(),
     );
     let child = Arc::new(
         ServiceCollection::new()
-            .keyed("k", |_| Arc::new(common::MyService { value: 20 }))
+            .keyed_singleton("k", |_| Arc::new(common::MyService { value: 20 }))
             .build()
             .unwrap(),
     );
@@ -167,7 +167,7 @@ fn singleton_keyed_via_get_resolves_default() {
     // Registering multiple keyed entries should NOT create a default.
     // get() should not find anything.
     let p = ServiceCollection::new()
-        .keyed("a", |_| Arc::new(common::MyService { value: 1 }))
+        .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
         .build()
         .unwrap();
     // get_keyed should work for the registered key

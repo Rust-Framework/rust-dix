@@ -3,8 +3,109 @@ use crate::error::RdiError;
 use crate::lifetime::ServiceLifetime;
 use crate::store::ServiceStore;
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
+
+/// Validation resolver that tracks resolution chains for cycle detection.
+struct ValidationResolver<'a> {
+    store: &'a ServiceStore,
+    /// Cache keys currently being resolved (for cycle detection)
+    resolving: HashSet<usize>,
+    /// TypeId → type_name map for error messages
+    type_names: &'a HashMap<TypeId, &'static str>,
+}
+
+impl<'a> ValidationResolver<'a> {
+    fn new(store: &'a ServiceStore, type_names: &'a HashMap<TypeId, &'static str>) -> Self {
+        Self {
+            store,
+            resolving: HashSet::new(),
+            type_names,
+        }
+    }
+
+    fn get_type_name(&self, cache_key: usize) -> String {
+        self.store
+            .iter()
+            .find(|(_, entries)| entries.iter().any(|e| e.cache_key == cache_key))
+            .and_then(|(_, entries)| entries.first())
+            .map(|e| {
+                e.type_name
+                    .split("::")
+                    .last()
+                    .unwrap_or(e.type_name)
+                    .to_string()
+            })
+            .unwrap_or_else(|| format!("service {}", cache_key))
+    }
+}
+
+impl<'a> IServiceResolver for ValidationResolver<'a> {
+    fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        // Find the entry by type_name
+        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
+        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
+
+        // Check for cycle: if already being resolved, we have a cycle
+        if self.resolving.contains(&entry.cache_key) {
+            let type_name = self.get_type_name(entry.cache_key);
+            let chain: Vec<String> = self.resolving
+                .iter()
+                .map(|&ck| self.get_type_name(ck))
+                .collect();
+            let cycle_desc = if chain.is_empty() {
+                type_name.clone()
+            } else {
+                format!("{} -> {}", chain.join(" -> "), type_name)
+            };
+            // Use a panic with message that will be caught
+            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+        }
+
+        // Mark as resolving
+        self.resolving.insert(entry.cache_key);
+
+        // Execute the factory (this may recursively resolve dependencies)
+        // We catch panics to convert them to RdiError
+        let result = (entry.factory)(self as &dyn IServiceResolver);
+
+        // Mark as resolved
+        self.resolving.remove(&entry.cache_key);
+
+        Some(result)
+    }
+
+    fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        // Find the entry by type_name + variant
+        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
+        let entry = self
+            .store
+            .get(tid)?
+            .iter()
+            .find(|e| e.key.as_deref() == Some(variant))?;
+
+        // Check for cycle
+        if self.resolving.contains(&entry.cache_key) {
+            let type_name = self.get_type_name(entry.cache_key);
+            let chain: Vec<String> = self.resolving
+                .iter()
+                .map(|&ck| self.get_type_name(ck))
+                .collect();
+            let cycle_desc = if chain.is_empty() {
+                type_name.clone()
+            } else {
+                format!("{} -> {}", chain.join(" -> "), type_name)
+            };
+            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+        }
+
+        self.resolving.insert(entry.cache_key);
+        let result = (entry.factory)(self as &dyn IServiceResolver);
+        self.resolving.remove(&entry.cache_key);
+
+        Some(result)
+    }
+}
 
 pub struct ServiceProvider {
     store: ServiceStore,
@@ -33,7 +134,9 @@ impl ServiceProvider {
             }
         }
 
-        // Two-phase singleton initialization to support cross-references.
+        // Phase 0: Validate dependencies (cycle detection)
+        Self::validate_dependencies(&store)?;
+
         // Phase 1: collect all singleton entries.
         let singleton_entries: Vec<(usize, ServiceFactory)> = store
             .values()
@@ -59,6 +162,52 @@ impl ServiceProvider {
         }
 
         Ok(sp)
+    }
+
+    /// Validate all dependencies: detect cycles.
+    fn validate_dependencies(store: &ServiceStore) -> Result<(), RdiError> {
+        // Build TypeId → type_name map for error messages
+        let type_names: HashMap<TypeId, &'static str> = store
+            .iter()
+            .map(|(&tid, entries)| {
+                let name = entries.first().map(|e| e.type_name).unwrap_or("<unknown>");
+                (tid, name)
+            })
+            .collect();
+
+        // Validate each singleton by attempting to resolve it
+        for entries in store.values() {
+            for entry in entries {
+                if entry.lifetime == ServiceLifetime::Singleton {
+                    let resolver = ValidationResolver::new(store, &type_names);
+                    // Attempt to resolve - if there's a cycle, we'll catch the panic
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        (entry.factory)(&resolver as &dyn IServiceResolver)
+                    })) {
+                        Ok(_) => {}
+                        Err(panic_info) => {
+                            // Check if it's our circular dependency panic
+                            if let Some(msg) = panic_info.downcast_ref::<String>() {
+                                if msg.starts_with("CIRCULAR_DEPENDENCY: ") {
+                                    let cycle = msg.strip_prefix("CIRCULAR_DEPENDENCY: ").unwrap();
+                                    return Err(RdiError::CircularDependency(cycle.to_string()));
+                                }
+                            }
+                            if let Some(msg) = panic_info.downcast_ref::<&str>() {
+                                if msg.starts_with("CIRCULAR_DEPENDENCY: ") {
+                                    let cycle = msg.strip_prefix("CIRCULAR_DEPENDENCY: ").unwrap();
+                                    return Err(RdiError::CircularDependency(cycle.to_string()));
+                                }
+                            }
+                            // Other panic - re-panic
+                            std::panic::panic_any(panic_info);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Resolve a service by type. Works uniformly for concrete types and trait objects.
@@ -273,8 +422,8 @@ mod tests {
     #[test]
     fn all_basic() {
         let p = ServiceCollection::new()
-            .keyed("a", |_| Arc::new(Calc(1)))
-            .keyed("b", |_| Arc::new(Calc(2)))
+            .keyed_singleton("a", |_| Arc::new(Calc(1)))
+            .keyed_singleton("b", |_| Arc::new(Calc(2)))
             .build()
             .unwrap();
         assert_eq!(p.get_all::<Calc>().len(), 2);

@@ -149,7 +149,7 @@ fn build_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MyService::default()))
         .singleton(|_| Arc::new(MyPlugin::default()))
-        .keyed("verbose", |_| Arc::new(Logger::default()))
+        .keyed_singleton("verbose", |_| Arc::new(Logger::default()))
         .build().unwrap()
 }
 ```
