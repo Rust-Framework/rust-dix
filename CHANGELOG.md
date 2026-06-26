@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2024-06-26
+
+### Fixed
+
+- **循环依赖检测编译错误**: 修复 `ValidationResolver` 中 `RwLock<HashSet>` 内部可变性问题
+  - 使用 `RwLock::write().unwrap()` 替代直接 `insert`/`remove`
+  - 确保在 `&self` 方法中可以安全修改解析链状态
+
 ## [0.3.1] - 2024-06-26
 
 ### Added

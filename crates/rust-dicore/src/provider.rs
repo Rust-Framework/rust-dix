@@ -9,8 +9,10 @@ use std::sync::{Arc, RwLock};
 /// Validation resolver that tracks resolution chains for cycle detection.
 struct ValidationResolver<'a> {
     store: &'a ServiceStore,
-    /// Cache keys currently being resolved (for cycle detection)
-    resolving: HashSet<usize>,
+    /// Cache keys currently being resolved (for cycle detection).
+    /// Uses `RwLock` because `IServiceResolver::get_any` takes `&self`
+    /// and the trait requires `Send + Sync`.
+    resolving: RwLock<HashSet<usize>>,
     /// TypeId → type_name map for error messages
     type_names: &'a HashMap<TypeId, &'static str>,
 }
@@ -19,7 +21,7 @@ impl<'a> ValidationResolver<'a> {
     fn new(store: &'a ServiceStore, type_names: &'a HashMap<TypeId, &'static str>) -> Self {
         Self {
             store,
-            resolving: HashSet::new(),
+            resolving: RwLock::new(HashSet::new()),
             type_names,
         }
     }
@@ -47,9 +49,11 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
 
         // Check for cycle: if already being resolved, we have a cycle
-        if self.resolving.contains(&entry.cache_key) {
+        if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
             let chain: Vec<String> = self.resolving
+                .read()
+                .unwrap()
                 .iter()
                 .map(|&ck| self.get_type_name(ck))
                 .collect();
@@ -63,14 +67,14 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         }
 
         // Mark as resolving
-        self.resolving.insert(entry.cache_key);
+        self.resolving.write().unwrap().insert(entry.cache_key);
 
         // Execute the factory (this may recursively resolve dependencies)
         // We catch panics to convert them to RdiError
         let result = (entry.factory)(self as &dyn IServiceResolver);
 
         // Mark as resolved
-        self.resolving.remove(&entry.cache_key);
+        self.resolving.write().unwrap().remove(&entry.cache_key);
 
         Some(result)
     }
@@ -85,9 +89,11 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             .find(|e| e.key.as_deref() == Some(variant))?;
 
         // Check for cycle
-        if self.resolving.contains(&entry.cache_key) {
+        if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
             let chain: Vec<String> = self.resolving
+                .read()
+                .unwrap()
                 .iter()
                 .map(|&ck| self.get_type_name(ck))
                 .collect();
@@ -99,9 +105,9 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
         }
 
-        self.resolving.insert(entry.cache_key);
+        self.resolving.write().unwrap().insert(entry.cache_key);
         let result = (entry.factory)(self as &dyn IServiceResolver);
-        self.resolving.remove(&entry.cache_key);
+        self.resolving.write().unwrap().remove(&entry.cache_key);
 
         Some(result)
     }
