@@ -1,0 +1,333 @@
+{
+  "meta": {
+    "title": "rust-dicore Dependency Injection Framework",
+    "subtitle": "面向接口·键控服务·设计模式落地",
+    "docTitle": "rust-dicore 开发者手册：面向接口开发的 Rust DI 框架",
+    "description": "受 Microsoft.Extensions.DependencyInjection 启发的 Rust 依赖注入框架。支持三种生命周期、键控服务策略模式、循环依赖检测、跨 DLL 插件、过程宏自动注册。",
+    "category": "library",
+    "tags": ["rust", "di", "dependency-injection", "interface-oriented", "design-patterns"],
+    "repoUrl": "https://gitcode.com/rf2026/rust-di",
+    "demoUrl": "",
+    "featured": true,
+    "sortOrder": 2,
+    "version": "0.3.2",
+    "language": "zh-CN",
+    "author": "Start",
+    "logo": "logo.svg",
+    "foreword": "FOREWORD.md",
+    "pathRules": {
+      "chapterIndex": "{chapterId}/INDEX.md",
+      "sectionFile": "{chapterId}/{sectionId}.md"
+    }
+  },
+  "parts": [
+    {
+      "id": "part-1-start",
+      "title": "第一部分 · 入门与认知",
+      "chapters": [
+        {
+          "id": "01-introduction",
+          "title": "认识 rust-dicore",
+          "subtitle": "框架定位、核心概念与适用场景",
+          "sections": [
+            {
+              "id": "what-is-rust-dicore",
+              "title": "什么是 rust-dicore",
+              "summary": "框架定义、核心能力与设计目标",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "core-concepts",
+              "title": "核心概念与 MEDI 对照",
+              "summary": "ServiceCollection、ServiceProvider、生命周期",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "who-should-use",
+              "title": "适用场景与边界",
+              "summary": "适合谁用、不适合什么场景",
+              "readingTime": 7,
+              "difficulty": "beginner"
+            }
+          ]
+        },
+        {
+          "id": "02-quickstart",
+          "title": "快速上手",
+          "subtitle": "从零搭建第一个 DI 容器",
+          "sections": [
+            {
+              "id": "installation",
+              "title": "安装与依赖配置",
+              "summary": "Cargo.toml 配置与过程宏引入",
+              "readingTime": 5,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "first-container",
+              "title": "第一个 DI 容器",
+              "summary": "注册、解析与生命周期选择",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "lifetime-choice",
+              "title": "生命周期选择",
+              "summary": "Singleton/Scoped/Transient 决策树",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-2-interface",
+      "title": "第二部分 · 面向接口开发",
+      "chapters": [
+        {
+          "id": "03-interface-oriented",
+          "title": "面向接口编程范式",
+          "subtitle": "contracts 层、dyn Trait 注册与多实现",
+          "sections": [
+            {
+              "id": "why-interface",
+              "title": "为什么面向接口",
+              "summary": "松耦合、可测试、开闭原则",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "contracts-layer",
+              "title": "trait 定义与 contracts 层",
+              "summary": "接口与 DTO 的分层组织",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "dyn-trait-registration",
+              "title": "dyn Trait 注册与解析",
+              "summary": "注册类型=解析类型的核心规则",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "multiple-implementations",
+              "title": "多实现与键控服务",
+              "summary": "策略模式、keyed_singleton/get_all",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-3-di",
+      "title": "第三部分 · DI 核心模式",
+      "chapters": [
+        {
+          "id": "04-di-patterns",
+          "title": "服务注册与解析",
+          "subtitle": "API 详解、作用域管理与分层容器",
+          "sections": [
+            {
+              "id": "registration-api",
+              "title": "注册 API 详解",
+              "summary": "singleton/scoped/transient/keyed_*",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "resolution-api",
+              "title": "解析 API 与 IServiceResolver",
+              "summary": "get/get_optional/get_keyed/get_all",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "scope-management",
+              "title": "作用域管理",
+              "summary": "create_scope 与 Scoped 服务缓存",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "layered-container",
+              "title": "分层容器与插件隔离",
+              "summary": "ServiceProviderWrapper 实现子优先",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-4-patterns",
+      "title": "第四部分 · 设计模式落地",
+      "chapters": [
+        {
+          "id": "05-design-patterns",
+          "title": "设计模式实践",
+          "subtitle": "策略、工厂、装饰器、观察者等模式",
+          "sections": [
+            {
+              "id": "strategy-pattern",
+              "title": "策略模式：keyed 服务",
+              "summary": "运行时选择实现、开闭原则",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "factory-pattern",
+              "title": "工厂模式：闭包工厂",
+              "summary": "动态创建服务、keyed 工厂",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "decorator-pattern",
+              "title": "装饰器模式：链式包装",
+              "summary": "增强服务功能、工厂闭包链",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "observer-pattern",
+              "title": "观察者模式：get_all 广播",
+              "summary": "事件通知、批量订阅",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "chain-pattern",
+              "title": "责任链模式：处理器链",
+              "summary": "逐级处理请求、配置驱动顺序",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "pattern-reference",
+              "title": "更多模式速查",
+              "summary": "12 种设计模式速查表",
+              "readingTime": 8,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-5-testing",
+      "title": "第五部分 · 测试与质量",
+      "chapters": [
+        {
+          "id": "06-testing",
+          "title": "测试策略",
+          "subtitle": "Mock 替换、测试容器与接口隔离",
+          "sections": [
+            {
+              "id": "mock-replacement",
+              "title": "Mock 替换策略",
+              "summary": "测试中替换实现",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "test-container",
+              "title": "测试容器构建",
+              "summary": "隔离测试环境",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "interface-testing",
+              "title": "接口隔离测试",
+              "summary": "依赖接口便于测试",
+              "readingTime": 8,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-6-advanced",
+      "title": "第六部分 · 高级特性",
+      "chapters": [
+        {
+          "id": "07-advanced",
+          "title": "高级特性",
+          "subtitle": "过程宏、跨 DLL 插件与模块扫描",
+          "sections": [
+            {
+              "id": "proc-macros",
+              "title": "过程宏系统",
+              "summary": "#[derive(Inject)]、#[inject]、#[module]",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "cross-dll-plugin",
+              "title": "跨 DLL 插件支持",
+              "summary": "IServiceLocator、命名服务注册表",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "module-scanning",
+              "title": "编译期模块扫描",
+              "summary": "inventory 与自动注册",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-7-best-practices",
+      "title": "第七部分 · 最佳实践",
+      "chapters": [
+        {
+          "id": "08-best-practices",
+          "title": "最佳实践",
+          "subtitle": "开发清单、常见陷阱与反模式警示",
+          "sections": [
+            {
+              "id": "interface-checklist",
+              "title": "面向接口开发清单",
+              "summary": "核心规则速查表",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "common-pitfalls",
+              "title": "常见陷阱与排查",
+              "summary": "高频错误与解决方案",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "performance-tips",
+              "title": "性能优化建议",
+              "summary": "Singleton 缓存、Scope 使用",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "anti-patterns",
+              "title": "反模式警示",
+              "summary": "错误做法与正确方案对比",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-﻿//! rust-di procedural macros.
+//! rust-di procedural macros.
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -227,7 +227,7 @@ fn lmt(lt: LT) -> proc_macro2::TokenStream {
 }
 fn kmt(lt: LT) -> proc_macro2::TokenStream {
     match lt {
-        LT::S => quote! {keyed},
+        LT::S => quote! {keyed_singleton},
         LT::Sc => quote! {keyed_scoped},
         LT::T => quote! {keyed_transient},
     }

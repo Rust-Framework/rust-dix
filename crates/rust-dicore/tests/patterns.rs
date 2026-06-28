@@ -28,7 +28,7 @@ impl Strategy for SlowStrategy {
 fn strategy_pattern() {
     let p = ServiceCollection::new()
         .singleton::<dyn Strategy>(|_| Arc::new(FastStrategy))
-        .keyed::<dyn Strategy>("slow", |_| Arc::new(SlowStrategy))
+        .keyed_singleton::<dyn Strategy>("slow", |_| Arc::new(SlowStrategy))
         .build()
         .unwrap();
     let fast: Arc<dyn Strategy> = p.get();
@@ -60,8 +60,8 @@ impl Product for ProductB {
 #[test]
 fn factory_pattern() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Product>("a", |_| Arc::new(ProductA))
-        .keyed::<dyn Product>("b", |_| Arc::new(ProductB))
+        .keyed_singleton::<dyn Product>("a", |_| Arc::new(ProductA))
+        .keyed_singleton::<dyn Product>("b", |_| Arc::new(ProductB))
         .build()
         .unwrap();
     let a: Arc<dyn Product> = p.get_keyed("a");
@@ -132,8 +132,8 @@ impl Handler for LogHandler {
 #[test]
 fn chain_of_responsibility() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Handler>("auth", |_| Arc::new(AuthHandler))
-        .keyed::<dyn Handler>("log", |_| Arc::new(LogHandler))
+        .keyed_singleton::<dyn Handler>("auth", |_| Arc::new(AuthHandler))
+        .keyed_singleton::<dyn Handler>("log", |_| Arc::new(LogHandler))
         .build()
         .unwrap();
     let auth: Arc<dyn Handler> = p.get_keyed("auth");
@@ -170,8 +170,8 @@ impl Observer for SmsObserver {
 #[test]
 fn observer_pattern() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Observer>("email", |_| Arc::new(EmailObserver { addr: "a@b" }))
-        .keyed::<dyn Observer>("sms", |_| Arc::new(SmsObserver { phone: "555" }))
+        .keyed_singleton::<dyn Observer>("email", |_| Arc::new(EmailObserver { addr: "a@b" }))
+        .keyed_singleton::<dyn Observer>("sms", |_| Arc::new(SmsObserver { phone: "555" }))
         .build()
         .unwrap();
     let email: Arc<dyn Observer> = p.get_keyed("email");
@@ -207,8 +207,8 @@ impl Component for GroupNode {
 #[test]
 fn composite_pattern() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Component>("leaf_a", |_| Arc::new(LeafNode { name: "A" }))
-        .keyed::<dyn Component>("leaf_b", |_| Arc::new(LeafNode { name: "B" }))
+        .keyed_singleton::<dyn Component>("leaf_a", |_| Arc::new(LeafNode { name: "A" }))
+        .keyed_singleton::<dyn Component>("leaf_b", |_| Arc::new(LeafNode { name: "B" }))
         .build()
         .unwrap();
     let a: Arc<dyn Component> = p.get_keyed("leaf_a");
@@ -277,8 +277,8 @@ impl Plugin for IoPlugin {
 #[test]
 fn plugin_architecture() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Plugin>("math", |_| Arc::new(MathPlugin))
-        .keyed::<dyn Plugin>("io", |_| Arc::new(IoPlugin))
+        .keyed_singleton::<dyn Plugin>("math", |_| Arc::new(MathPlugin))
+        .keyed_singleton::<dyn Plugin>("io", |_| Arc::new(IoPlugin))
         .build()
         .unwrap();
     let math: Arc<dyn Plugin> = p.get_keyed("math");
@@ -312,8 +312,8 @@ impl Feature for OldCheckout {
 #[test]
 fn feature_toggle() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Feature>("new_checkout", |_| Arc::new(NewCheckout))
-        .keyed::<dyn Feature>("old_checkout", |_| Arc::new(OldCheckout))
+        .keyed_singleton::<dyn Feature>("new_checkout", |_| Arc::new(NewCheckout))
+        .keyed_singleton::<dyn Feature>("old_checkout", |_| Arc::new(OldCheckout))
         .build()
         .unwrap();
     let new: Arc<dyn Feature> = p.get_keyed("new_checkout");
@@ -345,8 +345,8 @@ impl Stage for TrimStage {
 #[test]
 fn pipeline_pattern() {
     let p = ServiceCollection::new()
-        .keyed::<dyn Stage>("upper", |_| Arc::new(UpperStage))
-        .keyed::<dyn Stage>("trim", |_| Arc::new(TrimStage))
+        .keyed_singleton::<dyn Stage>("upper", |_| Arc::new(UpperStage))
+        .keyed_singleton::<dyn Stage>("trim", |_| Arc::new(TrimStage))
         .build()
         .unwrap();
     let upper: Arc<dyn Stage> = p.get_keyed("upper");

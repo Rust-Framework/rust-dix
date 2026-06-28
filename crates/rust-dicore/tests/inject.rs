@@ -25,7 +25,7 @@ fn inject_full_featured() {
                 prefix: "main".into(),
             })
         })
-        .keyed("special", |_| {
+        .keyed_singleton("special", |_| {
             Arc::new(common::Logger {
                 prefix: "special".into(),
             })

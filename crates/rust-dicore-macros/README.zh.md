@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.2"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dicore-macros
+rust-dicore = "0.3"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dicore-macros
 ```
 
 > **注意**：你很少需要直接添加 `rust-dicore-macros` 依赖。`rust-dicore` crate 已经重新导出了
@@ -174,7 +174,7 @@ fn build_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MyService::default()))
         .singleton(|_| Arc::new(MyPlugin::default()))
-        .keyed("verbose", |_| Arc::new(Logger::default()))
+        .keyed_singleton("verbose", |_| Arc::new(Logger::default()))
         .build().unwrap()
 }
 ```

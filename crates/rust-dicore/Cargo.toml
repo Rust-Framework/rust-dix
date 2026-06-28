@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "rust-dicore"
 version.workspace = true
 edition.workspace = true
@@ -13,7 +13,7 @@ keywords = ["di", "dependency-injection", "ioc", "rust-dicore", "service-provide
 [dependencies]
 thiserror.workspace = true
 inventory = "0.3"
-rust-dicore-macros = { path = "../rust-dicore-macros", version = "0.2.6" }
+rust-dicore-macros = { path = "../rust-dicore-macros", version = "0.3.2" }
 
 [features]
 default = []

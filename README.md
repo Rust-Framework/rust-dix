@@ -48,7 +48,7 @@ let logger: Arc<Config> = provider.get();
 
 ```toml
 [dependencies]
-rust-dicore = "0.2"
+rust-dicore = "0.3"
 ```
 
 ## Features

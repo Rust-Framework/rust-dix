@@ -21,7 +21,7 @@ as possible.
 
 ```toml
 [dependencies]
-rust-dicore = "0.2"       # re-exports all macros — you usually don't need rust-dicore-macros directly
+rust-dicore = "0.3"       # re-exports all macros — you usually don't need rust-dicore-macros directly
 ```
 
 > **Note**: You rarely need to add `rust-dicore-macros` as a direct dependency.
@@ -189,7 +189,7 @@ fn build_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MyService::default()))
         .singleton(|_| Arc::new(MyPlugin::default()))
-        .keyed("verbose", |_| Arc::new(Logger::default()))
+        .keyed_singleton("verbose", |_| Arc::new(Logger::default()))
         .build().unwrap()
 }
 ```

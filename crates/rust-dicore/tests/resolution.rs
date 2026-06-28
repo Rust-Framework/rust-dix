@@ -48,8 +48,8 @@ fn get_services_returns_empty_when_none() {
 #[test]
 fn get_services_returns_all_keyed() {
     let p = ServiceCollection::new()
-        .keyed("a", |_| Arc::new(common::MyService { value: 1 }))
-        .keyed("b", |_| Arc::new(common::MyService { value: 2 }))
+        .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
+        .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
     let all: Vec<Arc<common::MyService>> = p.get_services();
@@ -98,9 +98,9 @@ fn provider_get_all_empty() {
 #[test]
 fn provider_has_correct_keyed_count() {
     let p = ServiceCollection::new()
-        .keyed("a", |_| Arc::new(common::MyService { value: 1 }))
-        .keyed("b", |_| Arc::new(common::MyService { value: 2 }))
-        .keyed("c", |_| Arc::new(common::MyService { value: 3 }))
+        .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
+            .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
+            .keyed_singleton("c", |_| Arc::new(common::MyService { value: 3 }))
         .build()
         .unwrap();
     assert_eq!(p.get_keyed::<common::MyService>("a").value, 1);
@@ -129,7 +129,7 @@ fn trait_object_multiple_impls() {
     use common::{AltPlugin, IPlugin, TestPlugin};
     let p = ServiceCollection::new()
         .singleton::<dyn IPlugin>(|_| Arc::new(TestPlugin))
-        .keyed::<dyn IPlugin>("alt", |_| Arc::new(AltPlugin))
+        .keyed_singleton::<dyn IPlugin>("alt", |_| Arc::new(AltPlugin))
         .build()
         .unwrap();
     let default: Arc<dyn IPlugin> = p.get();
@@ -141,7 +141,7 @@ fn trait_object_multiple_impls() {
 #[test]
 fn try_get_keyed_returns_correct_value() {
     let p = ServiceCollection::new()
-        .keyed("exists", |_| Arc::new(common::MyService { value: 42 }))
+        .keyed_singleton("exists", |_| Arc::new(common::MyService { value: 42 }))
         .build()
         .unwrap();
     let present: Option<Arc<common::MyService>> = p.try_get_keyed("exists");

@@ -55,7 +55,7 @@ description: >
 
 ### 当用户要求"添加 LRDI 到我的项目"
 
-1. 检查 `Cargo.toml`，添加 `rust-dicore = "0.2"` 到 `[dependencies]`
+1. 检查 `Cargo.toml`，添加 `rust-dicore = "0.3"` 到 `[dependencies]`
 2. 在 `main.rs` 或 `lib.rs` 中添加 `use rust_dicore::*;`
 3. 构建 ServiceProvider：
    - 确定需要哪些服务（列出所有 trait 和实现）
@@ -75,11 +75,11 @@ description: >
    - 具体类型 + 全局唯一 → `.singleton(|_| Arc::new(T))`
    - 具体类型 + 每次新建 → `.transient(|_| Arc::new(T))`  
    - `dyn Trait` → `.singleton::<dyn Trait>(|_| Arc::new(Impl))`
-   - 同类型多实例 → `.keyed("name", |_| Arc::new(T))`
+   - 同类型多实例 → `.keyed_singleton("name", |_| Arc::new(T))`
    - 已有 Arc 实例 → `.instance(arc)`
 4. **关键规则**：注册时的 `T` 类型决定了解析时的 `TypeId`。注册为 `dyn Trait` 才能以 `dyn Trait` 解析，注册为具体类型只能以具体类型解析。
 
-### 注册语法参考
+### 注册语法参考（面向接口开发）
 
 | 语法 | 含义 |
 |------|------|
@@ -118,6 +118,33 @@ description: >
 ---
 
 ## 必须遵守的规则
+
+### 规则 0：面向接口开发（最重要）
+
+```rust
+// ✅ 正确：依赖 trait，注册为 trait
+trait IUserService: Send + Sync { fn create(&self, name: &str) -> User; }
+
+#[rust_dicore::inject(singleton)]
+struct UserService { db: Arc<dyn IDbContext> }      // 依赖接口
+
+#[rust_dicore::inject]                              // 在 impl 上：注册为 dyn IUserService
+impl IUserService for UserService { ... }
+
+// Handler 依赖接口
+#[rust_dicore::inject(transient)]
+struct CreateUserHandler {
+    user_svc: Arc<dyn IUserService>,  // 接口依赖
+}
+
+// ❌ 错误：依赖具体类型
+struct CreateUserHandler {
+    user_svc: Arc<UserService>,  // 具体类型，无法替换 mock
+}
+```
+
+**contracts 层**：放 trait 定义 + DTO
+**handlers 层**：放 trait 实现 + #[inject]
 
 ### 规则 1：注册类型 = 解析类型
 ```rust
@@ -183,10 +210,21 @@ struct AppService {
     config: Arc<Config>,
 }
 
-impl AppService {
-    fn run(&self) {
-        println!("App started");
-    }
+// handlers 层：实现接口并注册
+#[rust_dicore::inject(singleton)]
+struct UserService {
+    db: Arc<dyn IDbContext>,  // 依赖接口
+}
+
+#[rust_dicore::inject]  // 在 impl 上：注册为接口
+impl IUserService for UserService {
+    fn create(&self, name: &str) -> User { ... }
+}
+
+// Handler 依赖接口
+#[rust_dicore::inject(transient)]
+struct CreateUserHandler {
+    user_svc: Arc<dyn IUserService>,  // 接口依赖，可测试可替换
 }
 
 fn main() {
@@ -195,12 +233,34 @@ fn main() {
             .build()
             .unwrap()
     );
-    let app: Arc<AppService> = provider.get();
-    app.run();
+    let handler: Arc<CreateUserHandler> = provider.get();
+    handler.user_svc.create("Alice");
 }
 ```
 
-### 模板 2：带作用域的 Web 请求处理
+### 模板 2：策略模式（keyed 多实现）
+```rust
+// 多实现策略
+#[rust_dicore::inject(singleton)]
+struct CreditCardGateway;
+
+#[rust_dicore::inject]  // 在 impl 上：注册为默认 dyn IPayGateway
+impl IPayGateway for CreditCardGateway { ... }
+
+// 组合根补充 keyed 注册
+let provider = ServiceCollection::from_injected()
+    .keyed_singleton::<dyn IPayGateway>("wechat", |_| Arc::new(WechatGateway))
+    .keyed_singleton::<dyn IPayGateway>("alipay", |_| Arc::new(AlipayGateway))
+    .build()
+    .unwrap();
+
+// 运行时路由
+let gateway: Arc<dyn IPayGateway> = provider
+    .try_get_keyed(method)
+    .unwrap_or_else(|| provider.get());  // 回退默认
+```
+
+### 模板 3：带作用域的 Web 请求处理
 ```rust
 fn handle_request(provider: &Arc<ServiceProvider>, req: Request) -> Response {
     let scope = provider.create_scope();
