@@ -20,7 +20,7 @@
 
 ## ServiceLifetime 枚举
 
-定义于 `lrdi::lifetime`，通过 `lrdi::ServiceLifetime` 重新导出。
+定义于 `rust_dicore::lifetime`，通过 `rust_dicore::ServiceLifetime` 重新导出。
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,7 +51,7 @@ pub enum ServiceLifetime {
 
 ## ServiceCollection（注册 API）
 
-定义于 `lrdi::collection`，通过 `lrdi::ServiceCollection` 重新导出。
+定义于 `rust_dicore::collection`，通过 `rust_dicore::ServiceCollection` 重新导出。
 
 ```rust
 pub struct ServiceCollection {
@@ -115,7 +115,7 @@ impl ServiceCollection {
 **示例**：
 
 ```rust
-use lrdi::ServiceCollection;
+use rust_dicore::ServiceCollection;
 
 let collection = ServiceCollection::new();
 let provider = collection.build().unwrap();
@@ -149,7 +149,7 @@ pub fn singleton<T: ?Sized + Send + Sync + 'static>(
 
 ```rust
 use std::sync::Arc;
-use lrdi::{ServiceCollection, IServiceResolver};
+use rust_dicore::{ServiceCollection, IServiceResolver};
 
 struct Database {
     conn_str: String,
@@ -186,7 +186,7 @@ pub fn scoped<T: ?Sized + Send + Sync + 'static>(
 
 ```rust
 use std::sync::Arc;
-use lrdi::ServiceCollection;
+use rust_dicore::ServiceCollection;
 
 struct Session {
     id: u64,
@@ -234,7 +234,7 @@ pub fn transient<T: ?Sized + Send + Sync + 'static>(
 
 ```rust
 use std::sync::Arc;
-use lrdi::ServiceCollection;
+use rust_dicore::ServiceCollection;
 
 struct Operation {
     id: u64,
@@ -436,7 +436,7 @@ pub fn add<T: ?Sized + Send + Sync + 'static>(
 **示例**：
 
 ```rust
-use lrdi::ServiceLifetime;
+use rust_dicore::ServiceLifetime;
 
 let provider = ServiceCollection::new()
     .add(ServiceLifetime::Singleton, |_| Arc::new(Cache::new()))
@@ -475,22 +475,22 @@ pub fn build(self) -> Result<ServiceProvider, RdiError>
 pub fn from_injected() -> Self
 ```
 
-收集当前 binary 中所有 `#[lrdi::inject(...)]` 标注的服务，构建 `ServiceCollection`。
+收集当前 binary 中所有 `#[rust_dicore::inject]` 标注的服务，构建 `ServiceCollection`。
 必须在应用入口处调用一次。之后可以链式调用其他注册方法补充服务。
 
-**实现机制**：遍历 `inventory` 迭代器中所有 `ServiceRegistration` 条目（由 `#[lrdi::inject(...)]`
+**实现机制**：遍历 `inventory` 迭代器中所有 `ServiceRegistration` 条目（由 `#[rust_dicore::inject]`
 在编译期通过 `inventory::submit!` 提交），将其转换为 `ServiceDescriptor` 并存入新集合。
 
 **示例：**
 
 ```rust
-use lrdi::*;
+use rust_dicore::*;
 use std::sync::Arc;
 
-#[lrdi::inject(S)]
+#[rust_dicore::inject(singleton)]
 struct Logger { prefix: String }
 
-#[lrdi::inject(T)]
+#[rust_dicore::inject(transient)]
 struct Worker { logger: Arc<Logger> }
 
 let provider = ServiceCollection::from_injected()
@@ -503,67 +503,68 @@ let provider = ServiceCollection::from_injected()
 
 ## 过程宏（Procedural Macros）
 
-定义于 `lrdi-macros` crate，通过 `lrdi` 重新导出。
+定义于 `rust-dicore-macros` crate，通过 `rust-dicore` 重新导出。
 
-### `#[lrdi::inject(...)]` — 属性宏自动注册
+### `#[rust_dicore::inject]` — 属性宏自动注册
 
 ```rust
 // 语法格式：
-//   #[lrdi::inject(<lifetime>)]                // 按自身类型注册
-//   #[lrdi::inject(<lifetime>, as = <trait>)]  // 按 trait 注册
-//   #[lrdi::inject(<lifetime>, as = [<trait1>, <trait2>])]  // 按多个 trait 注册
+//   #[rust_dicore::inject(<lifetime>)]          // 放在 struct 上：按自身类型注册
+//   #[rust_dicore::inject]                      // 放在 `impl Trait for T` 上：按 trait 注册
 ```
 
 **生命周期参数：**
 
-| 缩写 | 含义 |
+| 生命周期 | 含义 |
 |------|------|
-| `S` | Singleton |
-| `Sc` | Scoped |
-| `T` | Transient |
+| `singleton` | Singleton |
+| `scoped` | Scoped |
+| `transient` | Transient |
 
 **功能：** 标注在 struct 上，在编译期生成三项代码：
 
 1. 一个构造函数 `__rdi_construct_<StructName>(resolver: &dyn IServiceResolver) -> Arc<StructName>`，
    自动从 DI 容器解析所有命名字段
 2. 一个工厂函数，将构造函数包装为 `ServiceFactory` 签名
-3. 通过 `lrdi::inventory::submit!` 提交 `ServiceRegistration` 条目，供
+3. 通过 `rust_dicore::inventory::submit!` 提交 `ServiceRegistration` 条目，供
    `ServiceCollection::from_injected()` 收集
 
-**字段属性（`#[inject(...)]`）：**
+**字段属性（`#[rdi(...)]`）：**
 
 在 struct 字段上使用的辅助属性：
 
 | 属性 | 含义 |
 |------|------|
-| `#[inject(skip)]` | 该字段使用 `Default::default()`，不从容器解析 |
-| `#[inject(optional)]` | 该字段解析为 `Option<Arc<T>>`，服务未注册时返回 `None` |
-| `#[inject(provider)]` | 该字段注入 `dyn IServiceResolver` 本身 |
-| `#[inject(key = "...")]` | 该字段按 key 解析键控服务 |
+| `#[rdi(skip)]` | 该字段使用 `Default::default()`，不从容器解析 |
+| `#[rdi(optional)]` | 该字段解析为 `Option<Arc<T>>`，服务未注册时返回 `None` |
+| `#[rdi(provider)]` | 该字段注入 `dyn IServiceResolver` 本身 |
+| `#[rdi(key = "...")]` | 该字段按 key 解析键控服务 |
 
 **示例：**
 
 ```rust
-use lrdi::*;
+use rust_dicore::*;
 use std::sync::Arc;
 
 trait ILogger: Send + Sync { fn log(&self, msg: &str); }
 
+// 按自身类型注册为 Singleton
+#[rust_dicore::inject(singleton)]
+struct Logger { prefix: String }
+
+// 按 trait 注册：在 `impl Trait for T` 块上标注
 struct ConsoleLogger;
+#[rust_dicore::inject]
 impl ILogger for ConsoleLogger {
     fn log(&self, msg: &str) { println!("{msg}"); }
 }
 
-// 按自身类型注册为 Singleton
-#[lrdi::inject(S)]
-struct Logger { prefix: String }
-
-// 按 trait 注册为 Singleton，字段可选
-#[lrdi::inject(S, as = dyn ILogger)]
+// 字段属性示例
+#[rust_dicore::inject(singleton)]
 struct AppService {
-    #[inject(optional)]
+    #[rdi(optional)]
     logger: Option<Arc<dyn ILogger>>,
-    #[inject(skip)]
+    #[rdi(skip)]
     name: String,
 }
 
@@ -583,28 +584,28 @@ struct MyService { /* ... */ }
 ```
 
 为 struct 生成 `__rdi_construct_<StructName>(resolver: &dyn IServiceResolver) -> Arc<StructName>`
-构造函数。与 `#[lrdi::inject]` 的区别：**不自注册到容器**，仅生成构造函数代码，
+构造函数。与 `#[rust_dicore::inject]` 的区别：**不自注册到容器**，仅生成构造函数代码，
 需手动通过 `ServiceCollection::new().transient(|p| __rdi_construct_MyService(p))` 等方式注册。
 
-字段属性 `#[inject(...)]` 的语义与 `#[lrdi::inject]` 相同。
+字段属性 `#[rdi(...)]` 的语义与 `#[rust_dicore::inject]` 相同。
 
-### `#[lrdi::module]` — 编译期模块扫描
+### `#[rust_dicore::module]` — 编译期模块扫描
 
 ```rust
-#[lrdi::module]
+#[rust_dicore::module]
 mod services {
-    lrdi::inject!(singleton: dyn ILogger => ConsoleLogger);
-    lrdi::inject!(transient: MyService);
-    lrdi::inject!(keyed "x": singleton: dyn IPlugin => XPlugin);
+    rust_dicore::register!(singleton: dyn ILogger => ConsoleLogger);
+    rust_dicore::register!(transient: MyService);
+    rust_dicore::register!(keyed "x": singleton: dyn IPlugin => XPlugin);
 }
 
 let provider = services::__rdi_build_provider_services();
 ```
 
-`#[lrdi::module]` 扫描模块内所有 `lrdi::inject!(...)` 声明，生成一个
+`#[rust_dicore::module]` 扫描模块内所有 `rust_dicore::register!(...)` 声明，生成一个
 `__rdi_build_provider_<mod_name>()` 函数，调用该函数即可获得预配置的 `ServiceProvider`。
 
-支持的 `lrdi::inject!(...)` 语法：
+支持的 `rust_dicore::register!(...)` 语法：
 
 | 语法 | 含义 |
 |------|------|
@@ -619,7 +620,7 @@ let provider = services::__rdi_build_provider_services();
 
 ## ServiceProvider（解析 API）
 
-定义于 `lrdi::provider`，通过 `lrdi::ServiceProvider` 重新导出。
+定义于 `rust_dicore::provider`，通过 `rust_dicore::ServiceProvider` 重新导出。
 
 ```rust
 pub struct ServiceProvider {
@@ -840,7 +841,7 @@ pub fn remove_named(&self, name: &str)
 
 ## Scope（作用域 API）
 
-定义于 `lrdi::scope`，通过 `lrdi::Scope`（及别称 `lrdi::ServiceScope`）重新导出。
+定义于 `rust_dicore::scope`，通过 `rust_dicore::Scope`（及别称 `rust_dicore::ServiceScope`）重新导出。
 
 ```rust
 pub struct Scope {
@@ -919,7 +920,7 @@ pub fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>>
 
 ## ServiceProviderWrapper（分层容器 API）
 
-定义于 `lrdi::wrapper`，通过 `lrdi::ServiceProviderWrapper` 重新导出。
+定义于 `rust_dicore::wrapper`，通过 `rust_dicore::ServiceProviderWrapper` 重新导出。
 
 ```rust
 pub struct ServiceProviderWrapper {
@@ -973,7 +974,7 @@ pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T>
 **示例**：
 
 ```rust
-use lrdi::{ServiceCollection, ServiceProviderWrapper};
+use rust_dicore::{ServiceCollection, ServiceProviderWrapper};
 use std::sync::Arc;
 
 struct Logger { level: String }
@@ -1045,7 +1046,7 @@ pub fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>>
 
 ## IServiceResolver（核心 trait）
 
-定义于 `lrdi::entry`，通过 `lrdi::IServiceResolver` 重新导出。
+定义于 `rust_dicore::entry`，通过 `rust_dicore::IServiceResolver` 重新导出。
 
 ```rust
 pub trait IServiceResolver: Send + Sync {
@@ -1150,7 +1151,7 @@ where Self: Sized,
 
 ### IServiceLocator trait
 
-定义于 `lrdi::service_locator`。
+定义于 `rust_dicore::service_locator`。
 
 ```rust
 pub trait IServiceLocator: Send + Sync {
@@ -1183,7 +1184,7 @@ pub trait INamedRegistrar: Send + Sync {
 
 ### RdiProvider 枚举
 
-定义于 `lrdi::bridge`。
+定义于 `rust_dicore::bridge`。
 
 ```rust
 pub enum RdiProvider {
@@ -1209,7 +1210,7 @@ impl RdiProvider {
 **示例**：
 
 ```rust
-use lrdi::{RdiProvider, ServiceProvider};
+use rust_dicore::{RdiProvider, ServiceProvider};
 use std::sync::Arc;
 
 let provider = Arc::new(/* ServiceProvider 或 ServiceProviderWrapper */);
@@ -1221,7 +1222,7 @@ let rdi = RdiProvider::Root(provider);
 
 ### ServiceLocatorBridge
 
-定义于 `lrdi::bridge`。
+定义于 `rust_dicore::bridge`。
 
 ```rust
 pub struct ServiceLocatorBridge {
@@ -1253,7 +1254,7 @@ impl ServiceLocatorBridge {
 **示例**：
 
 ```rust
-use lrdi::{ServiceCollection, ServiceLocatorBridge, RdiProvider};
+use rust_dicore::{ServiceCollection, ServiceLocatorBridge, RdiProvider};
 use std::sync::Arc;
 
 let provider = Arc::new(
@@ -1303,7 +1304,7 @@ macro_rules! impl_service_locator {
 
 ## RdiError 错误类型
 
-定义于 `lrdi::error`，通过 `lrdi::RdiError` 重新导出。
+定义于 `rust_dicore::error`，通过 `rust_dicore::RdiError` 重新导出。
 
 ```rust
 use thiserror::Error;
@@ -1398,4 +1399,4 @@ LRDI 的内部门道：工厂闭包的返回值经过包装。
 
 ---
 
-> **文档版本**：基于 LRDI 源代码生成，与 `D:\GitCode\RF\lrdi\crates\lrdi\src\` 内核源代码一一对应。
+> **文档版本**：基于 rust-di 源代码生成，与 `e:\GitCode\RF\rust-di\crates\rust-dicore\src\` 内核源代码一一对应。

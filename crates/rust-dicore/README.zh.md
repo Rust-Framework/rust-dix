@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.1"
+rust-dicore = "0.2"
 ```
 
 ---
@@ -139,19 +139,28 @@ ServiceCollection::new()
 
 #### `#[rust_dicore::inject]` — 基于属性宏的自动注册（推荐）
 
-推荐的方式是直接在结构体上标注 `#[rust_dicore::inject(...)]`：
+推荐的方式是直接在结构体（或 trait impl 块）上标注 `#[rust_dicore::inject(...)]`：
 
 ```rust
 use rust_dicore::*;
 
-#[rust_dicore::inject(singleton)]             // 注册为具体类型
+// 标注结构体 → 注册为具体类型
+// 生命周期参数省略时默认为 singleton
+#[rust_dicore::inject]
 struct Config { url: String }
 
-#[rust_dicore::inject(transient, as = dyn UserRepo)]  // 注册为 trait 接口
+#[rust_dicore::inject(transient)]
+struct Worker { logger: Arc<Config> }
+
+// 标注 trait impl → 注册为 `dyn Trait`
+// trait 类型从 `impl Trait for Type` 自动推断，无需 `as = dyn Trait` 样板
+trait UserRepo { /* ... */ }
+
+#[rust_dicore::inject(transient)]   // 在 struct 上：具体类型注册
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[rust_dicore::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // 多接口
-struct BootLoader;
+#[rust_dicore::inject]              // 在 impl 上：trait 注册（默认 singleton）
+impl UserRepo for PgUserRepo { /* ... */ }
 
 // 一步收集所有标注并构建：
 let provider = ServiceCollection::from_injected().build().unwrap();
@@ -161,9 +170,22 @@ let provider = ServiceCollection::from_injected().build().unwrap();
 并通过 `inventory` 自动注册到容器。支持命名结构体和单元结构体（零字段）：
 
 ```rust
-#[rust_dicore::inject(singleton, as = dyn IDynamicAuthorizer)]
+#[rust_dicore::inject]
 struct RoleAuthorizer;  // 单元结构体 — 零字段
+
+impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 ```
+
+**两个放置位置，统一语法：**
+
+| 放置位置 | 注册为 | 是否复用构造函数 |
+|---------|--------|----------------|
+| `#[inject]` 在 struct 上 | 具体类型 `T` | 自行生成 |
+| `#[inject]` 在 `impl Trait for T` 上 | `dyn Trait` | 复用 `__rdi_construct_T` |
+
+同一个 struct 可以**同时**携带一个 struct 级别的 `#[inject]`（具体类型注册）
+和多个 impl 级别的 `#[inject]`（每个 trait 接口一个）。这取代了旧的
+`as = dyn Trait` / `as = [dyn A, dyn B]` 语法。
 
 #### 解析（`ServiceProvider` / `Scope`）
 
@@ -317,9 +339,9 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 过程宏提供三个编译期便利：
 
 - **`#[rust_dicore::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
-  只需在结构体上标注一行，`ServiceCollection::from_injected()` 自动收集所有注册。
+  只需在结构体（或 trait impl 块）上标注一行，`ServiceCollection::from_injected()` 自动收集所有注册。
 - **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，`#[rust_dicore::inject]` 内部使用。
-- **`#[rust_dicore::module]`** — 编译期收集 `rust_dicore::inject!()` 声明，生成完整的 provider
+- **`#[rust_dicore::module]`** — 编译期收集 `rust_dicore::register!()` 声明，生成完整的 provider
   构建函数。适用于外部类型注册、条件编译和集中式管理。
 
 详见 [`rust-dicore-macros/README.md`](../rust-dicore-macros/README.md)。

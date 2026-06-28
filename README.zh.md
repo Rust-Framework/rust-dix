@@ -57,10 +57,10 @@ let logger: Arc<Config> = provider.get();
 
 | 特性 | 描述 |
 |------|------|
-| `#[rust_dicore::inject]` | 基于属性宏的自动注册 — 标注结构体后调用 `ServiceCollection::from_injected()` |
+| `#[rust_dicore::inject]` | 基于属性宏的自动注册 — 标注**结构体或 trait impl 块**后调用 `ServiceCollection::from_injected()` |
 | `#[derive(Inject)]` | 派生宏实现构造器注入（高级功能） |
-| `#[rust_dicore::module]` | 编译期模块扫描，收集 `rust_dicore::inject!(...)` 声明（高级功能） |
-| **三种生命周期** | Singleton、Scoped、Transient |
+| `#[rust_dicore::module]` | 编译期模块扫描，收集 `rust_dicore::register!(...)` 声明（高级功能） |
+| **三种生命周期** | Singleton（默认）、Scoped、Transient |
 | **键控服务** | 同一类型的多个实例以字符串 key 区分 |
 | **跨 DLL 支持** | 为 cdylib 插件系统提供的命名服务注册表 |
 | **分层容器** | 通过 `ServiceProviderWrapper` 实现子优先解析 |

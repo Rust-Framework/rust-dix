@@ -19,7 +19,7 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dicore = "0.1"
+rust-dicore = "0.2"
 ```
 
 ---
@@ -146,19 +146,30 @@ ServiceCollection::new()
 
 #### `#[rust_dicore::inject]` — Attribute-based auto-registration (recommended)
 
-The preferred way to register services is to annotate structs directly:
+The preferred way to register services is to annotate structs (or trait impl
+blocks) directly:
 
 ```rust
 use rust_dicore::*;
 
-#[rust_dicore::inject(singleton)]     // registers as concrete type
+// Annotate a struct → registered as its concrete type.
+// Lifetime defaults to `singleton` when omitted.
+#[rust_dicore::inject]
 struct Config { url: String }
 
-#[rust_dicore::inject(transient, as = dyn UserRepo)]  // registers as trait
+#[rust_dicore::inject(transient)]
+struct Worker { logger: Arc<Config> }
+
+// Annotate a trait impl → registered as `dyn Trait`.
+// The trait type is auto-detected from `impl Trait for Type`,
+// so no `as = dyn Trait` boilerplate is needed.
+trait UserRepo { /* ... */ }
+
+#[rust_dicore::inject(transient)]   // on the struct: concrete registration
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[rust_dicore::inject(singleton, as = [dyn EventHandler, dyn StartupTask])]  // multi-trait
-struct BootLoader;
+#[rust_dicore::inject]              // on the impl: trait registration (singleton by default)
+impl UserRepo for PgUserRepo { /* ... */ }
 
 // Then build from all annotations in one call:
 let provider = ServiceCollection::from_injected().build().unwrap();
@@ -171,13 +182,23 @@ Supports both named-field structs and unit structs (zero fields):
 
 ```rust
 // Unit struct — zero fields, works out of the box
-#[rust_dicore::inject(singleton, as = dyn IDynamicAuthorizer)]
+#[rust_dicore::inject]
 struct RoleAuthorizer;
 
-// Named struct — fields resolved from DI container
-#[rust_dicore::inject(transient)]
-struct Worker { logger: Arc<Config> }
+impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 ```
+
+**Two placement sites, one consistent syntax:**
+
+| Placement | What it registers | Reuses constructor? |
+|-----------|-------------------|---------------------|
+| `#[inject]` on struct | Concrete type `T` | Generates its own |
+| `#[inject]` on `impl Trait for T` | `dyn Trait` | Reuses `__rdi_construct_T` |
+
+The same struct can carry **both** a struct-level `#[inject]` (concrete
+registration) and one or more impl-level `#[inject]` annotations (one per
+trait interface). This replaces the old `as = dyn Trait` /
+`as = [dyn A, dyn B]` syntax.
 
 #### Resolution (`ServiceProvider` / `Scope`)
 
@@ -321,11 +342,12 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 provide three compile-time conveniences:
 
 - **`#[rust_dicore::inject(...)]`** (recommended) — Attribute macro that combines
-  constructor generation + auto-registration. One annotation on a struct is
-  all you need — `ServiceCollection::from_injected()` collects everything.
+  constructor generation + auto-registration. One annotation on a struct (or
+  trait impl) is all you need — `ServiceCollection::from_injected()` collects
+  everything.
 - **`#[derive(Inject)]`** — Generate the factory function automatically from
   struct fields. Used internally by `#[rust_dicore::inject]`.
-- **`#[rust_dicore::module]`** — Collect `rust_dicore::inject!()` declarations at compile
+- **`#[rust_dicore::module]`** — Collect `rust_dicore::register!()` declarations at compile
   time and generate a complete provider builder. Useful for external types,
   conditional compilation, and centralized management.
 

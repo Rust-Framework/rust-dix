@@ -1,181 +1,397 @@
-# LRDI 过程宏深度指南
+# rust-dicore 过程宏深度指南
 
-## 一、`#[lrdi::inject]` 属性宏完整指南（推荐方式）
+rust-dicore（原 lrdi）的过程宏近期经历了一次重构：crate 名称从 `lrdi` 改为 `rust-dicore`，属性宏 `inject_attr` 改名为 `inject`，函数式宏 `inject!` 改名为 `register!`，并移除了 `as = dyn Trait` 语法，改为通过在 `impl Trait for T` 块上放置 `#[inject]` 来实现接口注册。
 
-`#[lrdi::inject(...)]` 是 LRDI **推荐的首选方式**。它是一个属性宏（attribute macro），同时完成两件事：
+本指南面向新 API 编写。所有示例使用 `rust_dicore::` 导入路径与 `#[rdi(...)]` 字段属性。
 
-1. **自动生成构造函数**（同 `#[derive(Inject)]`）
-2. **自动将服务注册到全局 `inventory`**，无需手写 `ServiceCollection` 注册
+---
 
-使用方式：
+## 一、宏全景：三种放置位置
+
+rust-dicore 的过程宏体系围绕三个**正交**的放置位置展开，理解它们的关系是掌握本指南的前提：
+
+| 放置位置 | 宏 | 生成内容 | 注册类型 |
+|---------|-----|---------|---------|
+| **struct 上派生** | `#[derive(Inject)]` | 仅生成构造函数 `__rdi_construct_{Type}` | 不注册 |
+| **struct 上属性** | `#[rust_dicore::inject]` | 生成构造函数 + 工厂 + `type_name` 辅助函数 + inventory 注册 | 注册为**具体类型** |
+| **`impl Trait for T` 上属性** | `#[rust_dicore::inject]` | 生成工厂 + `type_name` 辅助函数 + inventory 注册（复用 struct 上生成的构造函数） | 注册为 **`dyn Trait`** |
+
+三种方式可以自由组合：
+
+- 只想生成构造函数、由其他方式负责注册 → 用 `#[derive(Inject)]`
+- 一个具体服务要直接对外暴露 → 在 struct 上用 `#[rust_dicore::inject]`
+- 要面向接口编程（注册为 `dyn Trait`）→ 先在 struct 上用 `#[derive(Inject)]` 或 `#[rust_dicore::inject]` 生成构造函数，再在 `impl Trait for T` 块上用 `#[rust_dicore::inject]` 完成接口注册
+
+> **迁移说明（旧 API → 新 API）**
+> - `lrdi::` → `rust_dicore::`；`lrdi-macros` → `rust-dicore-macros`
+> - `#[lrdi::inject_attr(...)]` → `#[rust_dicore::inject(...)]`（属性宏改名）
+> - `lrdi::inject!(...)` → `rust_dicore::register!(...)`（函数式宏改名，让出 `inject` 名字给属性宏——Rust 不允许同一 crate 内属性宏与函数式宏同名）
+> - `#[inject(...)]` 字段属性 → `#[rdi(...)]`（派生宏声明改为 `#[proc_macro_derive(Inject, attributes(rdi))]`）
+> - **`as = dyn Trait` 与 `as = [dyn A, dyn B]` 语法已移除**。`InjectArgs` 不再有 `Plain`/`AsTrait`/`AsTraits` 变体。接口注册改用「在 `impl Trait for T` 上放 `#[inject]`」的方式。
+
+---
+
+## 二、`#[rust_dicore::inject]` 属性宏完整指南（推荐方式）
+
+`#[rust_dicore::inject]` 是 rust-dicore **推荐的首选方式**。它是一个属性宏（attribute macro），可以放在两种位置上：
+
+1. **放在 struct 上**：生成构造函数，并将服务以**具体类型**注册到全局 `inventory`
+2. **放在 `impl Trait for T` 块上**：从 impl 块**自动检测** trait 类型，将服务以 `dyn Trait` 注册，复用 struct 侧生成的构造函数
+
+两种位置共用同一套属性参数语法：
 
 ```rust
-use lrdi::*;
-
-// 只需一行属性，即完成构造函数生成 + 服务注册
-#[lrdi::inject(singleton)]
-struct MyService {
-    logger: Arc<Logger>,
-}
-
-// 构建时自动收集所有 #[lrdi::inject] 注册
-let provider = ServiceCollection::from_injected().build()?;
-let svc: Arc<MyService> = provider.get::<MyService>();
+#[rust_dicore::inject]              // 生命周期默认 singleton
+#[rust_dicore::inject(singleton)]
+#[rust_dicore::inject(scoped)]
+#[rust_dicore::inject(transient)]
 ```
 
 ---
 
-### 1.1 宏展开原理
+### 2.1 两个放置位置：struct 与 impl 块
 
-`#[lrdi::inject(...)]` 由 `inject_attr` 入口函数驱动（源码位置：`crates/lrdi-macros/src/lib.rs`）。展开过程分为以下阶段：
-
-**第一阶段：解析属性参数**
-
-根据属性参数内容，确定 `InjectArgs` 变体：
+#### 位置一：struct 上——注册为具体类型
 
 ```rust
-enum InjectArgs {
-    Plain {
-        lifetime: LT,
-    },
-    AsTrait {
-        lifetime: LT,
-        trait_ty: syn::Type,
-    },
-    AsTraits {
-        lifetime: LT,
-        trait_tys: Vec<syn::Type>,
-    },
+use rust_dicore::*;
+use std::sync::Arc;
+
+// 一行属性即完成：构造函数生成 + 以 MyService 类型注册到 inventory
+#[rust_dicore::inject(singleton)]
+struct MyService {
+    logger: Arc<Logger>,
+}
+
+let provider = ServiceCollection::from_injected().build()?;
+let svc: Arc<MyService> = provider.get::<MyService>();
+```
+
+#### 位置二：impl 块上——注册为 `dyn Trait`
+
+接口注册需要两步：先让 struct 拥有构造函数（用 `#[derive(Inject)]` 或 struct 上的 `#[rust_dicore::inject]`），再在 `impl Trait for T` 块上放 `#[rust_dicore::inject]`。
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+trait IPlugin: Send + Sync {
+    fn name(&self) -> &'static str;
+}
+
+// 第一步：struct 上用 #[derive(Inject)] 生成构造函数（不注册）
+#[derive(Inject)]
+struct TestPlugin {
+    #[rdi(skip)]
+    name: &'static str,
+}
+
+impl IPlugin for TestPlugin {
+    fn name(&self) -> &'static str { self.name }
+}
+
+// 第二步：在 impl 块上放 #[inject]，自动以 dyn IPlugin 注册
+#[rust_dicore::inject(singleton)]
+impl IPlugin for TestPlugin {}
+
+let provider = ServiceCollection::from_injected().build()?;
+let plugin: Arc<dyn IPlugin> = provider.get::<dyn IPlugin>();
+```
+
+**关键点：**
+
+- 宏从 `impl Trait for Type` 语法中**自动提取** `Trait`，无需在属性里写 `as = dyn Trait`
+- impl 块上生成的工厂函数名为 `__rdi_factory_{Type}_for_{Trait}`，按「类型-trait 对」唯一命名，因此**同一个 struct 实现多个 trait 时可以分别注册**而不会冲突
+- 工厂内部调用 `__rdi_construct_{Type}`——这个构造函数必须由 struct 侧的 `#[derive(Inject)]` 或 struct 上的 `#[rust_dicore::inject]` 提供
+- 不支持 negative impl（`impl !Trait for T`），会编译报错
+
+---
+
+### 2.2 宏展开原理：struct 放置
+
+`#[rust_dicore::inject]` 的入口是 `inject` 函数（源码：`crates/rust-dicore-macros/src/lib.rs`）。它把属性参数解析为 `InjectArgs`，把 item 解析为 `syn::Item`，再交给 `expand_inject` 分发：
+
+```rust
+fn expand_inject(args: InjectArgs, item: syn::Item) -> syn::Result<proc_macro2::TokenStream> {
+    let lifetime = args.lifetime.unwrap_or(LT::S);  // 默认 singleton
+    match &item {
+        syn::Item::Struct(s) => expand_inject_struct(s, lifetime),
+        syn::Item::Impl(i)  => expand_inject_impl(i, lifetime),
+        _ => Err(syn::Error::new_spanned(
+            &item,
+            "#[inject] can only be placed on a struct or a trait impl block",
+        )),
+    }
 }
 ```
 
-支持的语法格式：
-
-- `#[lrdi::inject(singleton)]` → `InjectArgs::Plain`
-- `#[lrdi::inject(singleton, as = dyn ITrait)]` → `InjectArgs::AsTrait`
-- `#[lrdi::inject(singleton, as = [dyn A, dyn B])]` → `InjectArgs::AsTraits`
-
-**第二阶段：解析结构体字段**
-
-与 `#[derive(Inject)]` 共用相同的 `parse_ia` 函数和 `IA` 结构体，遍历字段上的 `#[inject(...)]` 属性。解析逻辑完全一致：
+**`InjectArgs` 结构体**（重构后只剩一个字段，旧版的 `Plain`/`AsTrait`/`AsTraits` 变体已移除）：
 
 ```rust
-#[derive(Default)]
-struct IA {
-    skip: bool,
-    optional: bool,
-    provider: bool,
-    key: Option<String>,
+struct InjectArgs {
+    lifetime: Option<LT>,
+}
+
+impl Parse for InjectArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(InjectArgs { lifetime: None });  // 默认 singleton
+        }
+        let lt: LT = input.parse()?;
+        Ok(InjectArgs { lifetime: Some(lt) })
+    }
 }
 ```
 
-**第三阶段：生成构造器函数**
+struct 放置的展开由 `expand_inject_struct` 完成，分为五个阶段：
 
-生成 `__rdi_construct_{Name}` 函数（与 `#[derive(Inject)]` 完全相同）：
+**阶段 1：解析属性参数**
+
+解析 `InjectArgs`，缺省时生命周期为 `LT::S`（singleton）。
+
+**阶段 2：解析结构体字段**
+
+遍历 `Fields::Named`（也支持 `Fields::Unit`），对每个字段调用 `parse_ia`，扫描字段上的 `#[rdi(...)]` 属性填充 `IA` 结构体（详见 §3.3）。
+
+**阶段 3：生成构造器函数**
+
+生成 `__rdi_construct_{Name}`（与 `#[derive(Inject)]` 完全相同的构造逻辑）：
 
 ```rust
 #[doc(hidden)]
-pub fn __rdi_construct_{Name}(resolver: &dyn lrdi::IServiceResolver)
+#[allow(non_snake_case)]
+pub fn __rdi_construct_{Name}(resolver: &dyn rust_dicore::IServiceResolver)
     -> ::std::sync::Arc<{Name}>
 {
     ::std::sync::Arc::new({Name} { /* 字段初始化表达式 */ })
 }
 ```
 
-**第四阶段：生成工厂函数**
+**阶段 4：生成工厂函数与 `type_name` 辅助函数**
 
-生成一个工厂包装函数，返回 `Arc<dyn Any + Send + Sync>` 以兼容 `ServiceRegistration`：
+工厂把 `Arc<{Name}>` 二次包装为 `Arc<dyn Any + Send + Sync>` 以兼容 `ServiceRegistration`：
 
 ```rust
 #[doc(hidden)]
-fn __rdi_factory_{Name}(resolver: &dyn lrdi::IServiceResolver)
+#[allow(non_snake_case)]
+fn __rdi_factory_{Name}(resolver: &dyn rust_dicore::IServiceResolver)
     -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
 {
     let v: ::std::sync::Arc<{Name}> = __rdi_construct_{Name}(resolver);
     ::std::sync::Arc::new(v)
         as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
 }
+
+#[doc(hidden)]
+#[allow(non_snake_case)]
+fn __rdi_type_name_{Name}() -> &'static str {
+    ::std::any::type_name::<{Name}>()
+}
 ```
 
-**第五阶段：生成 inventory 注册代码**
+> **注意：** `ServiceRegistration.type_name_fn` 是一个**函数指针** `fn() -> &'static str`，而不是 `&'static str` 字符串。这样做是为了规避 `std::any::type_name::<T>()` 在常量上下文不可用的问题（tracking issue #63084）。`from_injected()` 在运行时调用 `(reg.type_name_fn)()` 取得字符串。
 
-根据 `InjectArgs` 变体，生成 `inventory::submit!` 调用：
-
-- `Plain`：以结构体自身的 `TypeId` 和 `type_name` 注册
-- `AsTrait`：以 trait 的 `TypeId` 和 `type_name` 注册
-- `AsTraits`：为每个 trait 分别生成一个 `submit!` 调用（同一 factory 多注册）
+**阶段 5：生成 inventory 注册代码**
 
 ```rust
-lrdi::inventory::submit! {
-    lrdi::ServiceRegistration {
-        lifetime: lrdi::ServiceLifetime::Singleton,  // 根据参数确定
-        type_id: ::std::any::TypeId::of::<MyService>(),
-        type_name: ::std::any::type_name::<MyService>(),
-        factory: __rdi_factory_MyService,
+rust_dicore::inventory::submit! {
+    rust_dicore::ServiceRegistration {
+        lifetime: rust_dicore::ServiceLifetime::Singleton,  // 根据参数确定
+        type_id: ::std::any::TypeId::of::<{Name}>(),
+        type_name_fn: __rdi_type_name_{Name},
+        factory: __rdi_factory_{Name},
     }
 }
 ```
 
-最终输出为：原结构体定义 + 构造器函数 + 工厂函数 + inventory 注册代码。
+**最后：剥离字段上的 `#[rdi(...)]` 属性后输出 struct。**
+
+由于没有 `#[derive(Inject)]` 时编译器不认识 `rdi` 这个 helper attribute，`expand_inject_struct` 在输出 struct 前会 `retain` 掉字段上所有 `path` 为 `rdi` 的属性，避免编译错误：
+
+```rust
+let mut stripped = struct_item.clone();
+if let syn::Fields::Named(n) = &mut stripped.fields {
+    for field in n.named.iter_mut() {
+        field.attrs.retain(|a| !a.path().is_ident("rdi"));
+    }
+}
+```
+
+最终输出：剥离属性后的 struct + 构造器函数 + `type_name` 辅助函数 + 工厂函数 + inventory 注册代码。
 
 ---
 
-### 1.2 语法完整参考
+### 2.3 宏展开原理：impl 块放置（自动 trait 检测）
 
-#### 语法 1：普通注册
+impl 块放置由 `expand_inject_impl` 完成。其核心是**从 `impl_item.trait_` 字段中自动提取 trait 路径**。
+
+**阶段 1：校验是 trait impl**
+
+`ItemImpl.trait_` 是 `Option<(Option<Bang>, Path, For)>`。若为 `None`（即裸 `impl Type {}` 而非 `impl Trait for Type`），报错：
 
 ```rust
-#[lrdi::inject(singleton)]
+let (not, trait_path, _) = impl_item.trait_.as_ref().ok_or_else(|| {
+    syn::Error::new_spanned(
+        impl_item,
+        "#[inject] on an impl block requires a trait impl: use `impl Trait for Type`",
+    )
+})?;
+if not.is_some() {
+    return Err(syn::Error::new_spanned(
+        impl_item,
+        "#[inject] does not support negative impls",
+    ));
+}
+```
+
+**阶段 2：提取类型标识与 trait 后缀**
+
+```rust
+let impl_ty = &impl_item.self_ty;
+let type_ident = match &**impl_ty {
+    syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident.clone()),
+    _ => None,
+}.ok_or_else(|| syn::Error::new_spanned(impl_ty, "expected a path type"))?;
+
+let trait_segment = trait_path.segments.last().unwrap();
+let trait_suffix = &trait_segment.ident;
+```
+
+由此得到三个唯一命名：
+
+```rust
+let constructor_fn      = format_ident!("__rdi_construct_{}", type_ident);
+let factory_name        = format_ident!("__rdi_factory_{}_for_{}", type_ident, trait_suffix);
+let type_name_fn_name   = format_ident!("__rdi_type_name_{}_for_{}", type_ident, trait_suffix);
+```
+
+按「类型-trait 对」唯一，因此同一 struct 实现多个 trait 时不会冲突。
+
+**阶段 3：生成工厂函数**
+
+工厂调用 struct 侧生成的 `__rdi_construct_{Type}`，把 `Arc<Type>` 协变为 `Arc<dyn Trait>`，再包装为 `Arc<dyn Any + Send + Sync>`：
+
+```rust
+let trait_ty = quote! { dyn #trait_path };
+
+fn __rdi_factory_{Type}_for_{Trait}(resolver: &dyn rust_dicore::IServiceResolver)
+    -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+{
+    let v:  ::std::sync::Arc<#impl_ty>   = #constructor_fn(resolver);
+    let v2: ::std::sync::Arc<#trait_ty>  = v;   // Arc<Type> → Arc<dyn Trait>
+    ::std::sync::Arc::new(v2)
+        as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+}
+```
+
+**阶段 4：生成 `type_name` 辅助函数与 inventory 注册**
+
+```rust
+fn __rdi_type_name_{Type}_for_{Trait}() -> &'static str {
+    ::std::any::type_name::<dyn #trait_path>()
+}
+
+rust_dicore::inventory::submit! {
+    rust_dicore::ServiceRegistration {
+        lifetime: rust_dicore::ServiceLifetime::Singleton,
+        type_id: ::std::any::TypeId::of::<dyn #trait_path>(),  // ← 以 dyn Trait 注册
+        type_name_fn: __rdi_type_name_{Type}_for_{Trait},
+        factory: __rdi_factory_{Type}_for_{Trait},
+    }
+}
+```
+
+**关键点：** `type_id` 是 `TypeId::of::<dyn #trait_path>()`，因此 `provider.get::<dyn IPlugin>()` 能命中。这是「注册类型 = 解析类型」规则的体现。
+
+最终输出：原 impl 块（原样保留）+ `type_name` 辅助函数 + 工厂函数 + inventory 注册代码。
+
+---
+
+### 2.4 语法完整参考
+
+#### 语法 1：struct 上的普通注册
+
+```rust
+#[rust_dicore::inject(singleton)]
 struct MyService {
     logger: Arc<Logger>,
-    #[inject(skip)]
+    #[rdi(skip)]
     label: String,
 }
 ```
 
-生命周期可选值：`singleton`、`scoped`、`transient`。
+生命周期可选值：`singleton`、`scoped`、`transient`。省略时默认 `singleton`。
 
 等价于手动编写：
+
 ```rust
 #[derive(Inject)]
-struct MyService { ... }
+struct MyService { /* ... */ }
 // + 手动注册：
-// ServiceCollection::new().singleton(|_| __rdi_construct_MyService(&resolver))
-// 或简写：.singleton(|_| Arc::new(MyService::default()))
+// ServiceCollection::new().singleton(|r| __rdi_construct_MyService(r))
 ```
 
-#### 语法 2：注册为 trait 接口
+#### 语法 2：impl 块上的接口注册
 
 ```rust
-// 单 trait 注册
-#[lrdi::inject(singleton, as = dyn IPlugin)]
-struct TestPlugin { /* ... */ }
+trait IPlugin: Send + Sync { fn name(&self) -> &'static str; }
 
-// 多 trait 注册（同一实例注册为多个接口）
-#[lrdi::inject(singleton, as = [dyn IPlugin, dyn ILogger])]
-struct DualPlugin { /* ... */ }
+#[derive(Inject)]
+struct TestPlugin { #[rdi(skip)] name: &'static str }
+
+impl IPlugin for TestPlugin {
+    fn name(&self) -> &'static str { self.name }
+}
+
+#[rust_dicore::inject(singleton)]
+impl IPlugin for TestPlugin {}
 ```
 
-当使用 `as = dyn Trait` 时，inventory 以 `dyn Trait` 的 `TypeId` 注册，因此 `ServiceCollection::from_injected()` 收集后，可通过 `provider.get::<dyn IPlugin>()` 解析。多 trait 语法会为每个 trait 生成独立的 `submit!` 调用，所有指向同一工厂函数。
+impl 块的函数体可以非空——宏会把原 impl 块原样输出，只在其后追加工厂与注册代码。
 
-#### 语法 3：字段 `#[inject(...)]` 属性
+#### 语法 3：同一 struct 注册为多个 trait
 
-`#[lrdi::inject]` 内部字段的 `#[inject(...)]` 属性与 `#[derive(Inject)]` **完全一致**：
+由于工厂按「类型-trait 对」唯一命名，可以分别在每个 impl 块上放 `#[inject]`：
+
+```rust
+trait IPlugin: Send + Sync { fn name(&self) -> &'static str; }
+trait ILogger: Send + Sync { fn log(&self, msg: &str); }
+
+#[derive(Inject)]
+struct DualService;
+
+impl IPlugin for DualService { fn name(&self) -> &'static str { "dual" } }
+impl ILogger for DualService { fn log(&self, msg: &str) { println!("{msg}"); } }
+
+#[rust_dicore::inject(singleton)]
+impl IPlugin for DualService {}
+
+#[rust_dicore::inject(singleton)]
+impl ILogger for DualService {}
+```
+
+生成 `__rdi_factory_DualService_for_IPlugin` 与 `__rdi_factory_DualService_for_ILogger` 两个独立注册，两者复用同一个 `__rdi_construct_DualService` 构造函数。
+
+#### 语法 4：字段 `#[rdi(...)]` 属性
+
+struct 上的 `#[rust_dicore::inject]` 与 `#[derive(Inject)]` 共用同一套字段属性，但属性名是 `rdi`（不是旧的 `inject`）：
 
 | 属性 | 字段类型 | 含义 |
 |------|---------|------|
 | 无标记 | `Arc<T>` | 必须注册，否则 panic |
-| `#[inject(skip)]` | 任意（需 `Default`） | 使用 `Default::default()` |
-| `#[inject(optional)]` | `Option<Arc<T>>` | 可选，未注册时返回 `None` |
-| `#[inject(key = "k")]` | `Arc<T>` | 键控解析，必须注册 |
-| `#[inject(optional, key = "k")]` | `Option<Arc<T>>` | 键控可选 |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 直接注入 resolver |
+| `#[rdi(skip)]` | 任意（需 `Default`） | 使用 `Default::default()` |
+| `#[rdi(optional)]` | `Option<Arc<T>>` | 可选，未注册时返回 `None` |
+| `#[rdi(key = "k")]` | `Arc<T>` | 键控解析，必须注册 |
+| `#[rdi(optional, key = "k")]` | `Option<Arc<T>>` | 键控可选 |
+| `#[rdi(provider)]` | `Arc<dyn IServiceResolver>` | 直接注入 resolver |
+
+详见 §3.3。
 
 ---
 
-### 1.3 `ServiceCollection::from_injected()` 收集注册
+### 2.5 `ServiceCollection::from_injected()` 收集注册
 
-`ServiceCollection::from_injected()` 是联结 `#[lrdi::inject]` 属性和 `ServiceCollection` 的关键 API。它遍历 `inventory` 中所有 `ServiceRegistration` 项目，组装为 `ServiceCollection`：
+`ServiceCollection::from_injected()` 是联结 `#[rust_dicore::inject]` 属性和 `ServiceCollection` 的关键 API。它遍历 `inventory` 中所有 `ServiceRegistration`，在运行时调用 `type_name_fn` 取得类型名，组装为 `ServiceCollection`：
 
 ```rust
 pub fn from_injected() -> Self {
@@ -184,7 +400,7 @@ pub fn from_injected() -> Self {
         let factory: ServiceFactory = Arc::new(move |r| (reg.factory)(r));
         descriptors.push(ServiceDescriptor {
             type_id: reg.type_id,
-            type_name: reg.type_name,
+            type_name: (reg.type_name_fn)(),  // ← 运行时调用函数指针
             key: None,
             factory,
             lifetime: reg.lifetime,
@@ -192,6 +408,19 @@ pub fn from_injected() -> Self {
     }
     Self { descriptors }
 }
+```
+
+`ServiceRegistration` 的定义（`crates/rust-dicore/src/registration.rs`）：
+
+```rust
+pub struct ServiceRegistration {
+    pub lifetime: ServiceLifetime,
+    pub type_id: TypeId,
+    pub type_name_fn: fn() -> &'static str,  // 函数指针，非字符串
+    pub factory: fn(&dyn IServiceResolver) -> Arc<dyn Any + Send + Sync>,
+}
+
+inventory::collect!(ServiceRegistration);
 ```
 
 **使用方式：**
@@ -205,39 +434,38 @@ let provider = ServiceCollection::from_injected()
 
 **注意事项：**
 
-- `from_injected()` 收集所有使用了 `#[lrdi::inject]` 的 struct 注册，**跨 crate 有效**（依赖 inventory 的全局注册机制）
+- `from_injected()` 收集所有使用了 `#[rust_dicore::inject]` 的注册（struct 放置与 impl 放置都会生成 `submit!`），**跨 crate 有效**（依赖 inventory 的全局注册机制）
 - 返回的 `ServiceCollection` 可以继续链式调用其他注册方法
-- 若同时使用 `from_injected()` 和手动注册相同类型，后者会覆盖前者（因为 `ServiceCollection` 后续注册追加到描述符列表尾部，`build()` 时后注册的生效）
-- 要求 `Cargo.toml` 中使用 `inventory` 特性或依赖 lrdi 的默认特性
+- 若同时使用 `from_injected()` 和手动注册相同类型，后者会覆盖前者
+- 要求依赖 rust-dicore 的默认特性（启用 `inventory`）
 
 ---
 
-### 1.4 实战：完整示例
+### 2.6 实战：完整示例
 
 ```rust
-use lrdi::*;
+use rust_dicore::*;
 use std::sync::Arc;
 
-// ── 普通注册 ──
-#[lrdi::inject(singleton)]
+// ── 普通注册（struct 上）──
+#[rust_dicore::inject(singleton)]
 struct Logger {
+    #[rdi(skip)]
     prefix: String,
 }
 
 impl Default for Logger {
-    fn default() -> Self {
-        Logger { prefix: "app".into() }
-    }
+    fn default() -> Self { Logger { prefix: "app".into() } }
 }
 
-// ── Trait 接口注册 ──
+// ── 接口注册（impl 块上，自动检测 trait）──
 trait IPlugin: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-#[lrdi::inject(singleton, as = dyn IPlugin)]
+#[derive(Inject)]
 struct TestPlugin {
-    #[inject(skip)]
+    #[rdi(skip)]
     name: &'static str,
 }
 
@@ -245,10 +473,11 @@ impl IPlugin for TestPlugin {
     fn name(&self) -> &'static str { self.name }
 }
 
+#[rust_dicore::inject(singleton)]
+impl IPlugin for TestPlugin {}
+
 impl Default for TestPlugin {
-    fn default() -> Self {
-        TestPlugin { name: "test" }
-    }
+    fn default() -> Self { TestPlugin { name: "test" } }
 }
 
 // ── 多 trait 注册 ──
@@ -256,30 +485,29 @@ trait ILogger: Send + Sync {
     fn log(&self, msg: &str);
 }
 
-#[lrdi::inject(singleton, as = [dyn IPlugin, dyn ILogger])]
+#[derive(Inject)]
 struct DualService;
 
-impl IPlugin for DualService {
-    fn name(&self) -> &'static str { "dual" }
-}
+impl IPlugin for DualService { fn name(&self) -> &'static str { "dual" } }
+impl ILogger for DualService { fn log(&self, msg: &str) { println!("{msg}"); } }
 
-impl ILogger for DualService {
-    fn log(&self, msg: &str) { println!("{msg}"); }
-}
+#[rust_dicore::inject(singleton)]
+impl IPlugin for DualService {}
 
-impl Default for DualService { fn default() -> Self { DualService } }
+#[rust_dicore::inject(singleton)]
+impl ILogger for DualService {}
 
 // ── 字段注入完整示例 ──
-#[lrdi::inject(singleton)]
+#[rust_dicore::inject(singleton)]
 struct OrderService {
     logger: Arc<Logger>,
-    #[inject(optional)]
+    #[rdi(optional)]
     notifier: Option<Arc<Logger>>,
-    #[inject(key = "audit")]
+    #[rdi(key = "audit")]
     audit: Arc<Logger>,
-    #[inject(skip)]
+    #[rdi(skip)]
     label: String,
-    #[inject(provider)]
+    #[rdi(provider)]
     resolver: Arc<dyn IServiceResolver>,
 }
 
@@ -290,76 +518,90 @@ fn main() -> Result<(), RdiError> {
         .build()?;
 
     let svc: Arc<OrderService> = provider.get::<OrderService>();
+    let plugin: Arc<dyn IPlugin> = provider.get::<dyn IPlugin>();
     println!("Logger prefix: {}", svc.logger.prefix);
+    println!("Plugin name: {}", plugin.name());
     Ok(())
 }
 ```
 
 ---
 
-### 1.5 与 `#[derive(Inject)]` 的关系
+### 2.7 与 `#[derive(Inject)]` 的关系
 
-| 对比维度 | `#[lrdi::inject(singleton)]` | `#[derive(Inject)]` |
-|---------|------------------------------|---------------------|
+| 对比维度 | `#[rust_dicore::inject]`（struct） | `#[derive(Inject)]` |
+|---------|-----------------------------------|---------------------|
 | **宏类型** | 属性宏 (attribute macro) | 派生宏 (derive macro) |
 | **构造函数生成** | ✅ 自动生成 | ✅ 自动生成 |
-| **服务注册** | ✅ `inventory::submit!` 自动注册 | ❌ 需要手动注册 |
-| **需额外代码** | 无 | 需手写 `.singleton(|_| __rdi_construct_X(&resolver))` |
+| **服务注册** | ✅ `inventory::submit!` 自动注册（具体类型） | ❌ 需要手动注册 |
+| **接口注册** | 在 `impl Trait for T` 上再放一次 `#[inject]` | 同左（共用构造函数） |
+| **需额外代码** | 无 | 需手写 `.singleton(\|r\| __rdi_construct_X(r))` 或在 impl 块上放 `#[inject]` |
 | **跨 crate 收集** | ✅ `from_injected()` 自动收集 | ❌ 需手动组合 |
-| **推荐度** | ⭐ **首选** | 仅用于特殊需求 |
+| **推荐度** | ⭐ **首选** | 仅用于只需构造函数、不需注册的场景 |
 
-**结论：** 对于绝大多数场景，推荐直接使用 `#[lrdi::inject(...)]`。仅在需要精细控制注册时机或需要与旧代码兼容时才使用 `#[derive(Inject)]`。
+**结论：** 对于绝大多数场景，推荐直接使用 `#[rust_dicore::inject(...)]`。仅在「只想生成构造函数、由 `#[module]` 或手动 `ServiceCollection` 负责注册」时才使用 `#[derive(Inject)]`。
 
 ---
 
-### 1.6 编译错误排查
+### 2.8 编译错误排查
 
 | 错误信息 | 原因 | 解决方法 |
 |---------|------|---------|
-| `"only structs are supported"` | 对 `enum` 或 `union` 使用了 `#[lrdi::inject]` | 仅对 `struct` 使用此宏 |
-| `"named fields required"` | 结构体不是命名字段形式 | 改为命名字段结构体 |
+| `"#[inject] can only be placed on a struct or a trait impl block"` | 把 `#[inject]` 放在 enum/union/fn 等位置 | 仅放在 struct 或 `impl Trait for T` 块上 |
+| `"named struct or unit struct required"` | struct 不是命名字段或单元结构体（如元组结构体） | 改为命名字段或单元结构体 |
+| `"#[inject] on an impl block requires a trait impl: use \`impl Trait for Type\`"` | impl 块不是 trait impl（裸 `impl Type {}`） | 改写为 `impl Trait for Type` |
+| `"#[inject] does not support negative impls"` | 用在 `impl !Trait for T` 上 | 移除属性，不支持 negative impl |
+| `"expected a path type"` | impl 的 self type 不是路径类型 | 确保 `for` 后是简单路径类型 |
 | `unknown lifetime: ...` | 生命周期参数拼写错误 | 使用 `singleton`、`scoped` 或 `transient` |
-| `#[inject]` 属性解析失败 | 字段属性拼写错误 | 仅支持 `skip`、`optional`、`key`、`provider` |
-| `Default` 缺失 | `#[inject(skip)]` 或 `#[lrdi::inject]` 要求 `Default` | 实现 `Default` trait |
+| `#[rdi]` 属性解析失败 | 字段属性拼写错误，如 `#[rdi(keyed = "...")]` | 仅支持 `skip`、`optional`、`key`、`provider` |
+| `Default` 缺失 | `#[rdi(skip)]` 或 impl 块复用的构造函数要求 `Default` | 为该类型实现 `Default` |
 | 运行时 panic `"svc not registered"` | 依赖未注册 | 检查 `from_injected()` 或手动注册 |
 | 运行时 panic `"keyed not found"` | 键控依赖未注册 | 确保键名拼写匹配 |
 
 ---
 
-## 二、`#[derive(Inject)]` 完整指南（被 `#[lrdi::inject]` 包含）
+## 三、`#[derive(Inject)]` 完整指南
 
-> **说明：** `#[derive(Inject)]` 是 LRDI 的底层派生宏。它仅生成构造函数（`__rdi_construct_*`），不处理服务注册。
-> **推荐使用 `#[lrdi::inject(...)]` 替代**，后者在相同构造函数生成能力的基础上，额外自动完成 inventory 注册，
-> 并通过 `ServiceCollection::from_injected()` 统一收集，减少样板代码。
-> 以下内容保留供需要手动控制注册流程或理解底层原理时参考。
+> **说明：** `#[derive(Inject)]` 是 rust-dicore 的底层派生宏。它**仅生成构造函数**（`__rdi_construct_*`），不处理服务注册。
+> 推荐使用 `#[rust_dicore::inject(...)]` 替代——后者在相同构造函数生成能力的基础上额外自动完成 inventory 注册。
+> 以下内容供需要手动控制注册流程、为 impl 块提供构造函数、或理解底层原理时参考。
 
-### 1.1 宏展开原理
+派生宏声明为 `#[proc_macro_derive(Inject, attributes(rdi))]`，因此字段上的 helper 属性名是 **`rdi`**（不是 `inject`）。
 
-`#[derive(Inject)]` 是一个派生宏（derive macro），由 `inject_derive` 入口函数驱动。其展开过程分为以下四个阶段：
+### 3.1 宏展开原理
+
+`#[derive(Inject)]` 由 `inject_derive` 入口函数驱动，调用 `expand_inject_derive`。展开过程分为四个阶段：
 
 **第一阶段：解析结构体定义**
 
-`expand_inject` 函数接收 `DeriveInput`，从中提取：
-- **结构体名称** (`name`)：来自 `input.ident`
-- **命名字段列表** (`named`)：通过解析 `input.data` 获取
+`expand_inject_derive` 接收 `DeriveInput`，从中提取结构体名称 `name`，并匹配 `input.data`：
 
 ```rust
-fn expand_inject(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let name = &input.ident;
-    let named = match &input.data {
+    let fn_name = format_ident!("__rdi_construct_{}", name);
+    let constructor_body = match &input.data {
         syn::Data::Struct(s) => match &s.fields {
-            Fields::Named(n) => n,
-            _ => return Err(syn::Error::new_spanned(name, "named fields")),
+            Fields::Named(named) => { /* 逐字段生成初始化表达式 */ }
+            Fields::Unit => quote! { #name },
+            _ => return Err(syn::Error::new_spanned(name, "named fields or unit struct")),
         },
         _ => return Err(syn::Error::new_spanned(name, "struct only")),
     };
+    // ...
+}
 ```
 
-若字段不是 `Fields::Named`（例如元组结构体），产生编译错误 `"named fields"`。若数据类型不是 `struct`（例如 `enum` 或 `union`），产生 `"struct only"`。
+支持两种字段形式：
 
-**第二阶段：遍历字段，解析 `#[inject(...)]` 属性**
+- **`Fields::Named`**：逐字段生成初始化表达式
+- **`Fields::Unit`**：单元结构体，直接 `quote! { #name }`
 
-对每个字段调用 `parse_ia` 函数。该函数扫描字段上的属性并填充 `IA` 结构体：
+若为元组结构体，报错 `"named fields or unit struct"`；若不是 struct（enum/union），报错 `"struct only"`。
+
+**第二阶段：遍历字段，解析 `#[rdi(...)]` 属性**
+
+对每个字段调用 `parse_ia`，扫描字段属性并填充 `IA` 结构体：
 
 ```rust
 #[derive(Default)]
@@ -369,22 +611,30 @@ struct IA {
     provider: bool,
     key: Option<String>,
 }
+fn parse_ia(f: &Field) -> IA {
+    let mut a = IA::default();
+    for attr in &f.attrs {
+        if !attr.path().is_ident("rdi") {   // ← 注意是 "rdi"，不是 "inject"
+            continue;
+        }
+        let Ok(l) = attr.meta.require_list() else { continue; };
+        l.parse_nested_meta(|m| {
+            if m.path.is_ident("skip") { a.skip = true; }
+            else if m.path.is_ident("optional") { a.optional = true; }
+            else if m.path.is_ident("provider") { a.provider = true; }
+            else if m.path.is_ident("key") {
+                a.key = Some(m.value()?.parse::<syn::LitStr>()?.value());
+            }
+            Ok(())
+        }).ok();
+    }
+    a
+}
 ```
-
-`parse_ia` 实现逻辑：
-1. 遍历字段的所有属性 (`f.attrs`)
-2. 过滤出 `path` 为 `inject` 的属性
-3. 调用 `require_list()` 确保为括号列表形式（如 `#[inject(...)]`）
-4. 使用 `parse_nested_meta` 逐项解析嵌套元数据：
-   - 识别 `skip` → `a.skip = true`
-   - 识别 `optional` → `a.optional = true`
-   - 识别 `provider` → `a.provider = true`
-   - 识别 `key = "..."`
-    → 解析字符串字面量，`a.key = Some("...")`
 
 **第三阶段：为每个字段生成解析表达式**
 
-首先调用 `saw(&field.ty)` 获取剥离包装后的内层类型（详见 1.2 节）。然后根据属性组合生成对应的代码片段。分支优先级为：
+先调用 `saw(&field.ty)` 获取剥离包装后的内层类型（详见 §3.2），然后按优先级生成代码片段：
 
 | 优先级 | 判断条件 | 生成逻辑 |
 |-------|---------|---------|
@@ -395,15 +645,11 @@ struct IA {
 | 5 | 有 key（非 optional） | `get_keyed_any` → downcast → `unwrap_or_else(panic!("keyed not found"))` |
 | 6 | 无标记（默认） | `get_any` → downcast → `unwrap_or_else(panic!("svc not registered"))` |
 
-每个分支生成的 `TokenStream` 填充到 `inits` 向量中。
-
 **第四阶段：生成构造器函数**
-
-将所有字段初始化表达式组装为 `__rdi_construct_{TypeName}` 函数：
 
 ```rust
 #[doc(hidden)]
-pub fn __rdi_construct_{Name}(resolver: &dyn lrdi::IServiceResolver)
+pub fn __rdi_construct_{Name}(resolver: &dyn rust_dicore::IServiceResolver)
     -> ::std::sync::Arc<{Name}>
 {
     ::std::sync::Arc::new({Name} { /* 每个字段的初始化表达式 */ })
@@ -412,13 +658,13 @@ pub fn __rdi_construct_{Name}(resolver: &dyn lrdi::IServiceResolver)
 
 关键特征：
 - 函数标记 `#[doc(hidden)]`，IDE 中可调用但不污染文档补全
-- 参数固定为 `resolver: &dyn lrdi::IServiceResolver`
+- 参数固定为 `resolver: &dyn rust_dicore::IServiceResolver`
 - 返回固定为 `Arc<TypeName>`
 - 字段初始化表达式直接内联展开，零额外函数调用开销
 
 ---
 
-### 1.2 `saw()` 函数——类型剥离
+### 3.2 `saw()` 函数——类型剥离
 
 `saw()` 从字段类型中剥离外层包装，提取出内层的实际类型 `T`。
 
@@ -437,7 +683,7 @@ fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
 | `String` | `String` | `false` | 不匹配任何包装，原样返回 |
 | `Arc<dyn ITrait>` | `dyn ITrait` | `true` | trait object 同样支持 |
 
-**实现细节**（出自 `lrdi-macros/src/lib.rs`）：
+**实现细节**（出自 `crates/rust-dicore-macros/src/lib.rs`）：
 
 ```rust
 fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
@@ -478,16 +724,18 @@ fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
 
 ---
 
-### 1.3 字段属性完整参考表
+### 3.3 字段属性完整参考表
+
+字段属性名是 **`rdi`**（与派生宏声明 `#[proc_macro_derive(Inject, attributes(rdi))]` 对应）：
 
 | 属性标记 | 字段类型要求 | 解析行为 | 未找到时行为 |
 |---------|------------|---------|------------|
 | **无标记** | `Arc<T>` | `resolver.get_any(type_name::<T>())` → downcast 到 `Arc<T>` | **panic!** `"svc not registered"` |
-| `#[inject(skip)]` | 任意（需实现 `Default`） | `Default::default()` | N/A（直接使用默认值） |
-| `#[inject(optional)]` | `Option<Arc<T>>` | `resolver.get_any` → downcast → `map(Arc::clone)` | 返回 `None`（不 panic） |
-| `#[inject(key = "k")]` | `Arc<T>` | `resolver.get_keyed_any(type_name::<T>(), "k")` → downcast | **panic!** `"keyed not found"` |
-| `#[inject(optional, key = "k")]` | `Option<Arc<T>>` | `resolver.get_keyed_any` → downcast → `map` | 返回 `None`（不 panic） |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | `resolver.clone()` | N/A（直接传入 resolver） |
+| `#[rdi(skip)]` | 任意（需实现 `Default`） | `Default::default()` | N/A（直接使用默认值） |
+| `#[rdi(optional)]` | `Option<Arc<T>>` | `resolver.get_any` → downcast → `map(Arc::clone)` | 返回 `None`（不 panic） |
+| `#[rdi(key = "k")]` | `Arc<T>` | `resolver.get_keyed_any(type_name::<T>(), "k")` → downcast | **panic!** `"keyed not found"` |
+| `#[rdi(optional, key = "k")]` | `Option<Arc<T>>` | `resolver.get_keyed_any` → downcast → `map` | 返回 `None`（不 panic） |
+| `#[rdi(provider)]` | `Arc<dyn IServiceResolver>` | `resolver.clone()` | N/A（直接传入 resolver） |
 
 **属性组合规则：**
 
@@ -498,13 +746,13 @@ fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
 
 ---
 
-### 1.4 实战：完整服务定义
+### 3.4 实战：完整服务定义
 
 以下示例展示一个包含全部 6 种字段类型的 `OrderService`：
 
 ```rust
-use lrdi::*;
-use lrdi_macros::Inject;
+use rust_dicore::*;
+use rust_dicore_macros::Inject;
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
 // 被 skip 的类型必须实现 Default
@@ -512,9 +760,7 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 struct Counter(AtomicU64);
 
 impl Counter {
-    fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::SeqCst)
-    }
+    fn next(&self) -> u64 { self.0.fetch_add(1, Ordering::SeqCst) }
 }
 
 // 带有全部 6 种字段类型的完整服务
@@ -524,23 +770,23 @@ struct OrderService {
     logger: Arc<Logger>,
 
     // 2. skip：使用 Default::default()
-    #[inject(skip)]
+    #[rdi(skip)]
     counter: Counter,
 
     // 3. optional：可选的依赖，未注册时返回 None
-    #[inject(optional)]
+    #[rdi(optional)]
     notifier: Option<Arc<Notifier>>,
 
     // 4. key：按键解析，必须已注册，否则 panic
-    #[inject(key = "order-logger")]
+    #[rdi(key = "order-logger")]
     order_logger: Arc<Logger>,
 
     // 5. optional + key：按键可选解析
-    #[inject(optional, key = "audit")]
+    #[rdi(optional, key = "audit")]
     audit_logger: Option<Arc<Logger>>,
 
     // 6. provider：直接获取 resolver
-    #[inject(provider)]
+    #[rdi(provider)]
     resolver: Arc<dyn IServiceResolver>,
 }
 
@@ -575,19 +821,19 @@ fn test_order_service() {
 
 ---
 
-### 1.5 编译错误排查
+### 3.5 编译错误排查
 
 | 错误信息 | 原因 | 解决方法 |
 |---------|------|---------|
-| `"named fields"` | 结构体不是命名字段形式（如元组结构体 `struct Foo(i32)`） | 改为 `struct Foo { field: T }` 格式 |
+| `"named fields or unit struct"` | 结构体是元组结构体（如 `struct Foo(i32)`） | 改为 `struct Foo { field: T }` 或单元结构体 `struct Foo;` |
 | `"struct only"` | 对 `enum` 或 `union` 使用了 `#[derive(Inject)]` | 仅对 `struct` 使用此宏 |
-| `#[inject]` 属性解析失败 | 属性拼写错误，如 `#[inject(keyed = "...")]` | 检查属性名：仅 `skip`、`optional`、`key`、`provider` |
-| `Default` trait 缺失 | 被 `#[inject(skip)]` 标记的字段类型未实现 `Default` | 为该类型实现 `Default`，如 `#[derive(Default)]` 或手动 `impl` |
-| 根本原因 panic | 运行时对应服务未注册 | 检查 `ServiceCollection` 注册：类型名和 key 必须匹配；检查 provider 构建是否成功 |
+| `#[rdi]` 属性解析失败 | 属性拼写错误，如 `#[rdi(keyed = "...")]` 或误用 `#[inject(...)]` | 检查属性名是 `rdi`，键名仅 `skip`、`optional`、`key`、`provider` |
+| `Default` trait 缺失 | 被 `#[rdi(skip)]` 标记的字段类型未实现 `Default` | 为该类型实现 `Default`，如 `#[derive(Default)]` 或手动 `impl` |
+| 运行时 panic `"svc not registered"` / `"keyed not found"` | 对应服务未注册 | 检查 `ServiceCollection` 注册：类型名和 key 必须匹配 |
 
 ---
 
-### 1.6 生成函数命名
+### 3.6 生成函数命名
 
 生成的函数名格式为 `__rdi_construct_{TypeName}`（注意前缀是 `__rdi_`，不是 `__lrdi_`）。
 
@@ -601,31 +847,32 @@ struct MyService { log: Arc<Logger> }
 
 // 生成：
 #[doc(hidden)]
-pub fn __rdi_construct_MyService(resolver: &dyn lrdi::IServiceResolver)
+pub fn __rdi_construct_MyService(resolver: &dyn rust_dicore::IServiceResolver)
     -> ::std::sync::Arc<MyService> { ... }
 ```
 
 - 函数标记 `#[doc(hidden)]`，在 `cargo doc` 生成的文档中不可见
 - 在 IDE 中虽然可见，但因文档隐藏不会污染自动补全列表
-- 调用方式：`__rdi_construct_MyService(&resolver)` ——直接使用，无需 `use` 或完全限定路径（只要在同一模块内）
+- 调用方式：`__rdi_construct_MyService(&resolver)`——直接使用，无需 `use` 或完全限定路径（只要在同一模块内）
+
+这个构造函数是 **impl 块放置 `#[inject]` 的复用基础**：impl 块生成的 `__rdi_factory_{Type}_for_{Trait}` 会调用它。
 
 ---
 
-## 三、`#[lrdi::module]` 完整指南（特定场景）
+## 四、`#[rust_dicore::module]` 完整指南（特定场景）
 
-> **说明：** `#[lrdi::module]` 是特定场景下使用的宏方案，主要用于以下场景：
+> **说明：** `#[rust_dicore::module]` 是特定场景下使用的宏方案，主要用于以下场景：
 > - **外部类型注册**：注册不在当前 crate 定义的服务（如第三方库类型）
 > - **条件编译**：通过模块级的 `#[cfg(...)]` 控制整组注册
 > - **特性开关**：结合 Cargo feature flag 控制模块激活
 > - **跨 DLL 插件导出**：模块自动生成 `build` 函数，适合插件按模块组织
 >
-> **常规场景优先使用 `#[lrdi::inject(...)]`**：对于当前 crate 内定义的服务，直接使用 `#[lrdi::inject(singleton)]` 属性宏更加简洁，
-> 同时自动完成 inventory 注册并通过 `ServiceCollection::from_injected()` 统一收集。
-> 以下内容保留供需要在模块级组织注册、使用 `inject!` 声明语法或理解底层原理时参考。
+> **常规场景优先使用 `#[rust_dicore::inject(...)]`**：对于当前 crate 内定义的服务，直接使用属性宏更加简洁。
+> 以下内容供需要在模块级组织注册、使用 `register!` 声明语法或理解底层原理时参考。
 
-### 2.1 宏展开原理
+### 4.1 宏展开原理
 
-`#[lrdi::module]` 是一个属性宏（attribute macro），由 `module` 入口函数驱动，作用于 `mod` 块。
+`#[rust_dicore::module]` 是一个属性宏（attribute macro），由 `module` 入口函数驱动，作用于 `mod` 块。
 
 展开过程分为 7 个阶段：
 
@@ -641,11 +888,12 @@ fn expand_md(mut m: ItemMod) -> syn::Result<proc_macro2::TokenStream> {
 
 函数名固定为 `__rdi_build_provider_{module_name}`。
 
-**阶段 2：分类模块内的 item**
+**阶段 2：分类模块内的 item（`register` 路径检测）**
 
 遍历模块内的所有 item，将每个 item 分为两类：
-- **`inject!` 调用**：匹配 `syn::Item::Macro`，且 macro path 为 `inject` 或 `lrdi::inject` → 尝试解析为 `ID` 结构体，成功则加入 `rs` 向量
-- **其他 item**：所有非 `inject!` 的宏调用、函数、类型定义等 → 原样保留在 `cl` 向量中
+
+- **`register!` 调用**：匹配 `syn::Item::Macro`，且 macro path 为 `register` 或 `rust_dicore::register` → 尝试解析为 `ID` 结构体，成功则加入 `rs` 向量
+- **其他 item**：所有非 `register!` 的宏调用、函数、类型定义等 → 原样保留在 `cl` 向量中
 
 ```rust
 let mut rs = Vec::new();  // 注册项列表
@@ -655,18 +903,20 @@ for i in &is {
         syn::Item::Macro(mc) => {
             let ps = mc.mac.path.segments.iter()
                 .map(|s| s.ident.to_string()).collect::<Vec<_>>().join("::");
-            if ps == "inject" || ps == "lrdi::inject" {
+            if ps == "register" || ps == "rust_dicore::register" {
                 if let Ok(r) = syn::parse2::<ID>(mc.mac.tokens.clone()) {
                     rs.push(r);  // ← 加入注册项
                 }
             } else {
-                cl.push(i.clone());  // ← 保留非 inject 宏
+                cl.push(i.clone());  // ← 保留非 register 宏
             }
         }
         _ => cl.push(i.clone()),  // ← 保留所有非宏 item
     }
 }
 ```
+
+> **注意：** 检测的路径是 `register` 或 `rust_dicore::register`（旧版检测的是 `inject` 或 `lrdi::inject`，已随函数式宏改名而更新）。
 
 **阶段 3：生成 ServiceCollection 链式调用**
 
@@ -685,10 +935,10 @@ for i in &is {
 ```rust
 #[doc(hidden)]
 pub fn __rdi_build_provider_{module}() -> ::std::result::Result<
-    ::std::sync::Arc<lrdi::ServiceProvider>, lrdi::RdiError>
+    ::std::sync::Arc<rust_dicore::ServiceProvider>, rust_dicore::RdiError>
 {
     Ok(::std::sync::Arc::new(
-        lrdi::ServiceCollection::new()
+        rust_dicore::ServiceCollection::new()
             #(#ch)*  // ← 逐个链式调用
             .build()?
     ))
@@ -697,11 +947,11 @@ pub fn __rdi_build_provider_{module}() -> ::std::result::Result<
 
 **阶段 5：重复 key 检测**
 
-调用 `vd(&rs)` 函数，扫描所有 `IK::K` 注册项，检查是否有重复 key。详见 2.5 节。
+调用 `vd(&rs)` 函数，扫描所有 `IK::K` 注册项，检查是否有重复 key。详见 §4.5。
 
-**阶段 6：保留原模块中的非 inject item**
+**阶段 6：保留原模块中的非 `register!` item**
 
-所有未被识别为 `inject!` 的 item 原样保留在模块中。
+所有未被识别为 `register!` 的 item 原样保留在模块中。
 
 **阶段 7：输出完整模块**
 
@@ -715,7 +965,7 @@ Ok(quote! {#m})
 
 ---
 
-### 2.2 `IK` 枚举——所有声明类型
+### 4.2 `IK` 枚举——所有声明类型
 
 `IK` 枚举定义在宏内部（非公开），表示三种注册模式：
 
@@ -736,7 +986,7 @@ enum IK {
 
 **字段详解：**
 
-- `lt: LT`：生命周期标签，决定方法名（见 2.3 节）
+- `lt: LT`：生命周期标签，决定方法名（见 §4.3）
 - `ty: syn::Type`：服务的具体类型
 - `imp: Option<syn::Type>`：（仅 `IK::N`）`dyn Trait` 的实现类型，若为 `Some` 则生成 `dyn Trait` → `ImplType` 映射
 - `key: String`：（仅 `IK::K`）键名
@@ -744,7 +994,7 @@ enum IK {
 
 ---
 
-### 2.3 `LT` 枚举——生命周期解析
+### 4.3 `LT` 枚举——生命周期解析
 
 `LT` 枚举实现 `syn::Parse`，将标识符映射为生命周期：
 
@@ -793,12 +1043,12 @@ fn kmt(lt: LT) -> proc_macro2::TokenStream {
 
 ---
 
-### 2.4 声明语法完整参考
+### 4.4 声明语法完整参考
 
 #### 语法 1：普通 singleton 注册
 
 ```rust
-lrdi::inject!(singleton: MyService);
+rust_dicore::register!(singleton: MyService);
 ```
 
 等价于：
@@ -812,7 +1062,7 @@ ServiceCollection::new()
 #### 语法 2：scoped 注册
 
 ```rust
-lrdi::inject!(scoped: RequestContext);
+rust_dicore::register!(scoped: RequestContext);
 ```
 
 每次从 scope 中解析时重新创建实例。
@@ -820,7 +1070,7 @@ lrdi::inject!(scoped: RequestContext);
 #### 语法 3：transient 注册
 
 ```rust
-lrdi::inject!(transient: UuidGenerator);
+rust_dicore::register!(transient: UuidGenerator);
 ```
 
 每次解析都创建新实例。
@@ -828,7 +1078,7 @@ lrdi::inject!(transient: UuidGenerator);
 #### 语法 4：dyn Trait → Impl 映射
 
 ```rust
-lrdi::inject!(singleton: dyn IPlugin => TestPlugin);
+rust_dicore::register!(singleton: dyn IPlugin => TestPlugin);
 ```
 
 生成 `.singleton::<dyn IPlugin>(|_| Arc::new(TestPlugin::default()))`。`TestPlugin` 必须实现 `IPlugin + Default`。
@@ -836,9 +1086,9 @@ lrdi::inject!(singleton: dyn IPlugin => TestPlugin);
 #### 语法 5：键控注册
 
 ```rust
-lrdi::inject!(keyed "special": singleton: Logger);
-lrdi::inject!(keyed "temp": scoped: Logger);
-lrdi::inject!(keyed "per-call": transient: Logger);
+rust_dicore::register!(keyed "special": singleton: Logger);
+rust_dicore::register!(keyed "temp": scoped: Logger);
+rust_dicore::register!(keyed "per-call": transient: Logger);
 ```
 
 分别对应 `.keyed("special", ...)`、`.keyed_scoped("temp", ...)`、`.keyed_transient("per-call", ...)`。
@@ -846,30 +1096,32 @@ lrdi::inject!(keyed "per-call": transient: Logger);
 #### 语法 6：自定义工厂
 
 ```rust
-lrdi::inject!(factory singleton: Logger => Logger { prefix: "factory".into() });
+rust_dicore::register!(factory singleton: Logger => Logger { prefix: "factory".into() });
 ```
 
 生成 `.singleton(move |_: &dyn IServiceResolver| Arc::new(Logger { prefix: "factory".into() }))`。闭包体可以是任意表达式。
 
 支持的 factory 生命周期：`factory singleton:`、`factory scoped:`、`factory transient:`。
 
-#### 语法 7：inject! 路径形式
+#### 语法 7：`register!` 路径形式
 
 ```rust
-// 在 #[lrdi::module] 内部，两种写法等价：
-inject!(singleton: MyService);
-lrdi::inject!(singleton: MyService);
+// 在 #[rust_dicore::module] 内部，两种写法等价：
+register!(singleton: MyService);
+rust_dicore::register!(singleton: MyService);
 ```
 
-宏通过检查 macro path 是否匹配 `"inject"` 或 `"lrdi::inject"` 来判断：
+宏通过检查 macro path 是否匹配 `"register"` 或 `"rust_dicore::register"` 来判断：
 
 ```rust
-if ps == "inject" || ps == "lrdi::inject" { ... }
+if ps == "register" || ps == "rust_dicore::register" { ... }
 ```
+
+> `register!` 本身是一个**占位函数式宏**——独立调用时展开为空 TokenStream。它的真正用途是在 `#[module]` 内部被属性宏识别并转化为注册代码。
 
 ---
 
-### 2.5 `vd()` 函数——重复 key 检测
+### 4.5 `vd()` 函数——重复 key 检测
 
 `vd()` 函数（validate dedup）在代码生成前扫描所有注册项，检测键控注册中是否有重复的 key 值：
 
@@ -901,10 +1153,10 @@ fn vd(rs: &[ID]) -> syn::Result<()> {
 **示例 —— 触发编译错误：**
 
 ```rust
-#[lrdi::module]
+#[rust_dicore::module]
 mod broken {
-    lrdi::inject!(keyed "same": singleton: Logger);
-    lrdi::inject!(keyed "same": singleton: Logger);  // ← 编译错误！
+    rust_dicore::register!(keyed "same": singleton: Logger);
+    rust_dicore::register!(keyed "same": singleton: Logger);  // ← 编译错误！
 }
 ```
 
@@ -915,17 +1167,17 @@ error: rdi-E004: duplicate key `same`
 
 ---
 
-### 2.6 实际生成代码示例
+### 4.6 实际生成代码示例
 
 **输入模块：**
 
 ```rust
-#[lrdi::module]
+#[rust_dicore::module]
 mod my_services {
-    lrdi::inject!(singleton: Logger);
-    lrdi::inject!(singleton: dyn IPlugin => TestPlugin);
-    lrdi::inject!(keyed "special": singleton: Logger);
-    lrdi::inject!(factory singleton: Config => Config { env: "prod".into() });
+    rust_dicore::register!(singleton: Logger);
+    rust_dicore::register!(singleton: dyn IPlugin => TestPlugin);
+    rust_dicore::register!(keyed "special": singleton: Logger);
+    rust_dicore::register!(factory singleton: Config => Config { env: "prod".into() });
 
     // 普通函数会被保留
     fn helper() -> &'static str { "hello" }
@@ -943,17 +1195,17 @@ mod my_services {
     #[doc(hidden)]
     pub fn __rdi_build_provider_my_services()
         -> ::std::result::Result<
-            ::std::sync::Arc<lrdi::ServiceProvider>, lrdi::RdiError>
+            ::std::sync::Arc<rust_dicore::ServiceProvider>, rust_dicore::RdiError>
     {
         Ok(::std::sync::Arc::new(
-            lrdi::ServiceCollection::new()
-                .singleton(|_: &dyn lrdi::IServiceResolver|
+            rust_dicore::ServiceCollection::new()
+                .singleton(|_: &dyn rust_dicore::IServiceResolver|
                     ::std::sync::Arc::new(<Logger as ::std::default::Default>::default()))
-                .singleton::<dyn IPlugin>(|_: &dyn lrdi::IServiceResolver|
+                .singleton::<dyn IPlugin>(|_: &dyn rust_dicore::IServiceResolver|
                     ::std::sync::Arc::new(<TestPlugin as ::std::default::Default>::default()))
-                .keyed::<Logger>("special", |_: &dyn lrdi::IServiceResolver|
+                .keyed::<Logger>("special", |_: &dyn rust_dicore::IServiceResolver|
                     ::std::sync::Arc::new(<Logger as ::std::default::Default>::default()))
-                .singleton(move |_: &dyn lrdi::IServiceResolver|
+                .singleton(move |_: &dyn rust_dicore::IServiceResolver|
                     ::std::sync::Arc::new(Config { env: "prod".into() }))
                 .build()?
         ))
@@ -972,9 +1224,9 @@ let special_logger: Arc<Logger> = provider.get_keyed::<Logger>("special");
 
 ---
 
-### 2.7 与手动 `ServiceCollection` 的取舍
+### 4.7 与手动 `ServiceCollection` 的取舍
 
-#### 何时使用 `#[lrdi::module]`
+#### 何时使用 `#[rust_dicore::module]`
 
 | 场景 | 优势 |
 |------|------|
@@ -991,7 +1243,7 @@ let special_logger: Arc<Logger> = provider.get_keyed::<Logger>("special");
 | **复杂工厂逻辑** | 需要依赖注入、条件判断、外部配置读取的工厂闭包 |
 | **动态注册** | 运行时根据配置/环境决定注册哪些服务 |
 | **条件注册** | 使用 `try_add` 等条件方法 |
-| **非 `Default` 构造** | 工厂需要传入参数，`#[lrdi::module]` 的 factory 语法可支持但不如手写闭包灵活 |
+| **非 `Default` 构造** | 工厂需要传入参数，`#[module]` 的 factory 语法可支持但不如手写闭包灵活 |
 | **需要 `instance()` / `singleton_value()`** | 直接注入已有实例 |
 
 #### 推荐组合策略
@@ -999,11 +1251,11 @@ let special_logger: Arc<Logger> = provider.get_keyed::<Logger>("special");
 在同一个项目中，三种方式可以自由组合：
 
 ```rust
-// 1. #[lrdi::module] 用于模块级服务集合
-#[lrdi::module]
+// 1. #[rust_dicore::module] 用于模块级服务集合
+#[rust_dicore::module]
 mod infra {
-    lrdi::inject!(singleton: Logger);
-    lrdi::inject!(singleton: Config);
+    rust_dicore::register!(singleton: Logger);
+    rust_dicore::register!(singleton: Config);
 }
 
 // 2. 手动 ServiceCollection 用于动态/条件注册
@@ -1022,61 +1274,64 @@ fn build_with_feature_toggle(enable_cache: bool) -> Result<Arc<ServiceProvider>,
 
 ---
 
-## 四、宏混合使用策略
+## 五、宏混合使用策略
 
-### 4.1 四种方式对比
+### 5.1 四种方式对比
 
-| 维度 | 手动工厂 | `#[lrdi::inject]`（推荐） | `#[derive(Inject)]` | `#[lrdi::module]` |
-|------|---------|------------------------|-------------------|-------------------|
+| 维度 | 手动工厂 | `#[rust_dicore::inject]`（推荐） | `#[derive(Inject)]` | `#[rust_dicore::module]` |
+|------|---------|-------------------------------|---------------------|------------------------|
 | **宏类型** | — | 属性宏 | 派生宏 | 属性宏 |
 | **构造函数生成** | 手写 | ✅ 自动 | ✅ 自动 | ❌ |
-| **自动注册** | ❌ 手写 | ✅ inventory | ❌ 手写 | ✅ 模块内声明 |
+| **自动注册（具体类型）** | ❌ 手写 | ✅ inventory（struct 放置） | ❌ 手写 | ✅ 模块内声明 |
+| **自动注册（dyn Trait）** | ❌ 手写 | ✅ inventory（impl 块放置） | ❌ 手写 | ✅（`dyn T => Impl` 语法） |
 | **控制粒度** | 最细，完全可控 | 中等 | 消除构造器样板 | 消除注册样板 |
 | **代码量** | 最多 | 最少 | 中等（需手写注册） | 较少 |
-| **灵活性** | 最高 | 较高 | 中等（需配合 `#[inject(provider)]`） | 较低（局限于 Default 构造） |
+| **灵活性** | 最高 | 较高 | 中等（需配合 `#[rdi(provider)]`） | 较低（局限于 Default 构造） |
 | **编译期安全** | 运行时发现缺失 | 运行时 panic 缺失 | 运行时 panic 缺失 | 编译期检测重复 key |
-| **适用场景** | 复杂依赖链 | **通用首选** | 旧代码兼容、精细控制 | 外部类型、条件编译、插件 |
+| **适用场景** | 复杂依赖链 | **通用首选** | 仅需构造函数、为 impl 块提供构造器 | 外部类型、条件编译、插件 |
 
-### 4.2 推荐架构组合
+### 5.2 推荐架构组合
 
-选择优先级：`#[lrdi::inject]` > `#[lrdi::module]` > 手动 `ServiceCollection`
+选择优先级：`#[rust_dicore::inject]` > `#[rust_dicore::module]` > 手动 `ServiceCollection`
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  应用层（组合根）                                           │
 │  ┌──────────────────────────────────────────────────────┐ │
 │  │  ServiceCollection::from_injected() + 手动补充        │ │
-│  │  - 自动收集所有 #[lrdi::inject] 注册                  │ │
+│  │  - 自动收集所有 #[rust_dicore::inject] 注册           │ │
+│  │    （struct 放置 + impl 块放置）                      │ │
 │  │  - 动态注册 / 条件注册                                │ │
 │  │  - 生命周期精细控制                                   │ │
 │  └──────────────────────────────────────────────────────┘ │
 │                           │                                │
 │  ┌────────────────────────▼─────────────────────────────┐ │
 │  │  服务层                                                │ │
-│  │  #[lrdi::inject(singleton)] struct MyService { ... }  │ │
-│  │  #[lrdi::inject(singleton, as = dyn ITrait)]          │ │
-│  │  #[lrdi::inject(scoped, as = [dyn A, dyn B])]         │ │
-│  └───────────────────────────────────────────────────────┘ │
+│  │  #[rust_dicore::inject(singleton)] struct Svc {...}  │ │
+│  │  #[derive(Inject)] struct Plugin {...}               │ │
+│  │  #[rust_dicore::inject] impl ITrait for Plugin {}    │ │
+│  │  #[rust_dicore::inject] impl ITrait2 for Plugin {}   │ │
+│  └──────────────────────────────────────────────────────┘ │
 │                           │                                │
 │  ┌────────────────────────▼─────────────────────────────┐ │
 │  │  模块层（特定场景）                                       │ │
-│  │  #[lrdi::module] mod infra_module { ... }             │ │
-│  │  #[lrdi::module] mod plugin_module { ... }            │ │
-│  └───────────────────────────────────────────────────────┘ │
+│  │  #[rust_dicore::module] mod infra_module { ... }     │ │
+│  │  #[rust_dicore::module] mod plugin_module { ... }    │ │
+│  └──────────────────────────────────────────────────────┘ │
 │                           │                                │
 │  ┌────────────────────────▼─────────────────────────────┐ │
 │  │  领域层（兼容旧代码）                                       │ │
 │  │  #[derive(Inject)] struct OrderService { ... }       │ │
 │  │  #[derive(Inject)] struct UserService { ... }        │ │
-│  └───────────────────────────────────────────────────────┘ │
+│  └──────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 4.3 完整混合示例
+### 5.3 完整混合示例
 
 ```rust
-use lrdi::*;
-use lrdi_macros::Inject;
+use rust_dicore::*;
+use rust_dicore_macros::Inject;
 use std::sync::Arc;
 
 // ─── 类型定义 ─────────────────────────────────────
@@ -1090,22 +1345,36 @@ struct CacheConfig { ttl_secs: u64 }
 #[derive(Default)]
 struct Logger { prefix: String }
 
-// ─── 推荐方式：使用 #[lrdi::inject] 自动注册 ─────
+// ─── 推荐方式：struct 上 #[rust_dicore::inject] ────
 
-#[lrdi::inject(singleton)]
+#[rust_dicore::inject(singleton)]
 struct OrderProcessor {
     logger: Arc<Logger>,
     db_config: Arc<DatabaseConfig>,
-    #[inject(optional)]
+    #[rdi(optional)]
     cache_config: Option<Arc<CacheConfig>>,
 }
 
-// ─── 基础设施模块：使用 #[lrdi::module] 注册外部类型 ─
+// ─── 接口注册：impl 块上 #[rust_dicore::inject] ────
 
-#[lrdi::module]
+trait IPlugin: Send + Sync { fn name(&self) -> &'static str; }
+
+#[derive(Inject)]
+struct OrderPlugin;
+
+impl IPlugin for OrderPlugin {
+    fn name(&self) -> &'static str { "order" }
+}
+
+#[rust_dicore::inject(singleton)]
+impl IPlugin for OrderPlugin {}
+
+// ─── 基础设施模块：使用 #[rust_dicore::module] 注册外部类型 ─
+
+#[rust_dicore::module]
 mod infra {
-    lrdi::inject!(singleton: super::Logger);
-    lrdi::inject!(singleton: super::DatabaseConfig);
+    rust_dicore::register!(singleton: super::Logger);
+    rust_dicore::register!(singleton: super::DatabaseConfig);
 }
 
 // ─── 组合根：from_injected + 手动补充 ──────────────
@@ -1113,7 +1382,7 @@ mod infra {
 fn build_app(use_cache: bool) -> Result<Arc<ServiceProvider>, RdiError> {
     let mut col = ServiceCollection::from_injected();
 
-    // 手动注册 #[lrdi::module] 中的服务
+    // 手动注册 #[rust_dicore::module] 中的服务
     let infra_provider = infra::__rdi_build_provider_infra()?;
     col = col
         .singleton(|_| Arc::clone(&infra_provider.get::<Logger>()))
@@ -1129,33 +1398,44 @@ fn build_app(use_cache: bool) -> Result<Arc<ServiceProvider>, RdiError> {
 fn main() -> Result<(), RdiError> {
     let provider = build_app(true)?;
     let order_proc: Arc<OrderProcessor> = provider.get::<OrderProcessor>();
+    let plugin: Arc<dyn IPlugin> = provider.get::<dyn IPlugin>();
 
     assert!(order_proc.cache_config.is_some());  // 因 use_cache=true
+    assert_eq!(plugin.name(), "order");
     Ok(())
 }
 ```
 
 ---
 
-## 五、源码映射速查表
+## 六、源码映射速查表
 
-| 宏/概念 | 源码位置 (`crates/lrdi-macros/src/lib.rs`) | 关键类型/函数 |
-|--------|------------------------------------------|-------------|
-| `#[lrdi::inject(...)]` 入口 | 第 369-376 行 | `inject_attr()` |
-| `#[lrdi::inject(...)]` 展开逻辑 | 第 378-512 行 | `expand_inject_attr()` |
-| 属性参数解析 | 第 320-366 行 | `InjectArgs { Plain, AsTrait, AsTraits }` |
-| 构造器 + 工厂生成 | 第 417-461 行 | `__rdi_construct_*`, `__rdi_factory_*` |
-| inventory 注册生成 | 第 463-504 行 | `ServiceRegistration { lifetime, type_id, type_name, factory }` |
-| `from_injected()` | `crates/lrdi/src/collection.rs` 第 128-141 行 | `inventory::iter::<ServiceRegistration>` |
-| `ServiceRegistration` | `crates/lrdi/src/registration.rs` | `inventory::collect!(ServiceRegistration)` |
-| `#[derive(Inject)]` 入口 | 第 10-15 行 | `inject_derive()` |
-| 核心展开逻辑 | 第 17-52 行 | `expand_inject()` |
-| 类型剥离 | 第 54-87 行 | `saw()` |
-| 属性解析 | 第 96-120 行 | `parse_ia()` |
-| `IA` 结构体 | 第 89-95 行 | `IA { skip, optional, provider, key }` |
-| `#[lrdi::module]` 入口 | 第 128-132 行 | `module()` |
-| 模块展开逻辑 | 第 134-199 行 | `expand_md()` |
-| `ID` / `IK` / `LT` | 第 232-314 行 | 注册项解析和生命周期枚举 |
-| 生命周期→方法映射 | 第 200-213 行 | `lmt()`, `kmt()` |
-| 重复 key 检测 | 第 214-229 行 | `vd()` |
-| `inject!` 占位宏 | 第 122-125 行 | 仅返回空 TokenStream |
+源码文件：`crates/rust-dicore-macros/src/lib.rs`（共约 581 行）。行号为近似范围，可能随重构微调。
+
+| 宏/概念 | 源码位置 (`crates/rust-dicore-macros/src/lib.rs`) | 关键类型/函数 |
+|--------|--------------------------------------------------|-------------|
+| `#[derive(Inject)]` 入口 | 第 14-19 行 | `#[proc_macro_derive(Inject, attributes(rdi))]` → `inject_derive()` |
+| 派生宏展开逻辑 | 第 21-59 行 | `expand_inject_derive()`（处理 `Fields::Named` 与 `Fields::Unit`） |
+| 类型剥离 `saw()` | 第 62-95 行 | `saw(ty) -> (inner, is_arc)`（剥 `Arc<T>` / `Option<Arc<T>>`） |
+| 字段属性 `IA` 结构体 | 第 97-103 行 | `IA { skip, optional, provider, key }` |
+| `parse_ia()` 字段属性解析 | 第 104-128 行 | `attr.path().is_ident("rdi")`（注意是 `rdi`） |
+| `register!` 占位函数式宏 | 第 139-142 行 | `#[proc_macro] register()` → 展开为空 |
+| `#[module]` 入口 | 第 148-153 行 | `#[proc_macro_attribute] module()` |
+| 模块展开 `expand_md()` | 第 155-220 行 | 检测 `register` / `rust_dicore::register` 路径 |
+| 生命周期→方法映射 | 第 221-234 行 | `lmt()`、`kmt()` |
+| 重复 key 检测 `vd()` | 第 235-250 行 | `rdi-E004: duplicate key` |
+| `LT` 枚举 + `Parse` | 第 252-267 行 | `LT::{S, Sc, T}` |
+| `IK` 枚举 + `ID` 结构体 + `Parse` | 第 268-335 行 | `IK::{N, K, F}` |
+| `InjectArgs` 结构体 + `Parse` | 第 350-362 行 | `InjectArgs { lifetime: Option<LT> }`（无 Plain/AsTrait/AsTraits） |
+| `#[inject]` 属性宏入口 | 第 364-372 行 | `#[proc_macro_attribute] inject()` |
+| `expand_inject()` 分发 | 第 374-384 行 | `Item::Struct` → `expand_inject_struct`；`Item::Impl` → `expand_inject_impl` |
+| struct 放置展开 | 第 387-488 行 | `expand_inject_struct()`：构造器 + `__rdi_factory_{Name}` + `__rdi_type_name_{Name}` + inventory + 剥离 `#[rdi]` |
+| impl 块放置展开 | 第 496-573 行 | `expand_inject_impl()`：自动检测 trait，生成 `__rdi_factory_{Type}_for_{Trait}`，注册为 `dyn Trait` |
+| `lt_to_token()` | 第 575-581 行 | `LT` → `rust_dicore::ServiceLifetime::*` |
+
+跨文件引用：
+
+| 概念 | 源码位置 | 关键定义 |
+|------|---------|---------|
+| `ServiceRegistration` | `crates/rust-dicore/src/registration.rs` | `{ lifetime, type_id, type_name_fn, factory }` + `inventory::collect!` |
+| `ServiceCollection::from_injected()` | `crates/rust-dicore/src/collection.rs` 第 129-142 行 | 遍历 `inventory::iter::<ServiceRegistration>`，运行时调用 `(reg.type_name_fn)()` |

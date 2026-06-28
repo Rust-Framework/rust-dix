@@ -223,7 +223,7 @@ fn scope_get_keyed_panics_on_missing() {
 fn module_singleton_with_trait() {
     #[rust_dicore::module]
     mod svc {
-        rust_dicore::inject!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
+        rust_dicore::register!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
     }
     let p = svc::__rdi_build_provider_svc().unwrap();
     let plugin: Arc<dyn common::IPlugin> = p.get::<dyn common::IPlugin>();
@@ -234,7 +234,7 @@ fn module_singleton_with_trait() {
 fn module_scoped_lifetime() {
     #[rust_dicore::module]
     mod scoped_mod {
-        rust_dicore::inject!(scoped: super::common::MyService);
+        rust_dicore::register!(scoped: super::common::MyService);
     }
     let p = Arc::new(scoped_mod::__rdi_build_provider_scoped_mod().unwrap());
     let scope = p.scope();
@@ -245,7 +245,7 @@ fn module_scoped_lifetime() {
 fn module_transient_lifetime() {
     #[rust_dicore::module]
     mod trans_mod {
-        rust_dicore::inject!(transient: super::common::MyService);
+        rust_dicore::register!(transient: super::common::MyService);
     }
     let p = trans_mod::__rdi_build_provider_trans_mod().unwrap();
     let _svc: Arc<common::MyService> = p.get();
@@ -255,8 +255,8 @@ fn module_transient_lifetime() {
 fn module_multiple_registrations() {
     #[rust_dicore::module]
     mod multi {
-        rust_dicore::inject!(singleton: super::common::Logger);
-        rust_dicore::inject!(singleton: super::common::MyService);
+        rust_dicore::register!(singleton: super::common::Logger);
+        rust_dicore::register!(singleton: super::common::MyService);
     }
     let p = multi::__rdi_build_provider_multi().unwrap();
     let _log: Arc<common::Logger> = p.get();
@@ -267,7 +267,7 @@ fn module_multiple_registrations() {
 fn module_keyed_singleton() {
     #[rust_dicore::module]
     mod keyed_mod {
-        rust_dicore::inject!(keyed "x": singleton: super::common::MyService);
+        rust_dicore::register!(keyed "x": singleton: super::common::MyService);
     }
     let p = keyed_mod::__rdi_build_provider_keyed_mod().unwrap();
     let svc: Arc<common::MyService> = p.get_keyed("x");

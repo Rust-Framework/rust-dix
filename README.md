@@ -55,10 +55,10 @@ rust-dicore = "0.2"
 
 | Feature | Description |
 |---------|-------------|
-| `#[rust_dicore::inject]` | Attribute-macro-based auto-registration — annotate structs and call `ServiceCollection::from_injected()` |
+| `#[rust_dicore::inject]` | Attribute-macro-based auto-registration — annotate structs **or trait impls** and call `ServiceCollection::from_injected()` |
 | `#[derive(Inject)]` | Derive-macro for constructor injection on structs (advanced) |
-| `#[rust_dicore::module]` | Compile-time module scanning to collect `rust_dicore::inject!(...)` declarations (advanced) |
-| **Three lifetimes** | Singleton, Scoped, Transient |
+| `#[rust_dicore::module]` | Compile-time module scanning to collect `rust_dicore::register!(...)` declarations (advanced) |
+| **Three lifetimes** | Singleton (default), Scoped, Transient |
 | **Keyed services** | Multiple instances of the same type distinguished by a string key |
 | **Cross-DLL support** | Named service registry for cdylib plugin systems |
 | **Layered containers** | Child-first resolution via `ServiceProviderWrapper` |

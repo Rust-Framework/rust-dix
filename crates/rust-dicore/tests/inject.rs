@@ -9,11 +9,11 @@ use std::sync::Arc;
 #[derive(Inject)]
 struct FullFeatured {
     log: Arc<common::Logger>,
-    #[inject(optional)]
+    #[rdi(optional)]
     maybe: Option<Arc<common::MyService>>,
-    #[inject(key = "special")]
+    #[rdi(key = "special")]
     special: Arc<common::Logger>,
-    #[inject(skip)]
+    #[rdi(skip)]
     label: String,
 }
 

@@ -26,7 +26,8 @@
 //! - **Three lifetimes**: Singleton, Scoped, Transient
 //! - **Keyed services**: multiple instances of the same type, distinguished by key
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
-//! - **Compile-time module scanning**: `#[rust_dicore::module]` collects service registrations
+//! - **Attribute-based auto-registration**: `#[rust_dicore::inject]` on structs or trait impls
+//! - **Compile-time module scanning**: `#[rust_dicore::module]` collects `register!()` declarations
 //! - **Cross-DLL support**: named service registry for cdylib plugins
 //!
 //! # Crate layout
@@ -45,8 +46,9 @@
 //! # Proc-macros
 //!
 //! - `#[derive(Inject)]` — auto-generates constructor injection code
+//! - `#[rust_dicore::inject]` — auto-registration on structs or trait impls
 //! - `#[rust_dicore::module]` — compile-time module scanning
-//! - `rust_dicore::inject!(...)` — declare services inside `#[rust_dicore::module]`
+//! - `rust_dicore::register!(...)` — declare services inside `#[rust_dicore::module]`
 
 pub mod bridge;
 pub mod collection;
@@ -125,7 +127,6 @@ pub use inventory;
 
 // ── Proc-macros ──
 
-// Note: `inject_attr` is the attribute macro; `inject` is the declare macro
-// used inside `#[rust_dicore::module]`. Users write both as `#[rust_dicore::inject(...)]`
-// and `rust_dicore::inject!(...)` respectively.
-pub use rust_dicore_macros::{inject, inject_attr, module, Inject};
+// `inject` is the attribute macro (placed on structs or trait impls).
+// `register` is the function-like macro used inside `#[rust_dicore::module]`.
+pub use rust_dicore_macros::{inject, module, register, Inject};

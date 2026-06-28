@@ -4,54 +4,61 @@ use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
-    punctuated::Punctuated,
-    DeriveInput, Field, Fields, ItemMod, Token,
+    DeriveInput, Field, Fields, ItemImpl, ItemMod, Token,
 };
 
-#[proc_macro_derive(Inject, attributes(inject))]
+// ───────────────────────────────────────────────────────────────────────────
+// #[derive(Inject)] — auto-generate constructor from struct fields
+// ───────────────────────────────────────────────────────────────────────────
+
+#[proc_macro_derive(Inject, attributes(rdi))]
 pub fn inject_derive(input: TokenStream) -> TokenStream {
-    expand_inject(parse_macro_input!(input as DeriveInput))
+    expand_inject_derive(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-fn expand_inject(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let name = &input.ident;
-    let named = match &input.data {
+    let fn_name = format_ident!("__rdi_construct_{}", name);
+    let constructor_body = match &input.data {
         syn::Data::Struct(s) => match &s.fields {
-            Fields::Named(n) => n,
-            _ => return Err(syn::Error::new_spanned(name, "named fields")),
+            Fields::Named(named) => {
+                let mut inits = Vec::new();
+                for field in named.named.iter() {
+                    let attrs = parse_ia(field);
+                    let fnm = field.ident.as_ref().unwrap();
+                    let (inner, _) = saw(&field.ty);
+                    let init = if attrs.skip {
+                        quote! {#fnm:Default::default()}
+                    } else if attrs.provider {
+                        quote! {#fnm:resolver.clone()}
+                    } else if attrs.optional {
+                        if let Some(k) = &attrs.key {
+                            quote! {#fnm:resolver.get_keyed_any(::std::any::type_name::<#inner>(),#k).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d))}
+                        } else {
+                            quote! {#fnm:resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d))}
+                        }
+                    } else if let Some(k) = &attrs.key {
+                        quote! {#fnm:resolver.get_keyed_any(::std::any::type_name::<#inner>(),#k).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d)).unwrap_or_else(||::std::panic!("keyed not found"))}
+                    } else {
+                        quote! {#fnm:resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d)).unwrap_or_else(||::std::panic!("svc not registered"))}
+                    };
+                    inits.push(init);
+                }
+                quote! { #name { #(#inits),* } }
+            }
+            Fields::Unit => quote! { #name },
+            _ => return Err(syn::Error::new_spanned(name, "named fields or unit struct")),
         },
         _ => return Err(syn::Error::new_spanned(name, "struct only")),
     };
-    let fn_name = format_ident!("__rdi_construct_{}", name);
-    let mut inits = Vec::new();
-    for field in named.named.iter() {
-        let attrs = parse_ia(field);
-        let fnm = field.ident.as_ref().unwrap();
-        let (inner, _) = saw(&field.ty);
-        let init = if attrs.skip {
-            quote! {#fnm:Default::default()}
-        } else if attrs.provider {
-            quote! {#fnm:resolver.clone()}
-        } else if attrs.optional {
-            if let Some(k) = &attrs.key {
-                quote! {#fnm:resolver.get_keyed_any(::std::any::type_name::<#inner>(),#k).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d))}
-            } else {
-                quote! {#fnm:resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d))}
-            }
-        } else if let Some(k) = &attrs.key {
-            quote! {#fnm:resolver.get_keyed_any(::std::any::type_name::<#inner>(),#k).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d)).unwrap_or_else(||::std::panic!("keyed not found"))}
-        } else {
-            quote! {#fnm:resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d)).unwrap_or_else(||::std::panic!("svc not registered"))}
-        };
-        inits.push(init);
-    }
     Ok(
-        quote! {#[doc(hidden)]pub fn #fn_name(resolver:&dyn rust_dicore::IServiceResolver)->::std::sync::Arc<#name>{::std::sync::Arc::new(#name{#(#inits),*})}},
+        quote! {#[doc(hidden)]pub fn #fn_name(resolver:&dyn rust_dicore::IServiceResolver)->::std::sync::Arc<#name>{::std::sync::Arc::new(#constructor_body)}},
     )
 }
 
+/// Strip `Arc<T>` / `Option<Arc<T>>` to inner type `T`.
 fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
     if let syn::Type::Path(p) = ty {
         let l = p.path.segments.last().unwrap();
@@ -97,7 +104,7 @@ struct IA {
 fn parse_ia(f: &Field) -> IA {
     let mut a = IA::default();
     for attr in &f.attrs {
-        if !attr.path().is_ident("inject") {
+        if !attr.path().is_ident("rdi") {
             continue;
         }
         let Ok(l) = attr.meta.require_list() else {
@@ -120,10 +127,23 @@ fn parse_ia(f: &Field) -> IA {
     a
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// register!() — function-like placeholder macro for use inside #[module]
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Function-like macro consumed by `#[rust_dicore::module]`.
+///
+/// Expands to nothing on its own; the `module` attribute macro detects
+/// `register!(...)` calls at compile time and turns them into service
+/// registrations.
 #[proc_macro]
-pub fn inject(_: TokenStream) -> TokenStream {
+pub fn register(_: TokenStream) -> TokenStream {
     quote! {}.into()
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// #[module] — compile-time module scanning for register!() declarations
+// ───────────────────────────────────────────────────────────────────────────
 
 #[proc_macro_attribute]
 pub fn module(_: TokenStream, item: TokenStream) -> TokenStream {
@@ -152,7 +172,7 @@ fn expand_md(mut m: ItemMod) -> syn::Result<proc_macro2::TokenStream> {
                     .map(|s| s.ident.to_string())
                     .collect::<Vec<_>>()
                     .join("::");
-                if ps == "inject" || ps == "rust_dicore::inject" {
+                if ps == "register" || ps == "rust_dicore::register" {
                     if let Ok(r) = syn::parse2::<ID>(mc.mac.tokens.clone()) {
                         rs.push(r);
                     }
@@ -314,59 +334,36 @@ impl Parse for ID {
     }
 }
 
-// ── `#[rust_dicore::inject(...)]` attribute macro ──
+// ───────────────────────────────────────────────────────────────────────────
+// #[inject] — attribute macro for auto-registration
+//
+// Supports two placement sites:
+//   1. On a struct:  generates constructor + registers as concrete type
+//   2. On a trait impl:  registers as the trait type (auto-detected from
+//      `impl Trait for Type`), reusing the constructor generated by
+//      `#[derive(Inject)]` or `#[inject]` on the struct.
+//
+// Syntax:  #[inject]  or  #[inject(scoped)]  or  #[inject(transient)]
+// Lifetime defaults to `singleton` when omitted.
+// ───────────────────────────────────────────────────────────────────────────
 
-/// Parsed arguments of `#[rust_dicore::inject(...)]`
-enum InjectArgs {
-    Plain {
-        lifetime: LT,
-    },
-    AsTrait {
-        lifetime: LT,
-        trait_ty: syn::Type,
-    },
-    AsTraits {
-        lifetime: LT,
-        trait_tys: Vec<syn::Type>,
-    },
+struct InjectArgs {
+    lifetime: Option<LT>,
 }
 
 impl Parse for InjectArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let lt: LT = input.parse()?;
-
-        if input.peek(Token![,]) {
-            let _: Token![,] = input.parse()?;
-            if input.peek(Token![as]) {
-                let _: Token![as] = input.parse()?;
-                let _: Token![=] = input.parse()?;
-
-                if input.peek(syn::token::Bracket) {
-                    let content;
-                    let _ = syn::bracketed!(content in input);
-                    let tys: Punctuated<syn::Type, Token![,]> =
-                        content.parse_terminated(syn::Type::parse, Token![,])?;
-                    return Ok(InjectArgs::AsTraits {
-                        lifetime: lt,
-                        trait_tys: tys.into_iter().collect(),
-                    });
-                } else {
-                    let ty: syn::Type = input.parse()?;
-                    return Ok(InjectArgs::AsTrait {
-                        lifetime: lt,
-                        trait_ty: ty,
-                    });
-                }
-            }
+        if input.is_empty() {
+            return Ok(InjectArgs { lifetime: None });
         }
-
-        Ok(InjectArgs::Plain { lifetime: lt })
+        let lt: LT = input.parse()?;
+        Ok(InjectArgs { lifetime: Some(lt) })
     }
 }
 
 #[proc_macro_attribute]
-pub fn inject_attr(attr: TokenStream, item: TokenStream) -> TokenStream {
-    expand_inject_attr(
+pub fn inject(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_inject(
         parse_macro_input!(attr as InjectArgs),
         parse_macro_input!(item as syn::Item),
     )
@@ -374,15 +371,27 @@ pub fn inject_attr(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_macro2::TokenStream> {
-    let struct_item = match &item {
-        syn::Item::Struct(s) => s,
-        _ => return Err(syn::Error::new_spanned(&item, "only structs are supported")),
-    };
+fn expand_inject(args: InjectArgs, item: syn::Item) -> syn::Result<proc_macro2::TokenStream> {
+    let lifetime = args.lifetime.unwrap_or(LT::S);
+    match &item {
+        syn::Item::Struct(s) => expand_inject_struct(s, lifetime),
+        syn::Item::Impl(i) => expand_inject_impl(i, lifetime),
+        _ => Err(syn::Error::new_spanned(
+            &item,
+            "#[inject] can only be placed on a struct or a trait impl block",
+        )),
+    }
+}
 
+/// `#[inject]` on a struct: generate constructor + register as concrete type.
+fn expand_inject_struct(
+    struct_item: &syn::ItemStruct,
+    lifetime: LT,
+) -> syn::Result<proc_macro2::TokenStream> {
     let name = &struct_item.ident;
     let fn_name = format_ident!("__rdi_construct_{}", name);
     let factory_name = format_ident!("__rdi_factory_{}", name);
+    let type_name_fn_name = format_ident!("__rdi_type_name_{}", name);
 
     let constructor_body = match &struct_item.fields {
         syn::Fields::Named(n) => {
@@ -428,191 +437,145 @@ fn expand_inject_attr(args: InjectArgs, item: syn::Item) -> syn::Result<proc_mac
         }
     };
 
-    let lt_ident = match args {
-        InjectArgs::Plain { lifetime: LT::S }
-        | InjectArgs::AsTrait {
-            lifetime: LT::S, ..
-        }
-        | InjectArgs::AsTraits {
-            lifetime: LT::S, ..
-        } => {
-            quote! { rust_dicore::ServiceLifetime::Singleton }
-        }
-        InjectArgs::Plain { lifetime: LT::Sc }
-        | InjectArgs::AsTrait {
-            lifetime: LT::Sc, ..
-        }
-        | InjectArgs::AsTraits {
-            lifetime: LT::Sc, ..
-        } => {
-            quote! { rust_dicore::ServiceLifetime::Scoped }
-        }
-        InjectArgs::Plain { lifetime: LT::T }
-        | InjectArgs::AsTrait {
-            lifetime: LT::T, ..
-        }
-        | InjectArgs::AsTraits {
-            lifetime: LT::T, ..
-        } => {
-            quote! { rust_dicore::ServiceLifetime::Transient }
+    let lt_ident = lt_to_token(lifetime);
+
+    let factory = quote! {
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+            let v: ::std::sync::Arc<#name> = #fn_name(resolver);
+            ::std::sync::Arc::new(v)
+                as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
         }
     };
 
-    // Generate factory function(s) — for AsTrait/AsTraits, upcast to dyn Trait first
-    let factory_fns: Vec<proc_macro2::TokenStream> = match &args {
-        InjectArgs::Plain { .. } => {
-            vec![quote! {
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
-                    let v: ::std::sync::Arc<#name> = #fn_name(resolver);
-                    ::std::sync::Arc::new(v)
-                        as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
-                }
-            }]
-        }
-        InjectArgs::AsTrait { trait_ty, .. } => {
-            vec![quote! {
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
-                    let v: ::std::sync::Arc<#name> = #fn_name(resolver);
-                    let v2: ::std::sync::Arc<#trait_ty> = v;
-                    ::std::sync::Arc::new(v2)
-                        as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
-                }
-            }]
-        }
-        InjectArgs::AsTraits { trait_tys, .. } => {
-            trait_tys.iter().enumerate().map(|(i, trait_ty)| {
-                let fn_name = if i == 0 {
-                    factory_name.clone()
-                } else {
-                    format_ident!("__rdi_factory_{}_{}", name, i)
-                };
-                quote! {
-                    #[doc(hidden)]
-                    #[allow(non_snake_case)]
-                    fn #fn_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
-                        let v: ::std::sync::Arc<#name> = #fn_name(resolver);
-                        let v2: ::std::sync::Arc<#trait_ty> = v;
-                        ::std::sync::Arc::new(v2)
-                            as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
-                    }
-                }
-            }).collect()
+    let type_name_helper = quote! {
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #type_name_fn_name() -> &'static str {
+            ::std::any::type_name::<#name>()
         }
     };
 
-    let type_name_fn_name = format_ident!("__rdi_type_name_{}", name);
-
-    let (type_name_helper, trait_tys_for_subs): (proc_macro2::TokenStream, Vec<syn::Type>) =
-        match &args {
-            InjectArgs::Plain { .. } => {
-                let helper = quote! {
-                    #[doc(hidden)]
-                    #[allow(non_snake_case)]
-                    fn #type_name_fn_name() -> &'static str {
-                        ::std::any::type_name::<#name>()
-                    }
-                };
-                (helper, vec![])
-            }
-            InjectArgs::AsTrait { trait_ty, .. } => {
-                let helper = quote! {
-                    #[doc(hidden)]
-                    #[allow(non_snake_case)]
-                    fn #type_name_fn_name() -> &'static str {
-                        ::std::any::type_name::<#trait_ty>()
-                    }
-                };
-                (helper, vec![trait_ty.clone()])
-            }
-            InjectArgs::AsTraits { trait_tys, .. } => {
-                let first = &trait_tys[0];
-                let helper = quote! {
-                    #[doc(hidden)]
-                    #[allow(non_snake_case)]
-                    fn #type_name_fn_name() -> &'static str {
-                        ::std::any::type_name::<#first>()
-                    }
-                };
-                // Generate extra helpers for remaining traits
-                let extra: Vec<proc_macro2::TokenStream> = trait_tys[1..]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, ty)| {
-                        let hn = format_ident!("__rdi_type_name_{}_{}", name, i + 1);
-                        quote! {
-                            #[doc(hidden)]
-                            #[allow(non_snake_case)]
-                            fn #hn() -> &'static str {
-                                ::std::any::type_name::<#ty>()
-                            }
-                        }
-                    })
-                    .collect();
-                let all_helpers = quote! {
-                    #helper
-                    #(#extra)*
-                };
-                (all_helpers, trait_tys.clone())
-            }
-        };
-
-    let submissions = match &args {
-        InjectArgs::Plain { .. } => {
-            quote! {
-                rust_dicore::inventory::submit! {
-                    rust_dicore::ServiceRegistration {
-                        lifetime: #lt_ident,
-                        type_id: ::std::any::TypeId::of::<#name>(),
-                        type_name_fn: #type_name_fn_name,
-                        factory: #factory_name,
-                    }
-                }
+    let submission = quote! {
+        rust_dicore::inventory::submit! {
+            rust_dicore::ServiceRegistration {
+                lifetime: #lt_ident,
+                type_id: ::std::any::TypeId::of::<#name>(),
+                type_name_fn: #type_name_fn_name,
+                factory: #factory_name,
             }
         }
-        InjectArgs::AsTrait { trait_ty, .. } => {
-            quote! {
-                rust_dicore::inventory::submit! {
-                    rust_dicore::ServiceRegistration {
-                        lifetime: #lt_ident,
-                        type_id: ::std::any::TypeId::of::<#trait_ty>(),
-                        type_name_fn: #type_name_fn_name,
-                        factory: #factory_name,
-                    }
-                }
-            }
+    };
+
+    // Strip #[rdi(...)] helper attributes from fields before emitting the
+    // struct. Without #[derive(Inject)] on the struct, the compiler doesn't
+    // know `rdi` is a valid helper attribute and would reject it.
+    let mut stripped = struct_item.clone();
+    if let syn::Fields::Named(n) = &mut stripped.fields {
+        for field in n.named.iter_mut() {
+            field.attrs.retain(|a| !a.path().is_ident("rdi"));
         }
-        InjectArgs::AsTraits { .. } => {
-            let mut subs = Vec::new();
-            for (i, trait_ty) in trait_tys_for_subs.iter().enumerate() {
-                let helper = if i == 0 {
-                    type_name_fn_name.clone()
-                } else {
-                    format_ident!("__rdi_type_name_{}_{}", name, i)
-                };
-                subs.push(quote! {
-                    rust_dicore::inventory::submit! {
-                        rust_dicore::ServiceRegistration {
-                            lifetime: #lt_ident,
-                            type_id: ::std::any::TypeId::of::<#trait_ty>(),
-                            type_name_fn: #helper,
-                            factory: #factory_name,
-                        }
-                    }
-                });
+    }
+
+    Ok(quote! {
+        #stripped
+        #constructor
+        #type_name_helper
+        #factory
+        #submission
+    })
+}
+
+/// `#[inject]` on a trait impl: register as the trait type.
+///
+/// Extracts `Trait` and `Type` from `impl Trait for Type`, then generates a
+/// factory that calls `__rdi_construct_{Type}` (which must be provided by
+/// `#[derive(Inject)]` or `#[inject]` on the struct) and upcasts to
+/// `dyn Trait`.
+fn expand_inject_impl(
+    impl_item: &ItemImpl,
+    lifetime: LT,
+) -> syn::Result<proc_macro2::TokenStream> {
+    // Must be a trait impl: `impl Trait for Type`
+    let (not, trait_path, _) = impl_item.trait_.as_ref().ok_or_else(|| {
+        syn::Error::new_spanned(
+            impl_item,
+            "#[inject] on an impl block requires a trait impl: use `impl Trait for Type`",
+        )
+    })?;
+    if not.is_some() {
+        return Err(syn::Error::new_spanned(
+            impl_item,
+            "#[inject] does not support negative impls",
+        ));
+    }
+
+    // Extract the implementing type's identifier for function naming
+    let impl_ty = &impl_item.self_ty;
+    let type_ident = match &**impl_ty {
+        syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident.clone()),
+        _ => None,
+    }
+    .ok_or_else(|| syn::Error::new_spanned(impl_ty, "expected a path type"))?;
+
+    // Build a unique suffix from the trait's last segment to avoid collisions
+    // when the same struct implements multiple traits.
+    let trait_segment = trait_path.segments.last().unwrap();
+    let trait_suffix = &trait_segment.ident;
+
+    let constructor_fn = format_ident!("__rdi_construct_{}", type_ident);
+    let factory_name = format_ident!("__rdi_factory_{}_for_{}", type_ident, trait_suffix);
+    let type_name_fn_name =
+        format_ident!("__rdi_type_name_{}_for_{}", type_ident, trait_suffix);
+
+    let lt_ident = lt_to_token(lifetime);
+
+    // `dyn Trait` — register key
+    let trait_ty = quote! { dyn #trait_path };
+
+    let factory = quote! {
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+            let v: ::std::sync::Arc<#impl_ty> = #constructor_fn(resolver);
+            let v2: ::std::sync::Arc<#trait_ty> = v;
+            ::std::sync::Arc::new(v2)
+                as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
+        }
+    };
+
+    let type_name_helper = quote! {
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #type_name_fn_name() -> &'static str {
+            ::std::any::type_name::<#trait_ty>()
+        }
+    };
+
+    let submission = quote! {
+        rust_dicore::inventory::submit! {
+            rust_dicore::ServiceRegistration {
+                lifetime: #lt_ident,
+                type_id: ::std::any::TypeId::of::<#trait_ty>(),
+                type_name_fn: #type_name_fn_name,
+                factory: #factory_name,
             }
-            quote! { #(#subs)* }
         }
     };
 
     Ok(quote! {
-        #item
-        #constructor
+        #impl_item
         #type_name_helper
-        #(#factory_fns)*
-        #submissions
+        #factory
+        #submission
     })
+}
+
+fn lt_to_token(lt: LT) -> proc_macro2::TokenStream {
+    match lt {
+        LT::S => quote! { rust_dicore::ServiceLifetime::Singleton },
+        LT::Sc => quote! { rust_dicore::ServiceLifetime::Scoped },
+        LT::T => quote! { rust_dicore::ServiceLifetime::Transient },
+    }
 }
