@@ -64,6 +64,7 @@ let logger: Arc<Config> = provider.get();
 | **键控服务** | 同一类型的多个实例以字符串 key 区分 |
 | **跨 DLL 支持** | 为 cdylib 插件系统提供的命名服务注册表 |
 | **分层容器** | 通过 `ServiceProviderWrapper` 实现子优先解析 |
+| **Owned 解析** | `get_owned::<T>()` 返回 owned `T`，支持 `&mut self` 方法 — 无需 interior mutability |
 
 ### 什么时候用 rust-dicore？
 

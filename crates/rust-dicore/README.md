@@ -219,6 +219,9 @@ trait interface). This replaces the old `as = dyn Trait` /
 | `.get_all::<T>()` | `Vec<Arc<T>>` | All registered instances (keyed + unkeyed) |
 | `.get_named::<T>(name)` | `Arc<T>` | Named resolution (cross-DLL) |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | Named, returns `None` if missing |
+| `.get_owned::<T>()` | `T` | Owned instance; Singleton panics |
+| `.try_get_owned::<T>()` | `Option<T>` | `None` if unregistered or Singleton |
+| `.get_keyed_owned::<T>(key)` | `T` | Owned keyed instance; Singleton panics |
 | `.create_scope()` | `Scope` | New scope for scoped services |
 
 `T` can be a concrete type or `dyn Trait`:
@@ -228,6 +231,60 @@ let svc: Arc<MyService> = provider.get();
 let plugin: Arc<dyn IPlugin> = provider.get();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
+
+---
+
+### Owned service resolution (`&mut self` without interior mutability)
+
+`get::<T>()` returns `Arc<T>`, giving you only `&T` — you cannot call
+`&mut self` methods. For services that need mutable access (e.g. a
+`DbContext` with `save_changes(&mut self)`), use `get_owned::<T>()` to
+obtain an owned `T` instead of resorting to `RwLock` + `unsafe`:
+
+```rust
+struct DbContext { count: u32 }
+impl DbContext {
+    fn add(&mut self) { self.count += 1; }
+    fn total(&self) -> u32 { self.count }
+}
+
+let provider = ServiceCollection::new()
+    .transient(|_| Arc::new(DbContext { count: 0 }))
+    .build()
+    .unwrap();
+
+let mut ctx: DbContext = provider.get_owned();
+ctx.add();                 // ✓ &mut self — no RwLock, no unsafe
+assert_eq!(ctx.total(), 1);
+```
+
+| Lifetime | `get_owned` behavior |
+|----------|----------------------|
+| **Transient** | New instance each call ✓ |
+| **Scoped** | Bypasses cache, new instance each call ✓ |
+| **Singleton** | Panics (shared instance cannot be owned); use `try_get_owned` for `None` |
+
+**With `#[derive(Inject)]`**: a bare `T` field is auto-resolved as owned;
+`Arc<T>` fields stay shared. `Option<T>` → `try_get_owned`,
+`Option<Arc<T>>` → `try_get`:
+
+```rust
+#[derive(Inject)]
+struct Handler {
+    ctx: DbContext,           // owned  → get_owned
+    logger: Arc<Logger>,      // shared → get
+}
+// ...
+let mut h: Handler = provider.get_owned();
+h.ctx.add();                 // ✓ owned field is mutable
+```
+
+**Limitations**:
+- Singleton cannot be owned — `get_owned` panics, `try_get_owned` returns `None`.
+- Scoped `get_owned` bypasses the scope cache (each call is fresh). This is
+  intentional: owned `&mut self` is incompatible with scope-shared semantics.
+- Trait bound remains `T: Send + Sync + 'static` (reuses the existing factory,
+  no separate owned-factory path).
 
 ---
 

@@ -55,6 +55,51 @@ impl Scope {
         })
     }
 
+    /// Resolve owned `T` within this scope (bypass cache, fresh each call).
+    /// Panics if not registered or the service is Singleton.
+    pub fn get_owned<T: Send + Sync + 'static>(&self) -> T {
+        self.try_get_owned::<T>().unwrap_or_else(|| {
+            panic!(
+                "get_owned: not registered or Singleton: {}",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
+    /// Resolve owned `T`, returning `None` if not registered or Singleton.
+    pub fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T> {
+        let tid = TypeId::of::<T>();
+        let entry = self
+            .parent
+            .entries_by_tid(&tid)?
+            .iter()
+            .find(|e| e.key.is_none())?;
+        let arc_any = self.create_owned_any_by_entry(entry)?;
+        let arc_t = ServiceProvider::extract(arc_any)?;
+        Arc::try_unwrap(arc_t).ok()
+    }
+
+    /// Resolve owned keyed `T`. Panics if not found or Singleton.
+    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> T {
+        self.try_get_keyed_owned::<T>(key).unwrap_or_else(|| {
+            panic!(
+                "get_keyed_owned: not registered or Singleton: {}:{}",
+                std::any::type_name::<T>(),
+                key
+            )
+        })
+    }
+
+    /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
+    pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
+        let tid = TypeId::of::<T>();
+        let entries = self.parent.entries_by_tid(&tid)?;
+        let entry = entries.iter().find(|e| e.key.as_deref() == Some(key))?;
+        let arc_any = self.create_owned_any_by_entry(entry)?;
+        let arc_t = ServiceProvider::extract(arc_any)?;
+        Arc::try_unwrap(arc_t).ok()
+    }
+
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
         let tid = TypeId::of::<T>();
         if let Some(entries) = self.parent.entries_by_tid(&tid) {
@@ -117,6 +162,25 @@ impl Scope {
             }
         }
     }
+
+    /// Bypass cache and invoke the factory fresh (owned resolution only).
+    ///
+    /// - Singleton → `None` (shared singleton cannot be owned).
+    /// - Scoped/Transient → invoke factory directly without touching
+    ///   `scoped_cache`. The factory uses `self` (Scope) as resolver, so
+    ///   Scoped deps resolved transitively bind to this child scope (not the
+    ///   root), consistent with the Transient-in-child-scope fix.
+    fn create_owned_any_by_entry(
+        &self,
+        entry: &crate::entry::ServiceEntry,
+    ) -> Option<AnyService> {
+        match entry.lifetime {
+            ServiceLifetime::Singleton => None,
+            ServiceLifetime::Scoped | ServiceLifetime::Transient => {
+                Some((entry.factory)(self as &dyn IServiceResolver))
+            }
+        }
+    }
 }
 
 impl IServiceResolver for Scope {
@@ -135,6 +199,26 @@ impl IServiceResolver for Scope {
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let entry = self.parent.entry_by_str(key, variant)?;
         self.get_any_by_entry(entry)
+    }
+    fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        if let Some(entries) = self.parent.entries_by_str(key) {
+            for entry in entries {
+                if entry.key.is_none() {
+                    if let Some(r) = self.create_owned_any_by_entry(entry) {
+                        return Some(r);
+                    }
+                }
+            }
+        }
+        None
+    }
+    fn get_keyed_owned_any(
+        &self,
+        key: &str,
+        variant: &str,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        let entry = self.parent.entry_by_str(key, variant)?;
+        self.create_owned_any_by_entry(entry)
     }
 }
 

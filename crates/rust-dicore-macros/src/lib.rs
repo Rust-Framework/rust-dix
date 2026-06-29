@@ -26,25 +26,7 @@ fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStr
             Fields::Named(named) => {
                 let mut inits = Vec::new();
                 for field in named.named.iter() {
-                    let attrs = parse_ia(field);
-                    let fnm = field.ident.as_ref().unwrap();
-                    let (inner, _) = saw(&field.ty);
-                    let init = if attrs.skip {
-                        quote! {#fnm:Default::default()}
-                    } else if attrs.provider {
-                        quote! {#fnm:resolver.clone()}
-                    } else if attrs.optional {
-                        if let Some(k) = &attrs.key {
-                            quote! {#fnm:resolver.get_keyed_any(::std::any::type_name::<#inner>(),#k).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d))}
-                        } else {
-                            quote! {#fnm:resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d))}
-                        }
-                    } else if let Some(k) = &attrs.key {
-                        quote! {#fnm:resolver.get_keyed_any(::std::any::type_name::<#inner>(),#k).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d)).unwrap_or_else(||::std::panic!("keyed not found"))}
-                    } else {
-                        quote! {#fnm:resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a|a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d|::std::sync::Arc::clone(&*d)).unwrap_or_else(||::std::panic!("svc not registered"))}
-                    };
-                    inits.push(init);
+                    inits.push(gen_field_init(field));
                 }
                 quote! { #name { #(#inits),* } }
             }
@@ -58,40 +40,136 @@ fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStr
     )
 }
 
-/// Strip `Arc<T>` / `Option<Arc<T>>` to inner type `T`.
-fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
+/// Classify a field's type for injection strategy.
+///
+/// - `Arc`        → `Arc<T>`           : shared, resolve via `get_any` + downcast.
+/// - `OptionArc`  → `Option<Arc<T>>`   : optional shared, returns `Option<Arc<T>>`.
+/// - `Owned`      → bare `T`           : owned, resolve via `get_owned_any` + `try_unwrap`.
+/// - `OptionOwned`→ `Option<T>`        : optional owned, returns `Option<T>`.
+#[derive(Clone, Copy, PartialEq)]
+enum FieldKind {
+    Arc,
+    OptionArc,
+    Owned,
+    OptionOwned,
+}
+
+fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
     if let syn::Type::Path(p) = ty {
-        let l = p.path.segments.last().unwrap();
-        if l.ident == "Arc" {
-            if let syn::PathArguments::AngleBracketed(a) = &l.arguments {
-                if let Some(syn::GenericArgument::Type(i)) = a.args.first() {
-                    return (quote! {#i}, true);
+        if let Some(last) = p.path.segments.last() {
+            match last.ident.to_string().as_str() {
+                "Arc" => {
+                    if let Some(inner) = single_generic_type(last) {
+                        return (quote! {#inner}, FieldKind::Arc);
+                    }
                 }
-            }
-        }
-        if l.ident == "Option" {
-            if let syn::PathArguments::AngleBracketed(a) = &l.arguments {
-                if let Some(syn::GenericArgument::Type(syn::Type::Path(ip))) = a.args.first() {
-                    if ip
-                        .path
-                        .segments
-                        .last()
-                        .map(|s| s.ident == "Arc")
-                        .unwrap_or(false)
-                    {
-                        if let syn::PathArguments::AngleBracketed(ia) =
-                            &ip.path.segments.last().unwrap().arguments
-                        {
-                            if let Some(syn::GenericArgument::Type(t)) = ia.args.first() {
-                                return (quote! {#t}, true);
+                "Option" => {
+                    if let Some(inner_ty) = single_generic_type(last) {
+                        if let syn::Type::Path(ip) = inner_ty {
+                            if let Some(ilast) = ip.path.segments.last() {
+                                if ilast.ident == "Arc" {
+                                    if let Some(t) = single_generic_type(ilast) {
+                                        return (quote! {#t}, FieldKind::OptionArc);
+                                    }
+                                } else {
+                                    // Option<T> where T is not Arc → OptionOwned
+                                    return (quote! {#inner_ty}, FieldKind::OptionOwned);
+                                }
                             }
                         }
                     }
                 }
+                _ => {}
             }
         }
     }
-    (quote! {#ty}, false)
+    (quote! {#ty}, FieldKind::Owned)
+}
+
+fn single_generic_type(seg: &syn::PathSegment) -> Option<&syn::Type> {
+    if let syn::PathArguments::AngleBracketed(a) = &seg.arguments {
+        if let Some(syn::GenericArgument::Type(t)) = a.args.first() {
+            return Some(t);
+        }
+    }
+    None
+}
+
+/// Generate the field initializer expression for a single struct field.
+///
+/// Shared between `#[derive(Inject)]` and `#[inject]` on a struct to avoid
+/// duplicating the owned/Arc dispatch logic.
+fn gen_field_init(field: &Field) -> proc_macro2::TokenStream {
+    let attrs = parse_ia(field);
+    let fnm = field.ident.as_ref().unwrap();
+    let (inner, kind) = classify_field(&field.ty);
+
+    if attrs.skip {
+        return quote! { #fnm: ::std::default::Default::default() };
+    }
+    if attrs.provider {
+        return quote! { #fnm: resolver.clone() };
+    }
+
+    // Arc<T> extraction: downcast Arc<dyn Any> → Arc<Arc<T>> → clone inner Arc<T>.
+    let arc_extract = quote! {
+        .and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok())
+        .map(|d| ::std::sync::Arc::clone(&*d))
+    };
+    // Owned extraction: Arc<Arc<T>> → Arc<T> → try_unwrap → T.
+    let owned_extract = quote! {
+        .and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok())
+        .map(|d| ::std::sync::Arc::clone(&*d))
+        .and_then(|arc| ::std::sync::Arc::try_unwrap(arc).ok())
+    };
+
+    let key = &attrs.key;
+    match kind {
+        // Option<Arc<T>>: field type already Option, always Option-returning path.
+        FieldKind::OptionArc => {
+            if let Some(k) = key {
+                quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract }
+            } else {
+                quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract }
+            }
+        }
+        // Option<T>: field type already Option, always Option-returning owned path.
+        FieldKind::OptionOwned => {
+            if let Some(k) = key {
+                quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract }
+            } else {
+                quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract }
+            }
+        }
+        // Arc<T>: attr-first (preserve existing behavior, incl. #[rdi(optional)]).
+        FieldKind::Arc => {
+            if attrs.optional {
+                if let Some(k) = key {
+                    quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract }
+                } else {
+                    quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract }
+                }
+            } else if let Some(k) = key {
+                quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract .unwrap_or_else(|| ::std::panic!("keyed not found")) }
+            } else {
+                quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract .unwrap_or_else(|| ::std::panic!("svc not registered")) }
+            }
+        }
+        // bare T: attr-first owned path (new).
+        FieldKind::Owned => {
+            if attrs.optional {
+                if let Some(k) = key {
+                    quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract }
+                } else {
+                    quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract }
+                }
+            } else if let Some(k) = key {
+                quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract .unwrap_or_else(|| ::std::panic!("keyed owned not found")) }
+            } else {
+                quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract .unwrap_or_else(|| ::std::panic!("owned svc not registered or Singleton")) }
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -397,26 +475,7 @@ fn expand_inject_struct(
         syn::Fields::Named(n) => {
             let mut inits = Vec::new();
             for field in n.named.iter() {
-                let attrs = parse_ia(field);
-                let fnm = field.ident.as_ref().unwrap();
-                let (inner, _) = saw(&field.ty);
-
-                let init = if attrs.skip {
-                    quote! { #fnm: ::std::default::Default::default() }
-                } else if attrs.provider {
-                    quote! { #fnm: resolver.clone() }
-                } else if attrs.optional {
-                    if let Some(k) = &attrs.key {
-                        quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
-                    } else {
-                        quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)) }
-                    }
-                } else if let Some(k) = &attrs.key {
-                    quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("keyed not found")) }
-                } else {
-                    quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()).and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok()).map(|d| ::std::sync::Arc::clone(&*d)).unwrap_or_else(|| ::std::panic!("svc not registered")) }
-                };
-                inits.push(init);
+                inits.push(gen_field_init(field));
             }
             quote! { #name { #(#inits),* } }
         }

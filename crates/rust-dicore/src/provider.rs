@@ -9,6 +9,11 @@ use std::sync::{Arc, RwLock};
 
 /// Validation resolver that tracks resolution chains for cycle detection
 /// and captive dependency detection (Singleton depending on Scoped).
+///
+/// Both checks run during `build()` (Phase 0) by executing singleton factories
+/// through this resolver. Captive detection covers the `get_any` (Arc) and
+/// `get_owned_any` (owned) paths — see [`Self::check_captive_dependency`] for
+/// the full mechanism, rationale, and the validation/runtime asymmetry.
 struct ValidationResolver<'a> {
     store: &'a ServiceStore,
     /// Cache keys currently being resolved (for cycle detection).
@@ -58,9 +63,55 @@ impl<'a> ValidationResolver<'a> {
             .unwrap_or_else(|| format!("service {}", cache_key))
     }
 
-    /// Captive dependency 检测：若当前解析链中存在 Singleton 祖先，
-    /// 而当前要解析的服务是 Scoped，则通过 panic 传递
-    /// `RdiError::SingletonDependsOnScoped`，由 `validate_dependencies` 捕获。
+    /// Captive dependency（囚徒依赖）检测。
+    ///
+    /// # 什么是 captive dependency
+    ///
+    /// 当一个 **Singleton** 服务依赖一个 **Scoped** 服务时，Scoped 实例会被
+    /// Singleton 永久捕获（captive）：Singleton 在 build 阶段创建并全局缓存，
+    /// 此时解析出的 Scoped 实例绑定到 root scope 的 `root_scoped_cache`，
+    /// 此后所有子 scope 都共享同一份 Scoped 实例——彻底丧失 scope 隔离语义。
+    ///
+    /// 这违背了 Scoped 生命周期"每 scope 独立"的设计契约，是典型的 DI 反模式，
+    /// 必须在 build 阶段拒绝。
+    ///
+    /// # 检测原理
+    ///
+    /// `stack` 字段记录当前解析链中每个节点的 `(cache_key, lifetime)`。
+    /// 每当解析一个服务时：
+    /// 1. 先调用本方法检查 captive（在执行工厂、压栈之前）
+    /// 2. 若当前 `entry` 是 Scoped，回溯 `stack` 查找是否存在 Singleton 祖先
+    /// 3. 命中则通过 `panic_any(RdiError::SingletonDependsOnScoped)` 传递错误
+    ///
+    /// 回溯查找的是**任意 Singleton 祖先**（非仅直接父节点），因此间接链
+    /// `Singleton → Transient → Scoped` 也能被检出。
+    ///
+    /// # 为何只检测 Scoped，不检测 Transient
+    ///
+    /// Transient 每次解析新建实例、永不缓存，不会被 Singleton "捕获"——
+    /// Singleton 持有的那一份 Transient 本就无共享语义，不构成 captive 问题。
+    /// 仅 Scoped 因其"scope 内共享 + 缓存"语义才会被 captive 破坏。
+    ///
+    /// # panic 传递机制
+    ///
+    /// 检测命中时通过 `std::panic::panic_any(RdiError::SingletonDependsOnScoped)`
+    /// 抛出错误值，由上层 [`Self::validate_dependencies`] 的
+    /// `std::panic::catch_unwind` 捕获，downcast 为 `RdiError` 后转为 `Err` 返回。
+    /// 这种 panic-as-error 模式是为了穿透工厂闭包的递归调用栈。
+    ///
+    /// # validation 与 runtime 的不对称（owned 路径）
+    ///
+    /// 本方法在 `get_any`（Arc 解析）和 `get_owned_any`（owned 解析）路径
+    /// **均会调用**。owned 路径虽然绕过缓存，但依赖图遍历不绕过——
+    /// ValidationResolver 的 `get_owned_any` 对 Singleton 也调工厂以遍历
+    /// 依赖图，从而检测 cycle 与 captive。这是 sound 的：
+    /// validation 是静态分析（遍历图找问题），runtime 才强制 owned-Singleton 禁令。
+    ///
+    /// # 参考
+    ///
+    /// - 对应错误：[`RdiError::SingletonDependsOnScoped`](crate::error::RdiError::SingletonDependsOnScoped)
+    /// - 调用点：`get_any` / `get_keyed_any` / `get_owned_any` / `get_keyed_owned_any`
+    /// - 测试：`tests/validation.rs`（Arc 路径）、`tests/owned.rs::captive_singleton_depends_on_scoped_owned_rejected`（owned 路径）
     fn check_captive_dependency(&self, entry: &ServiceEntry) {
         if entry.lifetime == ServiceLifetime::Scoped {
             let stack = self.stack.read().unwrap();
@@ -176,6 +227,85 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         if entry.lifetime == ServiceLifetime::Singleton {
             self.cache.prefill(entry.cache_key, result.clone());
         }
+
+        Some(result)
+    }
+
+    /// Owned 解析（validation 路径）：与 `get_any` 相同的 captive/cycle 检测，
+    /// 但**不读写缓存**（owned 永不缓存，符合"仅缓存 Singleton"约定）。
+    ///
+    /// 与 runtime `get_owned_any` 的关键差异：此处对 Singleton 也调工厂
+    /// （遍历依赖图以检测 cycle/captive），runtime 才拒绝 owned-Singleton。
+    /// 此不对称是 sound 的：validation 是静态分析，runtime 强制 owned 禁令。
+    fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
+        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
+
+        // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
+        self.check_captive_dependency(entry);
+
+        // Check for cycle
+        if self.resolving.read().unwrap().contains(&entry.cache_key) {
+            let type_name = self.get_type_name(entry.cache_key);
+            let chain: Vec<String> = self.resolving
+                .read()
+                .unwrap()
+                .iter()
+                .map(|&ck| self.get_type_name(ck))
+                .collect();
+            let cycle_desc = if chain.is_empty() {
+                type_name.clone()
+            } else {
+                format!("{} -> {}", chain.join(" -> "), type_name)
+            };
+            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+        }
+
+        self.resolving.write().unwrap().insert(entry.cache_key);
+        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
+        let result = (entry.factory)(self as &dyn IServiceResolver);
+        self.stack.write().unwrap().pop();
+        self.resolving.write().unwrap().remove(&entry.cache_key);
+
+        // owned 永不缓存。
+        Some(result)
+    }
+
+    fn get_keyed_owned_any(
+        &self,
+        key: &str,
+        variant: &str,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
+        let entry = self
+            .store
+            .get(tid)?
+            .iter()
+            .find(|e| e.key.as_deref() == Some(variant))?;
+
+        self.check_captive_dependency(entry);
+
+        if self.resolving.read().unwrap().contains(&entry.cache_key) {
+            let type_name = self.get_type_name(entry.cache_key);
+            let chain: Vec<String> = self.resolving
+                .read()
+                .unwrap()
+                .iter()
+                .map(|&ck| self.get_type_name(ck))
+                .collect();
+            let cycle_desc = if chain.is_empty() {
+                type_name.clone()
+            } else {
+                format!("{} -> {}", chain.join(" -> "), type_name)
+            };
+            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+        }
+
+        self.resolving.write().unwrap().insert(entry.cache_key);
+        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
+        let result = (entry.factory)(self as &dyn IServiceResolver);
+        self.stack.write().unwrap().pop();
+        self.resolving.write().unwrap().remove(&entry.cache_key);
 
         Some(result)
     }
@@ -333,6 +463,50 @@ impl ServiceProvider {
         })
     }
 
+    /// Resolve owned `T` (bypass cache, fresh each call). Panics if not
+    /// registered or the service is Singleton (shared instance cannot own).
+    pub fn get_owned<T: Send + Sync + 'static>(&self) -> T {
+        self.try_get_owned::<T>().unwrap_or_else(|| {
+            panic!(
+                "get_owned: not registered or Singleton: {}",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
+    /// Resolve owned `T`, returning `None` if not registered or Singleton.
+    pub fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T> {
+        let tid = TypeId::of::<T>();
+        let entry = self.store.get(&tid)?.iter().find(|e| e.key.is_none())?;
+        let arc_any = self.create_owned_any_by_entry(entry)?;
+        let arc_t = Self::extract(arc_any)?;
+        Arc::try_unwrap(arc_t).ok()
+    }
+
+    /// Resolve owned keyed `T`. Panics if not found or Singleton.
+    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> T {
+        self.try_get_keyed_owned::<T>(key).unwrap_or_else(|| {
+            panic!(
+                "get_keyed_owned: not registered or Singleton: {}:{}",
+                std::any::type_name::<T>(),
+                key
+            )
+        })
+    }
+
+    /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
+    pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
+        let tid = TypeId::of::<T>();
+        let entry = self
+            .store
+            .get(&tid)?
+            .iter()
+            .find(|e| e.key.as_deref() == Some(key))?;
+        let arc_any = self.create_owned_any_by_entry(entry)?;
+        let arc_t = Self::extract(arc_any)?;
+        Arc::try_unwrap(arc_t).ok()
+    }
+
     /// Return all registered instances of the given type.
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
         let tid = TypeId::of::<T>();
@@ -420,6 +594,26 @@ impl ServiceProvider {
         }
     }
 
+    /// Bypass cache and invoke the factory fresh (owned resolution only).
+    ///
+    /// - Singleton → `None` (shared singleton cannot be owned).
+    /// - Scoped/Transient → invoke factory directly without touching
+    ///   `singleton_cache` / `root_scoped_cache`. The factory uses `self`
+    ///   (ServiceProvider, i.e. root scope) as resolver, so Scoped deps
+    ///   resolved transitively bind to the root scope (consistent with
+    ///   `get_any_by_entry`'s Scoped root-cache semantics).
+    pub(crate) fn create_owned_any_by_entry(
+        &self,
+        entry: &ServiceEntry,
+    ) -> Option<AnyService> {
+        match entry.lifetime {
+            ServiceLifetime::Singleton => None,
+            ServiceLifetime::Scoped | ServiceLifetime::Transient => {
+                Some((entry.factory)(self as &dyn IServiceResolver))
+            }
+        }
+    }
+
     /// Extract `Arc<T>` from `Arc<Arc<T>>` stored inside `Arc<dyn Any>`.
     /// The factory double-wraps: inner `Arc<T>`, outer `Arc<dyn Any>`.
     pub(crate) fn extract<T: ?Sized + Send + Sync + 'static>(
@@ -501,6 +695,19 @@ impl IServiceResolver for ServiceProvider {
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let entry = self.entry_by_str(key, variant)?;
         self.get_any_by_entry(entry)
+    }
+    fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        let tid = self.type_map.get(key)?;
+        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
+        self.create_owned_any_by_entry(entry)
+    }
+    fn get_keyed_owned_any(
+        &self,
+        key: &str,
+        variant: &str,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        let entry = self.entry_by_str(key, variant)?;
+        self.create_owned_any_by_entry(entry)
     }
 }
 

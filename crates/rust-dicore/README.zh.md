@@ -206,6 +206,9 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 | `.get_all::<T>()` | `Vec<Arc<T>>` | 所有已注册实例 |
 | `.get_named::<T>(name)` | `Arc<T>` | 命名解析（跨 DLL） |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | 命名解析，不 panic |
+| `.get_owned::<T>()` | `T` | Owned 实例；Singleton 会 panic |
+| `.try_get_owned::<T>()` | `Option<T>` | 未注册或 Singleton 返回 `None` |
+| `.get_keyed_owned::<T>(key)` | `T` | Owned 键控实例；Singleton 会 panic |
 | `.create_scope()` | `Scope` | 新建作用域 |
 
 `T` 支持具体类型和 trait object：
@@ -215,6 +218,58 @@ let svc: Arc<MyService> = provider.get();
 let plugin: Arc<dyn IPlugin> = provider.get();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
+
+---
+
+### Owned 服务解析（`&mut self` 无需 interior mutability）
+
+`get::<T>()` 返回 `Arc<T>`，只能拿到 `&T`，无法调用 `&mut self` 方法。
+对于需要可变访问的服务（如带 `save_changes(&mut self)` 的 `DbContext`），
+用 `get_owned::<T>()` 获取 owned `T`，无需 `RwLock` + `unsafe`：
+
+```rust
+struct DbContext { count: u32 }
+impl DbContext {
+    fn add(&mut self) { self.count += 1; }
+    fn total(&self) -> u32 { self.count }
+}
+
+let provider = ServiceCollection::new()
+    .transient(|_| Arc::new(DbContext { count: 0 }))
+    .build()
+    .unwrap();
+
+let mut ctx: DbContext = provider.get_owned();
+ctx.add();                 // ✓ &mut self — 无锁无 unsafe
+assert_eq!(ctx.total(), 1);
+```
+
+| 生命周期 | `get_owned` 行为 |
+|----------|----------------|
+| **Transient** | 每次调用新建实例 ✓ |
+| **Scoped** | 绕过缓存，每次调用新建 ✓ |
+| **Singleton** | panic（共享实例无法 owned）；用 `try_get_owned` 返回 `None` |
+
+**配合 `#[derive(Inject)]`**：裸 `T` 字段自动按 owned 解析；
+`Arc<T>` 字段保持共享。`Option<T>` → `try_get_owned`，
+`Option<Arc<T>>` → `try_get`：
+
+```rust
+#[derive(Inject)]
+struct Handler {
+    ctx: DbContext,           // owned  → get_owned
+    logger: Arc<Logger>,      // shared → get
+}
+// ...
+let mut h: Handler = provider.get_owned();
+h.ctx.add();                 // ✓ owned 字段可变
+```
+
+**限制说明**：
+- Singleton 不可 owned —— `get_owned` panic，`try_get_owned` 返回 `None`。
+- Scoped 的 `get_owned` 绕过作用域缓存（每次 fresh）。这是有意为之：
+  owned `&mut self` 与 scope 共享语义不兼容。
+- Trait bound 保持 `T: Send + Sync + 'static`（复用现有工厂，无独立 owned 工厂路径）。
 
 ---
 

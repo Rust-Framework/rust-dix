@@ -275,6 +275,54 @@ struct Handler {
 }
 ```
 
+## 陷阱 9：Owned 服务解析误用
+
+### 现象
+
+```
+panic: get_owned: not registered or Singleton: DbContext
+```
+
+或：期望 Scoped 的 `get_owned` 复用缓存，但每次都拿到新实例。
+
+### 原因
+
+`get_owned::<T>()` 返回 owned `T`（非 `Arc<T>`），语义与 `get` 不同：
+
+1. **Singleton 不可 owned**：Singleton 全局共享，refcount 恒 >1，无法 `try_unwrap`。
+   `get_owned` 对 Singleton 直接 panic（`try_get_owned` 返回 `None`）。
+2. **Scoped owned 绕过缓存**：`get_owned` 对 Scoped 绕过 `scoped_cache` /
+   `root_scoped_cache`，每次调用创建新实例。这是有意为之——owned `&mut self`
+   与 scope 共享语义不兼容。
+3. **宏裸 T 字段未注册或为 Singleton**：`#[derive(Inject)]` 的裸 `T` 字段
+   走 owned 路径，若该类型未注册或注册为 Singleton，构造时 panic。
+
+```rust
+// ❌ DbContext 注册为 Singleton，无法 owned
+.singleton(|_| Arc::new(DbContext::new()))
+// ...
+let ctx: DbContext = provider.get_owned();  // panic
+
+// ❌ 期望 Scoped owned 缓存复用（实际每次新建）
+.scoped(|_| Arc::new(DbContext::new()))
+let a = provider.get_owned::<DbContext>();
+let b = provider.get_owned::<DbContext>();
+// a、b 是不同实例（绕过缓存）
+```
+
+### 排查
+
+- 需要 `&mut self` 的服务（如 DbContext）应注册为 **Transient 或 Scoped**，不要 Singleton。
+- 若需共享 + 可变，用 `Arc<RwLock<T>>`（interior mutability）而非 `get_owned`。
+- `#[derive(Inject)]` 裸 `T` 字段：确保对应类型已注册为 Transient/Scoped。
+
+```rust
+// ✅ DbContext 注册为 Transient，可 owned
+.transient(|_| Arc::new(DbContext::new()))
+let mut ctx: DbContext = provider.get_owned();
+ctx.save_changes();  // ✓ &mut self
+```
+
 ## 排查速查表
 
 | 现象 | 可能原因 | 排查方向 |
@@ -287,6 +335,8 @@ struct Handler {
 | 编译失败 | 元组结构体 | 改命名结构体 |
 | `duplicate key` | key 重复 | 确保 key 唯一 |
 | `svc not registered` | 字段类型未注册 | 注册所有依赖 |
+| `get_owned: ... Singleton` | 对 Singleton 调 `get_owned` | 改用 Transient/Scoped，或用 `try_get_owned` 取 `None` |
+| `get_owned` 每次不同实例 | Scoped owned 绕过缓存（设计如此） | 需共享用 `get()`，需 `&mut self` 用 `get_owned()` |
 
 ---
 

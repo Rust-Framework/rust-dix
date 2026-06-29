@@ -53,6 +53,117 @@ pub trait IServiceResolver: Send + Sync {
         self.get_keyed_any(std::any::type_name::<T>(), variant)
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
     }
+
+    /// Type-erased owned resolution: bypass cache, call factory fresh, return
+    /// `Arc<dyn Any + Send + Sync>` (concrete `Arc<Arc<T>>`).
+    ///
+    /// - Singleton → `None` (shared singleton cannot be owned).
+    /// - Scoped/Transient → factory invoked directly (no cache read/write),
+    ///   caller downcasts + `Arc::try_unwrap` to obtain owned `T`.
+    ///
+    /// Default `None` keeps external implementors backward-compatible.
+    fn get_owned_any(&self, _key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
+    fn get_keyed_owned_any(
+        &self,
+        _key: &str,
+        _variant: &str,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
+
+    /// Resolve owned `T` (bypass cache, fresh each call). Panics if not
+    /// registered or the service is Singleton (shared instance cannot own).
+    fn get_owned<T: Send + Sync + 'static>(&self) -> T
+    where
+        Self: Sized,
+    {
+        let arc_any = self
+            .get_owned_any(std::any::type_name::<T>())
+            .unwrap_or_else(|| {
+                panic!(
+                    "get_owned: not registered or Singleton: {}",
+                    std::any::type_name::<T>()
+                )
+            });
+        let arc_t: Arc<T> = arc_any
+            .downcast::<Arc<T>>()
+            .ok()
+            .map(|d| Arc::clone(&*d))
+            .unwrap_or_else(|| {
+                panic!(
+                    "get_owned: type mismatch: {}",
+                    std::any::type_name::<T>()
+                )
+            });
+        Arc::try_unwrap(arc_t).unwrap_or_else(|_| {
+            panic!(
+                "get_owned: {} is shared (refcount > 1)",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
+    /// Resolve owned `T`, returning `None` if not registered or Singleton.
+    fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T>
+    where
+        Self: Sized,
+    {
+        let arc_any = self.get_owned_any(std::any::type_name::<T>())?;
+        let arc_t: Arc<T> = arc_any
+            .downcast::<Arc<T>>()
+            .ok()
+            .map(|d| Arc::clone(&*d))?;
+        Arc::try_unwrap(arc_t).ok()
+    }
+
+    /// Resolve owned keyed `T`. Panics if not found or Singleton.
+    fn get_keyed_owned<T: Send + Sync + 'static>(&self, variant: &str) -> T
+    where
+        Self: Sized,
+    {
+        let arc_any = self
+            .get_keyed_owned_any(std::any::type_name::<T>(), variant)
+            .unwrap_or_else(|| {
+                panic!(
+                    "get_keyed_owned: not registered or Singleton: {}:{}",
+                    std::any::type_name::<T>(),
+                    variant
+                )
+            });
+        let arc_t: Arc<T> = arc_any
+            .downcast::<Arc<T>>()
+            .ok()
+            .map(|d| Arc::clone(&*d))
+            .unwrap_or_else(|| {
+                panic!(
+                    "get_keyed_owned: type mismatch: {}:{}",
+                    std::any::type_name::<T>(),
+                    variant
+                )
+            });
+        Arc::try_unwrap(arc_t).unwrap_or_else(|_| {
+            panic!(
+                "get_keyed_owned: {}:{} is shared (refcount > 1)",
+                std::any::type_name::<T>(),
+                variant
+            )
+        })
+    }
+
+    /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
+    fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, variant: &str) -> Option<T>
+    where
+        Self: Sized,
+    {
+        let arc_any = self.get_keyed_owned_any(std::any::type_name::<T>(), variant)?;
+        let arc_t: Arc<T> = arc_any
+            .downcast::<Arc<T>>()
+            .ok()
+            .map(|d| Arc::clone(&*d))?;
+        Arc::try_unwrap(arc_t).ok()
+    }
 }
 
 pub struct ServiceEntry {

@@ -62,6 +62,7 @@ rust-dicore = "0.4"
 | **Keyed services** | Multiple instances of the same type distinguished by a string key |
 | **Cross-DLL support** | Named service registry for cdylib plugin systems |
 | **Layered containers** | Child-first resolution via `ServiceProviderWrapper` |
+| **Owned resolution** | `get_owned::<T>()` returns owned `T` for `&mut self` methods — no interior mutability needed |
 
 ## When should you use rust-dicore?
 
