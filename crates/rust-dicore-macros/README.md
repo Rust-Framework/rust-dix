@@ -21,7 +21,7 @@ as possible.
 
 ```toml
 [dependencies]
-rust-dicore = "0.3"       # re-exports all macros — you usually don't need rust-dicore-macros directly
+rust-dicore = "0.4"       # re-exports all macros — you usually don't need rust-dicore-macros directly
 ```
 
 > **Note**: You rarely need to add `rust-dicore-macros` as a direct dependency.

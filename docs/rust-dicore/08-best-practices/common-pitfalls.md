@@ -62,26 +62,28 @@ if let Some(gateway) = provider.try_get_keyed::<dyn IPayGateway>("wechat") {
 
 ### 现象
 
-Scoped 服务在不同 Scope 返回不同实例，但 Singleton 内部状态异常。
+`build()` 返回 `RdiError::SingletonDependsOnScoped` 错误，容器构建失败。
 
 ### 原因
 
-Singleton 服务依赖了 Scoped 服务：
+Singleton 服务依赖了 Scoped 服务（captive dependency 反模式）。
+0.4.0 起，build 阶段会检测此反模式并拒绝构建：
 
 ```rust
 #[rust_dicore::inject(singleton)]
 struct GlobalService {
-    session: Arc<Session>,  // Session 注册为 Scoped
+    session: Arc<Session>,  // Session 注册为 Scoped → build 报错
 }
 
-// 从根 Provider 解析
-let global: Arc<GlobalService> = provider.get();
-global.session.id();  // 每次可能不同（等价 Transient）
+// build() 返回 Err(RdiError::SingletonDependsOnScoped { .. })
 ```
+
+Singleton 会永久持有 Scoped 实例，导致后续 scope 无法获得新的 Scoped 实例。
+间接依赖链（`Singleton → Transient → Scoped`）同样会被检测拒绝。
 
 ### 排查
 
-检查 Singleton 的字段依赖：
+检查 Singleton 的字段依赖，确保只依赖 Singleton：
 
 ```rust
 // ✅ Singleton 只依赖 Singleton
@@ -136,15 +138,15 @@ impl ServiceA {
 }
 ```
 
-## 陷阱 5：Scope 语义丢失
+## 陷阱 5：根 Scope 与子 Scope 语义混淆
 
 ### 现象
 
-Scoped 服务每次解析返回不同实例。
+期望从根 Provider 每次解析 Scoped 都得到新实例，但实际拿到的是同一实例；或期望根级 Scoped 跨请求隔离，但实例被永久持有。
 
 ### 原因
 
-从根 Provider 解析 Scoped 服务：
+0.4.0 起，`ServiceProvider` 本身即 root scope。从根 Provider 解析 Scoped 服务时，实例缓存在 `root_scoped_cache`，**后续根级解析返回同一实例**（等同应用级单例），不会每次新建：
 
 ```rust
 ServiceCollection::new()
@@ -152,19 +154,23 @@ ServiceCollection::new()
     .build()
     .unwrap();
 
-let s1: Arc<Session> = provider.get();  // 根 Provider → 等价 Transient
-let s2: Arc<Session> = provider.get();  // s1 != s2
+let s1: Arc<Session> = provider.get();  // 根 Provider → 缓存在 root_scoped_cache
+let s2: Arc<Session> = provider.get();  // s1 == s2（同一根 scope 实例）
 ```
 
 ### 排查
 
-确保从 Scope 解析 Scoped 服务：
+需要请求级隔离时，必须创建子 `Scope`：
 
 ```rust
 let scope = provider.create_scope();
 let s1: Arc<Session> = scope.get();
 let s2: Arc<Session> = scope.get();
-// s1 == s2（Scope 内缓存）
+// s1 == s2（子 Scope 内缓存）
+
+let scope2 = provider.create_scope();
+let s3: Arc<Session> = scope2.get();
+// s3 != s1（跨子 Scope 独立）
 ```
 
 ## 陷阱 6：过程宏编译失败
@@ -275,7 +281,8 @@ struct Handler {
 |------|---------|---------|
 | `service not registered` | TypeId 不匹配 | 检查注册是否 `::<dyn Trait>` |
 | `keyed service not registered` | key 错误或未注册 | 检查 key 拼写 |
-| Scoped 行为异常 | Singleton 依赖 Scoped | 检查生命周期依赖 |
+| `SingletonDependsOnScoped` | Singleton 依赖 Scoped | build 阶段已拒绝，改 Singleton 只依赖 Singleton |
+| 根级 Scoped 不随请求变化 | root_scoped_cache 持久缓存 | 改用 `provider.create_scope()` 子 Scope 解析 |
 | 栈溢出 | 循环依赖 | 重构或延迟解析 |
 | 编译失败 | 元组结构体 | 改命名结构体 |
 | `duplicate key` | key 重复 | 确保 key 唯一 |

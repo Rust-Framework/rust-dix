@@ -29,7 +29,7 @@
 | 全局配置、连接池 | Singleton |
 | 请求上下文、事务 | Scoped |
 | 无状态轻量服务 | Transient |
-| 禁止 Singleton 依赖 Scoped | 编译期无法检测，运行时行为异常 |
+| 禁止 Singleton 依赖 Scoped | build 阶段检测并拒绝（`RdiError::SingletonDependsOnScoped`） |
 
 ### DI 容器使用
 

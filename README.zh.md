@@ -30,7 +30,7 @@ Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框�
 
 ```toml
 [dependencies]
-rust-dicore = "0.3"
+rust-dicore = "0.4"
 ```
 
 ```rust

@@ -206,9 +206,9 @@ pub struct GlobalService {
 ```
 
 **问题**：
-- Scoped 在根 Provider 解析时等价于 Transient
-- Scope 语义被破坏
-- 实例生命周期混乱
+- 0.4.0 起 build 阶段直接拒绝，返回 `RdiError::SingletonDependsOnScoped`
+- Singleton 会永久持有 Scoped 实例（captive dependency），破坏 scope 隔离语义
+- 间接依赖链（`Singleton → Transient → Scoped`）同样被检测拒绝
 
 ### ✅ 正确做法
 
@@ -269,9 +269,11 @@ fn main() {
 
 ---
 
-## 反模式 8：根 Provider 解析 Scoped
+## 反模式 8：根 Provider 解析 Scoped 期望每请求独立
 
-### ❌ 错误做法
+### ⚠️ 语义澄清
+
+0.4.0 起，`ServiceProvider` 本身即 root scope。从根 Provider 解析 Scoped 服务时，实例缓存在 `root_scoped_cache` 中，**后续所有根级解析返回同一实例**（等同于应用级单例）。
 
 ```rust
 // Session 注册为 Scoped
@@ -280,24 +282,29 @@ ServiceCollection::new()
     .build()
     .unwrap();
 
-// 从根 Provider 解析
-let session: Arc<Session> = provider.get();  // 等价于 Transient
-let session2: Arc<Session> = provider.get(); // 每次不同实例
+// 从根 Provider 解析 — 缓存在 root_scoped_cache
+let session: Arc<Session> = provider.get();
+let session2: Arc<Session> = provider.get();
+// session 与 session2 是同一实例（根 scope 缓存）
 ```
 
-**问题**：
-- Scoped 语义丢失
-- Scope 内缓存失效
-- 请求上下文混乱
+**反模式**：期望根 Provider 每次 `get::<Scoped>()` 返回不同实例（误以为是 Transient 语义）。
+**问题**：根 scope 缓存永远不会释放，请求级数据被永久持有，无法实现"每请求一个 Session"。
 
 ### ✅ 正确做法
 
+需要请求级隔离时，必须从子 `Scope` 解析：
+
 ```rust
-// 从 Scope 解析 Scoped 服务
+// 从子 Scope 解析 Scoped 服务
 let scope = provider.create_scope();
 let session1: Arc<Session> = scope.get();
 let session2: Arc<Session> = scope.get();
-// session1 与 session2 是同一实例（Scope 内缓存）
+// session1 与 session2 是同一实例（子 Scope 内缓存）
+
+let scope2 = provider.create_scope();
+let session3: Arc<Session> = scope2.get();
+// session3 与 session1 不同（跨 Scope 独立）
 ```
 
 ---

@@ -16,15 +16,15 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.3"
+rust-dicore = "0.4"
 ```
 
 如果使用过程宏：
 
 ```toml
 [dependencies]
-rust-dicore = "0.3"
-rust-dicore-macros = "0.3"
+rust-dicore = "0.4"
+rust-dicore-macros = "0.4"
 ```
 
 ## 第一个 DI 容器

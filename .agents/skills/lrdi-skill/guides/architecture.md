@@ -20,10 +20,12 @@ LRDI 受 Microsoft.Extensions.DependencyInjection (MEDI) 启发，核心设计�
 - .build() 将 descriptors 转换为 ServiceStore 并构建 ServiceProvider
 
 ### ServiceProvider
-- 根容器，持有 ServiceStore、type_map（type_name→TypeId）、singleton_cache（RwLock<HashMap>）、named（RwLock<HashMap>）
+- 根容器，持有 ServiceStore、type_map（type_name→TypeId）、singleton_cache（LazyCache）、root_scoped_cache（LazyCache）、named（RwLock<HashMap>）
+- **本身即 root scope**：从根解析 Scoped 服务时实例缓存在 `root_scoped_cache`（与子 Scope 的 `scoped_cache` 隔离）
+- 构建时执行 captive dependency 检测：拒绝 `Singleton → Scoped` 直接或间接依赖
 - 构建时执行两阶段 singleton 初始化
 - Phase 1: 收集所有 singleton entries（按 cache_key 索引）
-- Phase 2: 逐个执行工厂，若工厂引用尚未初始化的 singleton，通过 RwLock 的 lazy fallback 按需执行
+- Phase 2: 逐个执行工厂并通过 `LazyCache::get_or_init_with` 写入 singleton_cache（per-key OnceLock，多线程下工厂只执行一次）；若工厂引用尚未初始化的 singleton，惰性执行并回填缓存
 - 构建完成后不可变（注册不再支持）
 
 ### ServiceStore
@@ -32,10 +34,10 @@ LRDI 受 Microsoft.Extensions.DependencyInjection (MEDI) 启发，核心设计�
 - ServiceFactory = Arc<dyn Fn(&dyn IServiceResolver) -> Arc<dyn Any + Send + Sync> + Send + Sync>
 
 ### Scope
-- 持有 Arc<ServiceProvider>（父容器引用）和 scoped_cache（RwLock<HashMap>）
-- Singleton 解析：委托父容器
-- Transient 解析：每次执行工厂，不缓存
-- Scoped 解析：在 scoped_cache 中缓存，首次执行工厂
+- 持有 Arc<ServiceProvider>（父容器引用）和 scoped_cache（LazyCache）
+- Singleton 解析：委托父容器（从 singleton_cache 读取）
+- Transient 解析：执行 `(entry.factory)(self)`，用 `self`（Scope）解析依赖，确保 Transient 内的 Scoped 依赖绑定到当前子 scope（而非根 root_scoped_cache）
+- Scoped 解析：通过 `scoped_cache.get_or_init_with(cache_key, factory)` 缓存，per-key OnceLock 保证多线程下工厂只执行一次
 - Scope drop 时，scoped_cache 自然释放（Rust 无析构回调）
 
 ### ServiceProviderWrapper
@@ -95,7 +97,8 @@ LRDI 受 Microsoft.Extensions.DependencyInjection (MEDI) 启发，核心设计�
     → 遍历 descriptors，按 TypeId 分组为 HashMap<TypeId, Vec<ServiceEntry>>
     → 构建 type_map（type_name → TypeId）
     → 构建 ServiceProvider
-    → 两阶段 Singleton 初始化
+    → captive dependency 检测：拒绝 Singleton → Scoped 直接/间接依赖
+    → 两阶段 Singleton 初始化（通过 LazyCache 写入 singleton_cache）
     → 返回 Result<ServiceProvider, RdiError>
 
 解析阶段:
@@ -105,11 +108,18 @@ LRDI 受 Microsoft.Extensions.DependencyInjection (MEDI) 启发，核心设计�
       → store.get(&tid)
       → 找 key.is_none() 的 entry
       → get_any_by_entry(entry)
-        ├── Singleton → 查 singleton_cache / lazy fallback
-        ├── Scoped → 委托给 Scope 处理
-        └── Transient → 执行工厂
+        ├── Singleton → singleton_cache.get_or_init_with(cache_key, factory)
+        ├── Scoped → root_scoped_cache.get_or_init_with(cache_key, factory)（根即 root scope）
+        └── Transient → 执行工厂（不缓存）
       → extract(): 从 Arc<dyn Any> 中取出 Arc<T>（双层 Arc 解包）
     → 返回 Arc<Foo>
+
+  scope.get::<Foo>()
+    → 查父容器 entries
+      → get_any_by_entry(entry)
+        ├── Singleton → 委托父容器 singleton_cache
+        ├── Scoped → scope.scoped_cache.get_or_init_with(cache_key, factory)
+        └── Transient → 执行 (factory)(self)，Transient 内的 Scoped 依赖绑定到当前子 scope
 ```
 
 ## 五、双重 Arc 包装机制
@@ -125,8 +135,8 @@ extract() 方法：Arc<dyn Any> → downcast::<Arc<T>>() → Arc::clone(&*double
 
 ## 六、线程安全设计
 
-- ServiceProvider: 持有 RwLock<HashMap>（singleton_cache 和 named），读多写少
-- Scope: 持有 RwLock<HashMap>（scoped_cache），仅在首次解析时写入
+- ServiceProvider: singleton_cache 与 root_scoped_cache 均为 LazyCache（`RwLock<HashMap<key, Arc<OnceLock<AnyService>>>`），per-key OnceLock 保证多线程下工厂只执行一次（消除 TOCTOU 竞态）；named 仍为 RwLock<HashMap>，读多写少
+- Scope: scoped_cache 为 LazyCache，结构同上，per-key OnceLock 保证多线程下工厂只执行一次
 - 所有 Arc 共享使容器可跨线程 Clone/传递
 - IServiceResolver trait 要求 Send + Sync
 

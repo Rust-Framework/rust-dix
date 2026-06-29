@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.3"
+rust-dicore = "0.4"
 ```
 
 ---

@@ -55,7 +55,7 @@ description: >
 
 ### 当用户要求"添加 LRDI 到我的项目"
 
-1. 检查 `Cargo.toml`，添加 `rust-dicore = "0.3"` 到 `[dependencies]`
+1. 检查 `Cargo.toml`，添加 `rust-dicore = "0.4"` 到 `[dependencies]`
 2. 在 `main.rs` 或 `lib.rs` 中添加 `use rust_dicore::*;`
 3. 构建 ServiceProvider：
    - 确定需要哪些服务（列出所有 trait 和实现）
@@ -180,7 +180,7 @@ fn do_work(provider: &ServiceProvider) { let db = provider.get::<DbPool>(); }
 - 全局共享不可变资源 → Singleton（配置、连接池、事件总线）
 - 请求级别状态 → Scoped（请求上下文、事务、工作单元）
 - 无状态轻量服务 → Transient（Repository、Service、Controller）
-- **禁止**：Singleton 依赖 Scoped
+- **禁止**：Singleton 依赖 Scoped（build 阶段自动检测并拒绝）
 
 ### 规则 5：测试中替换服务
 ```rust

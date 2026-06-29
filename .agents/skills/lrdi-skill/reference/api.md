@@ -34,18 +34,18 @@ pub enum ServiceLifetime {
 | 变体 | 含义 |
 |------|------|
 | `Transient` | 每次解析均创建新实例。不从任何缓存读取，也不将结果写入任何缓存。 |
-| `Scoped` | 在每个 `Scope` 内缓存在该 Scope 的 `scoped_cache` 中。同一 Scope 内多次解析返回同一实例；跨 Scope 返回不同实例。`ServiceProvider` 根容器层面解析 Scoped 服务时，等价于 Transient（因为根容器没有 Scope 缓存）。 |
-| `Singleton` | 在 `ServiceProvider::new()` 构建阶段立即执行工厂函数（eager initialization），结果存入 `singleton_cache`（`RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>`）。后续所有解析均返回同一缓存实例。支持二阶段初始化：如果工厂内部引用另一个尚未初始化的 Singleton，会触发惰性回退（lazy fallback），在运行时执行工厂并回填缓存。 |
+| `Scoped` | 在每个 `Scope` 内缓存在该 Scope 的 `scoped_cache` 中。同一 Scope 内多次解析返回同一实例；跨 Scope 返回不同实例。`ServiceProvider` 本身即 root scope，从根解析 Scoped 服务时在 `root_scoped_cache` 中缓存复用。 |
+| `Singleton` | 在 `ServiceProvider::new()` 构建阶段立即执行工厂函数（eager initialization），结果存入 `singleton_cache`（`LazyCache`，per-key `OnceLock`，多线程下工厂只执行一次）。后续所有解析均返回同一缓存实例。build 阶段会检测 captive dependency（Singleton 依赖 Scoped），违反时返回 `RdiError::SingletonDependsOnScoped`。 |
 
 ### 生命周期互引用规则
 
-| 外层生命周期 | 可引用 | 不可引用 |
-|-------------|--------|---------|
-| Singleton | Singleton | Scoped / Transient |
-| Scoped | Singleton、Scoped | Transient |
-| Transient | 所有 | 无限制 |
+| 外层生命周期 | 可引用 | build 阶段拒绝 | 需开发者自行保证 |
+|-------------|--------|---------------|----------------|
+| Singleton | Singleton、Transient | Scoped（直接或间接） | — |
+| Scoped | Singleton、Scoped | — | 不引用 Transient（Transient 无法被 Scope 缓存持有，可能造成语义混乱） |
+| Transient | 所有 | — | — |
 
-> **注意**：Scoped 服务不能引用 Transient 服务（因为 Transient 无法被"保持"在 Scope 缓存中，会造成悬垂引用风险）。实际约束由开发者在工厂闭包中自行保证。
+> **Captive dependency 检测**：`build()` 阶段会检测 `Singleton → Scoped` 直接或间接（`Singleton → Transient → Scoped`）依赖链，违反时返回 `RdiError::SingletonDependsOnScoped`。Singleton 引用 Transient 是允许的，但需注意：Singleton 永久持有该 Transient 实例（不会随 scope 变化），等同于将其提升为 Singleton 语义。
 
 ---
 
@@ -180,7 +180,7 @@ pub fn scoped<T: ?Sized + Send + Sync + 'static>(
 
 **副作用**：追加 `lifetime: Scoped`、`key: None` 的 `ServiceDescriptor`
 
-**行为**：在每个 `Scope` 内缓存实例；跨 Scope 创建不同实例。从根 `ServiceProvider` 解析等价于 Transient。
+**行为**：在每个 `Scope` 内缓存实例；跨子 Scope 创建不同实例。`ServiceProvider` 本身即 root scope，从根解析时实例缓存在 `root_scoped_cache`（后续根级解析返回同一实例，等同应用级单例）。需要请求级隔离时必须用 `create_scope()` 创建子 Scope。
 
 **示例**：
 
@@ -462,12 +462,13 @@ pub fn build(self) -> Result<ServiceProvider, RdiError>
 1. 遍历所有 `ServiceDescriptor`，按 `TypeId` 分组存入 `ServiceStore`（`HashMap<TypeId, Vec<ServiceEntry>>`）
 2. 为每个条目分配 `cache_key`（按注册顺序的 `usize` 索引）
 3. 构建 `type_map`（`type_name -> TypeId` 查找表，用于字符串查找）
-4. 执行**二阶段 Singleton 初始化**：
+4. **Captive dependency 检测**：遍历 Singleton 工厂闭包引用的依赖类型，若发现 `Singleton → Scoped` 直接或间接依赖，立即返回 `Err(RdiError::SingletonDependsOnScoped)`，拒绝构建容器
+5. 执行**二阶段 Singleton 初始化**：
    - **阶段一**：收集所有 `lifetime == Singleton` 的条目
-   - **阶段二**：逐个执行工厂闭包，结果写入 `singleton_cache`。如果 A 的工厂引用了尚未初始化的 B，则 B 的工厂惰性执行并回填缓存
-5. 返回 `Ok(ServiceProvider)`
+   - **阶段二**：逐个执行工厂闭包，结果通过 `LazyCache::get_or_init_with` 写入 `singleton_cache`（per-key `OnceLock`，多线程下工厂只执行一次）。如果 A 的工厂引用了尚未初始化的 B，则 B 的工厂惰性执行并回填缓存
+6. 返回 `Ok(ServiceProvider)`
 
-**错误**：当前实现不会返回 `Err`（始终 `Ok(ServiceProvider)`），但签名保留扩展空间。
+**错误**：若检测到 `Singleton → Scoped` 依赖（含 `Singleton → Transient → Scoped` 间接链），返回 `Err(RdiError::SingletonDependsOnScoped { singleton_type, scoped_type })`。
 
 ### `from_injected()` — 从属性宏构建集合
 
@@ -626,12 +627,13 @@ let provider = services::__rdi_build_provider_services();
 pub struct ServiceProvider {
     store: ServiceStore,                                    // TypeId → Vec<ServiceEntry>
     type_map: HashMap<&'static str, TypeId>,                // type_name → TypeId
-    singleton_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    singleton_cache: LazyCache,                             // Singleton 实例缓存（per-key OnceLock）
+    root_scoped_cache: LazyCache,                           // 根 scope 的 Scoped 实例缓存
     named: RwLock<HashMap<String, Arc<dyn Any + Send + Sync>>>,
 }
 ```
 
-`ServiceProvider` 是根 DI 容器，`build()` 后只读（内部使用 `RwLock` 实现惰性 Singleton 缓存写入）。
+`ServiceProvider` 是根 DI 容器，同时承担 **root scope** 角色：从根直接解析 Scoped 服务时，实例缓存在 `root_scoped_cache` 中复用（与子 `Scope` 的 `scoped_cache` 隔离）。`build()` 后只读，`singleton_cache` 与 `root_scoped_cache` 均使用 `LazyCache`（`RwLock<HashMap<key, Arc<OnceLock<AnyService>>>>`），per-key `OnceLock` 保证多线程下工厂只执行一次。
 
 ---
 
@@ -846,19 +848,19 @@ pub fn remove_named(&self, name: &str)
 ```rust
 pub struct Scope {
     parent: Arc<ServiceProvider>,
-    scoped_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    scoped_cache: LazyCache,
 }
 ```
 
-`Scope` 通过 `ServiceProvider::create_scope()` 创建。它**委托**父 `ServiceProvider` 处理 Singleton 和 Transient 解析，仅在自身 `scoped_cache` 中缓存 Scoped 服务。
+`Scope` 通过 `ServiceProvider::create_scope()` 创建。Singleton 委托父 `ServiceProvider` 解析；Transient 和 Scoped 在自身上下文中解析，确保 Transient 工厂内的 Scoped 依赖绑定到当前子 scope（而非回退到根 `root_scoped_cache`）。`scoped_cache` 使用 `LazyCache`（per-key `OnceLock`），多线程下工厂只执行一次。
 
 ### 生命周期处理逻辑
 
 | 解析的 ServiceLifetime | Scope 行为 |
 |------------------------|-----------|
 | `Singleton` | 委托给 `self.parent.get_any_by_entry(entry)`，从父级 Singleton 缓存读取。因为 Singleton 在 `build()` 时已立即执行，父级缓存一定有值 |
-| `Transient` | 执行 `(entry.factory)(self.parent.as_ref())`，每次创建新实例 |
-| `Scoped` | 先查 `self.scoped_cache`（`RwLock<HashMap<usize, ...>>`），命中则返回缓存；未命中则执行工厂 `(entry.factory)(self)`，结果写入 `scoped_cache` |
+| `Transient` | 执行 `(entry.factory)(self)`，每次创建新实例。用 `self`（Scope）解析依赖，Transient 内部的 Scoped 依赖绑定到当前子 scope |
+| `Scoped` | 通过 `self.scoped_cache.get_or_init_with(entry.cache_key, factory)` 解析。`LazyCache` 的 per-key `OnceLock` 保证多线程下工厂只执行一次 |
 
 ### Scope 可用的公开方法
 

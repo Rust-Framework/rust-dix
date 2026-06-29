@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-29
+
+### Changed
+
+- **文档同步**: 全面校正 0.4.0 行为变更相关文档，消除过期描述
+  - `api.md` ServiceProvider 结构体定义更新为 `LazyCache`（singleton_cache + root_scoped_cache），Scope 解析流程同步
+  - `architecture.md` 缓存结构、解析流程图、线程安全设计更新为 LazyCache + captive dependency 检测
+  - `common-pitfalls.md` 陷阱 5 重写：从"Scope 语义丢失"改为"根 Scope 与子 Scope 语义混淆"，澄清根级 Scoped 缓存行为
+  - `anti-patterns.md` 反模式 8 重写：澄清 0.4.0 起根 Provider 解析 Scoped 缓存于 root_scoped_cache
+  - `interface-checklist.md` 作用域使用规则更新，区分根 scope 与子 scope 语义
+  - 生命周期互引用规则表更新：Singleton → Transient 允许，仅 Singleton → Scoped 在 build 阶段拒绝
+  - `build()` 副作用描述补充 captive dependency 检测阶段
+- 新增 0.4.1 边界测试：嵌套 Transient 链 `OuterTransient → MidTransient → ScopedCore` 验证 Scoped 绑定到子 scope
+
+### Fixed
+
+- 文档中残留的"根 Provider 解析 Scoped 等价于 Transient"等过期描述全部清除
+- `INDEX.json` 版本号同步
+
 ## [0.4.0] - 2026-06-29
 
 ### Changed (Breaking)
@@ -106,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.4.1]: https://gitcode.com/rf2026/rust-di/compare/v0.4.0...v0.4.1
 [0.4.0]: https://gitcode.com/rf2026/rust-di/compare/v0.3.3...v0.4.0
 [0.3.3]: https://gitcode.com/rf2026/rust-di/compare/v0.3.2...v0.3.3
 [0.3.2]: https://gitcode.com/rf2026/rust-di/compare/v0.3.1...v0.3.2

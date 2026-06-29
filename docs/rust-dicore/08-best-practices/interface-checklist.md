@@ -188,7 +188,7 @@ pub struct CreateUserHandler {
 // ❌ 错误：Singleton 依赖 Scoped
 #[rust_dicore::inject(singleton)]
 pub struct GlobalService {
-    session: Arc<Session>,  // Session 注册为 Scoped → 行为异常
+    session: Arc<Session>,  // Session 注册为 Scoped → build 阶段拒绝
 }
 
 // ✅ 正确：Scoped 依赖 Singleton
@@ -226,8 +226,8 @@ fn handle(req: Request, provider: &ServiceProvider) {
 
 | ✅ 应该 | ❌ 避免 |
 |--------|--------|
-| 请求开始创建 Scope | 根 Provider 解析 Scoped |
-| Scope 内缓存 Scoped 服务 | Scope 外缓存 Scoped 服务 |
+| 请求开始创建子 Scope | 期望根 Provider 每次 `get::<Scoped>()` 返回新实例 |
+| 子 Scope 内缓存 Scoped 服务 | 在根 Provider 上解析 Scoped 期望请求级隔离 |
 
 ```rust
 // ✅ 正确：Web 请求处理
@@ -238,13 +238,15 @@ fn handle_request(provider: &Arc<ServiceProvider>, req: Request) {
     handler.handle(&uow, req);
 }
 
-// ❌ 错误：根 Provider 解析 Scoped
+// ⚠️ 注意：根 Provider 即 root scope，根级解析 Scoped 会缓存到 root_scoped_cache
 let provider = ServiceCollection::new()
     .scoped(|_| Arc::new(Session))
     .build()
     .unwrap();
 
-let session: Arc<Session> = provider.get();  // 等价于 Transient，Scope 语义丢失
+let session: Arc<Session> = provider.get();   // 缓存在 root_scoped_cache
+let session2: Arc<Session> = provider.get();  // session == session2（根 scope 单例语义）
+// 根级 Scoped 不会随请求变化，需要请求级隔离必须用 create_scope()
 ```
 
 ## 五、测试规则
@@ -286,7 +288,7 @@ fn test_create_user() {
 | 依赖 | 字段是否都是 `Arc<dyn Trait>` |
 | 注册 | 是否在 `impl Trait for Type` 上加 `#[rust_dicore::inject]` |
 | 多实现 | 是否用 keyed 注册替代实现 |
-| 生命周期 | Singleton 是否依赖 Scoped |
+| 生命周期 | Singleton 不依赖 Scoped（build 阶段自动检测） |
 | 容器 | 是否只构建一次 |
 | 测试 | 是否可替换 mock |
 
