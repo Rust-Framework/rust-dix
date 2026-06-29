@@ -1,20 +1,22 @@
+use crate::cache::{AnyService, LazyCache};
 use crate::entry::IServiceResolver;
 use crate::lifetime::ServiceLifetime;
 use crate::provider::ServiceProvider;
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 pub struct Scope {
     parent: Arc<ServiceProvider>,
-    scoped_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    /// 子 scope 的 Scoped 实例缓存（per-key `OnceLock`，多线程下工厂只执行一次）。
+    /// 与 ServiceProvider 的 root_scoped_cache 结构一致，统一懒初始化架构。
+    scoped_cache: LazyCache,
 }
 
 impl Scope {
     pub(crate) fn new(parent: Arc<ServiceProvider>) -> Self {
         Self {
             parent,
-            scoped_cache: RwLock::new(HashMap::new()),
+            scoped_cache: LazyCache::new(),
         }
     }
 
@@ -94,28 +96,24 @@ impl Scope {
     fn get_any_by_entry(
         &self,
         entry: &crate::entry::ServiceEntry,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    ) -> Option<AnyService> {
         match entry.lifetime {
             ServiceLifetime::Singleton => {
                 // Singleton cache lives in parent's eager cache
                 self.parent.get_any_by_entry(entry)
             }
-            ServiceLifetime::Transient => Some((entry.factory)(self.parent.as_ref())),
+            ServiceLifetime::Transient => {
+                // Transient 工厂用 `self`（Scope）解析依赖：
+                // 若 Transient 依赖 Scoped，依赖在当前子 scope 内解析（MEDI 语义），
+                // 而非错误地回退到根 root_scoped_cache。
+                Some((entry.factory)(self))
+            }
             ServiceLifetime::Scoped => {
-                {
-                    let cache = self.scoped_cache.read().unwrap();
-                    if let Some(instance) = cache.get(&entry.cache_key) {
-                        return Some(instance.clone());
-                    }
-                }
-                let instance = (entry.factory)(self);
-                {
-                    self.scoped_cache
-                        .write()
-                        .unwrap()
-                        .insert(entry.cache_key, instance.clone());
-                }
-                Some(instance)
+                // 子 scope 独立缓存：per-key OnceLock 保证多线程下工厂只执行一次，
+                // 不回退到根 root_scoped_cache（MEDI 子 scope 隔离语义）。
+                let factory = entry.factory.clone();
+                let resolver = self as &dyn IServiceResolver;
+                Some(self.scoped_cache.get_or_init_with(entry.cache_key, move || factory(resolver)))
             }
         }
     }

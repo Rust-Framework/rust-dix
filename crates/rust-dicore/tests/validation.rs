@@ -1,4 +1,5 @@
 use rust_dicore::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 struct ServiceA;
@@ -81,6 +82,98 @@ fn scoped_isolated_between_root_and_child_scope() {
         !Arc::ptr_eq(&root_a, &child_a),
         "根与子 scope 的 Scoped 应相互独立"
     );
+}
+
+#[test]
+fn root_scope_scoped_factory_executed_once() {
+    // 用工厂执行计数器严格证明 root scope 缓存真实生效：
+    // 工厂只执行一次，即使解析多次。Arc::ptr_eq 不够 —— 计数器排除了
+    // "工厂碰巧返回同一 Arc"的可能。
+    static SCOPED_CALLS: AtomicU64 = AtomicU64::new(0);
+    struct ScopedService(u64);
+
+    let provider = ServiceCollection::new()
+        .scoped(|_| {
+            let n = SCOPED_CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(ScopedService(n))
+        })
+        .build()
+        .unwrap();
+
+    // 首次解析：工厂执行，计数 0 → 1，实例携带序号 0。
+    let a1: Arc<ScopedService> = provider.get();
+    assert_eq!(SCOPED_CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(a1.0, 0);
+
+    // 第二、三次解析：应命中 root_scoped_cache，工厂不再执行。
+    let a2: Arc<ScopedService> = provider.get();
+    let a3: Arc<ScopedService> = provider.get();
+    assert_eq!(
+        SCOPED_CALLS.load(Ordering::SeqCst),
+        1,
+        "root scope 缓存应阻止工厂再次执行"
+    );
+    assert_eq!(a2.0, 0);
+    assert_eq!(a3.0, 0);
+
+    // 三次解析返回同一实例（双重佐证：序号一致 + Arc 指针相等）。
+    assert!(Arc::ptr_eq(&a1, &a2));
+    assert!(Arc::ptr_eq(&a2, &a3));
+}
+
+#[test]
+fn root_scope_transient_factory_executed_each_time() {
+    // 对照组：Transient 工厂每次解析都执行，计数递增，证明计数器机制有效，
+    // 且 Scoped 的"只执行一次"确实是缓存生效而非计数器故障。
+    static TRANSIENT_CALLS: AtomicU64 = AtomicU64::new(0);
+    struct TransientService(u64);
+
+    let provider = ServiceCollection::new()
+        .transient(|_| {
+            let n = TRANSIENT_CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(TransientService(n))
+        })
+        .build()
+        .unwrap();
+
+    let t1: Arc<TransientService> = provider.get();
+    let t2: Arc<TransientService> = provider.get();
+    let t3: Arc<TransientService> = provider.get();
+    assert_eq!(TRANSIENT_CALLS.load(Ordering::SeqCst), 3);
+    assert_eq!(t1.0, 0);
+    assert_eq!(t2.0, 1);
+    assert_eq!(t3.0, 2);
+    assert!(!Arc::ptr_eq(&t1, &t2));
+}
+
+#[test]
+fn scoped_factory_not_triggered_at_build() {
+    // build 阶段不应预触发 Scoped 工厂：validation 只验证 Singleton 依赖链，
+    // 独立注册的 Scoped 服务在 build 后工厂应未执行。
+    static BUILD_CALLS: AtomicU64 = AtomicU64::new(0);
+    struct S;
+
+    let provider = ServiceCollection::new()
+        .scoped(|_| {
+            BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(S)
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        BUILD_CALLS.load(Ordering::SeqCst),
+        0,
+        "build 阶段不应触发 Scoped 工厂"
+    );
+
+    // 首次解析才触发工厂。
+    let _s1: Arc<S> = provider.get();
+    assert_eq!(BUILD_CALLS.load(Ordering::SeqCst), 1);
+
+    // 再次解析命中缓存，工厂不再执行。
+    let _s2: Arc<S> = provider.get();
+    assert_eq!(BUILD_CALLS.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -209,4 +302,98 @@ fn circular_dependency_error_message() {
         }
         _ => panic!("Expected CircularDependency error"),
     }
+}
+
+#[test]
+fn root_scope_scoped_factory_executed_once_under_concurrency() {
+    // 端到端 TOCTOU 验证：8 线程并发从根 scope 解析 Scoped 服务，
+    // LazyCache 的 per-key OnceLock 应保证工厂只执行一次，
+    // 彻底消除 read-check-then-write 竞态。
+    // 若回退到旧 RwLock<HashMap> 的 check-then-act 写法，
+    // 多线程同时 miss 时工厂会被多次执行，计数 > 1。
+    static SCOPED_CALLS: AtomicU64 = AtomicU64::new(0);
+    struct ScopedService(u64);
+
+    let provider = Arc::new(
+        ServiceCollection::new()
+            .scoped(|_| {
+                let n = SCOPED_CALLS.fetch_add(1, Ordering::SeqCst);
+                Arc::new(ScopedService(n))
+            })
+            .build()
+            .unwrap(),
+    );
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let p = provider.clone();
+        handles.push(std::thread::spawn(move || {
+            let s: Arc<ScopedService> = p.get();
+            s
+        }));
+    }
+    let results: Vec<Arc<ScopedService>> =
+        handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+    assert_eq!(
+        SCOPED_CALLS.load(Ordering::SeqCst),
+        1,
+        "8 线程并发解析应只触发一次工厂（LazyCache 消除 TOCTOU）"
+    );
+    assert_eq!(results[0].0, 0, "唯一实例应携带序号 0");
+    for r in &results {
+        assert!(
+            Arc::ptr_eq(&results[0], r),
+            "所有线程应拿到同一 Arc 实例"
+        );
+    }
+}
+
+#[test]
+fn validation_does_not_leak_transient_to_runtime_cache() {
+    // Singleton 依赖 Transient（合法，非 captive）：
+    // build 阶段 validation 会执行 Transient 工厂一次（用于验证依赖链），
+    // 但 Transient 实例不应泄漏到 singleton_cache。
+    // 验证方式：build 后运行时解析 Transient 应得到新实例（计数递增），
+    // 而非返回 validation 阶段缓存的实例（那会让计数停留在 1）。
+    static TRANSIENT_CALLS: AtomicU64 = AtomicU64::new(0);
+    struct TransientService(u64);
+    struct SingletonService;
+
+    let provider = ServiceCollection::new()
+        .transient(|_| {
+            let n = TRANSIENT_CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(TransientService(n))
+        })
+        .singleton(|r| {
+            let _t = r.get_any(std::any::type_name::<TransientService>());
+            Arc::new(SingletonService)
+        })
+        .build()
+        .unwrap();
+
+    // build 阶段 validation 执行过一次 Transient 工厂（Singleton 依赖触发）。
+    assert_eq!(
+        TRANSIENT_CALLS.load(Ordering::SeqCst),
+        1,
+        "build 阶段 validation 应执行一次 Transient 工厂"
+    );
+
+    // 运行时解析 Transient：应得到新实例（计数递增到 2、3），
+    // 而非返回 validation 缓存的实例（那会让计数停留在 1，序号停在 0）。
+    let t1: Arc<TransientService> = provider.get();
+    assert_eq!(
+        TRANSIENT_CALLS.load(Ordering::SeqCst),
+        2,
+        "运行时首次解析应执行新工厂，而非复用 validation 缓存"
+    );
+    assert_eq!(t1.0, 1, "运行时首次解析应得到序号 1（validation 是 0）");
+
+    let t2: Arc<TransientService> = provider.get();
+    assert_eq!(TRANSIENT_CALLS.load(Ordering::SeqCst), 3);
+    assert_eq!(t2.0, 2);
+    assert!(
+        !Arc::ptr_eq(&t1, &t2),
+        "Transient 每次解析应返回新实例，无缓存泄漏"
+    );
 }

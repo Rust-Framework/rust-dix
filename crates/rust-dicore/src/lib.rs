@@ -118,6 +118,7 @@
 //! - `rust_dicore::register!(...)` — declare services inside `#[rust_dicore::module]`
 
 pub mod bridge;
+mod cache;
 pub mod collection;
 pub mod descriptor;
 pub mod entry;

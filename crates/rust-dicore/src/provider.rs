@@ -1,3 +1,4 @@
+use crate::cache::{AnyService, LazyCache};
 use crate::entry::{IServiceResolver, ServiceEntry, ServiceFactory};
 use crate::error::RdiError;
 use crate::lifetime::ServiceLifetime;
@@ -23,14 +24,15 @@ struct ValidationResolver<'a> {
     /// validation so that Phase 2 (eager singleton init) can reuse the
     /// results instead of re-executing factories (which would double-fire
     /// side effects like counters).
-    cache: &'a RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    /// 仅缓存 Singleton 实例；Transient/Scoped 实例不缓存，避免泄漏到 singleton_cache。
+    cache: &'a LazyCache,
 }
 
 impl<'a> ValidationResolver<'a> {
     fn new(
         store: &'a ServiceStore,
         type_names: &'a HashMap<TypeId, &'static str>,
-        cache: &'a RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+        cache: &'a LazyCache,
     ) -> Self {
         Self {
             store,
@@ -84,8 +86,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
 
         // Reuse cached instance if a prior validation pass already built it.
-        if let Some(cached) = self.cache.read().unwrap().get(&entry.cache_key) {
-            return Some(cached.clone());
+        if let Some(cached) = self.cache.get(entry.cache_key) {
+            return Some(cached);
         }
 
         // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
@@ -121,12 +123,11 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
 
-        // Cache the instance so subsequent resolutions (including Phase 2
-        // eager init) reuse it instead of re-executing the factory.
-        self.cache
-            .write()
-            .unwrap()
-            .insert(entry.cache_key, result.clone());
+        // 仅缓存 Singleton 实例：Transient/Scoped 实例不缓存，
+        // 避免泄漏到 singleton_cache 造成内存浪费与 build 阶段副作用残留。
+        if entry.lifetime == ServiceLifetime::Singleton {
+            self.cache.prefill(entry.cache_key, result.clone());
+        }
 
         Some(result)
     }
@@ -141,8 +142,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             .find(|e| e.key.as_deref() == Some(variant))?;
 
         // Reuse cached instance if available.
-        if let Some(cached) = self.cache.read().unwrap().get(&entry.cache_key) {
-            return Some(cached.clone());
+        if let Some(cached) = self.cache.get(entry.cache_key) {
+            return Some(cached);
         }
 
         // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
@@ -171,10 +172,10 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
 
-        self.cache
-            .write()
-            .unwrap()
-            .insert(entry.cache_key, result.clone());
+        // 仅缓存 Singleton 实例，避免 Transient/Scoped 泄漏。
+        if entry.lifetime == ServiceLifetime::Singleton {
+            self.cache.prefill(entry.cache_key, result.clone());
+        }
 
         Some(result)
     }
@@ -184,19 +185,16 @@ pub struct ServiceProvider {
     store: ServiceStore,
     /// String → TypeId lookup for IServiceLocator string-based resolution.
     type_map: HashMap<&'static str, TypeId>,
-    /// Eager-executed singleton cache. Indexed by cache_key.
-    /// Non-singleton entries are not present.
-    /// Uses RwLock for interior mutability: during eager initialization,
-    /// a singleton factory may reference another singleton not yet populated.
-    /// The lazy fallback in get_any_by_entry handles this by executing the
-    /// factory on-demand and caching the result.
-    singleton_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    /// Singleton 实例缓存（per-key `OnceLock`，多线程下工厂只执行一次）。
+    /// build 阶段 validation + Phase 2 eager init 预热，运行时 lazy fallback。
+    singleton_cache: LazyCache,
     /// Root scope 的 Scoped 实例缓存。
     ///
     /// ServiceProvider 本身即 MEDI 的 root scope：从根直接解析 Scoped 服务时，
     /// 实例在此缓存中复用，语义等同于在根 scope 内单例化。
     /// 子 Scope（通过 `create_scope()` 创建）拥有独立的 scoped_cache，不回退到此缓存。
-    root_scoped_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    /// per-key `OnceLock` 保证多线程下工厂只执行一次，无 TOCTOU 竞态。
+    root_scoped_cache: LazyCache,
     /// String-keyed registry for cross-DLL (cdylib) service access.
     /// Rust's `TypeId` differs across compilation units, so named
     /// lookup is the only reliable mechanism for plugin services.
@@ -218,9 +216,8 @@ impl ServiceProvider {
         // cycles, and caches the resulting instances so Phase 2 can reuse
         // them instead of re-executing the factories (which would double-fire
         // side effects like counters / log lines).
-        let validation_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>> =
-            RwLock::new(HashMap::new());
-        Self::validate_dependencies(&store, &validation_cache)?;
+        let singleton_cache = LazyCache::new();
+        Self::validate_dependencies(&store, &singleton_cache)?;
 
         // Phase 1: collect all singleton entries.
         let singleton_entries: Vec<(usize, ServiceFactory)> = store
@@ -236,18 +233,17 @@ impl ServiceProvider {
         let sp = Self {
             store,
             type_map,
-            singleton_cache: validation_cache,
-            root_scoped_cache: RwLock::new(HashMap::new()),
+            singleton_cache,
+            root_scoped_cache: LazyCache::new(),
             named: RwLock::new(HashMap::new()),
         };
 
         for (ck, factory) in &singleton_entries {
-            // Skip if validation already built this instance.
-            if sp.singleton_cache.read().unwrap().contains_key(ck) {
-                continue;
-            }
-            let instance = (factory)(&sp as &dyn IServiceResolver);
-            sp.singleton_cache.write().unwrap().insert(*ck, instance);
+            // LazyCache::get_or_init_with 内部查缓存，validation 已构建的跳过。
+            let resolver = &sp as &dyn IServiceResolver;
+            let factory = factory.clone();
+            sp.singleton_cache
+                .get_or_init_with(*ck, move || factory(resolver));
         }
 
         Ok(sp)
@@ -258,7 +254,7 @@ impl ServiceProvider {
     /// be reused by the subsequent eager-init phase.
     fn validate_dependencies(
         store: &ServiceStore,
-        cache: &RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+        cache: &LazyCache,
     ) -> Result<(), RdiError> {
         // Build TypeId → type_name map for error messages
         let type_names: HashMap<TypeId, &'static str> = store
@@ -403,41 +399,22 @@ impl ServiceProvider {
     pub(crate) fn get_any_by_entry(
         &self,
         entry: &ServiceEntry,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    ) -> Option<AnyService> {
         match entry.lifetime {
             ServiceLifetime::Singleton => {
-                // Check eager cache (populated at build time).
-                // If not found (e.g. cross-reference during eager init), execute
-                // the factory on-demand as a lazy fallback.
-                {
-                    let cache = self.singleton_cache.read().unwrap();
-                    if let Some(instance) = cache.get(&entry.cache_key) {
-                        return Some(instance.clone());
-                    }
-                }
-                // Lazy fallback: execute factory on-demand and cache.
-                let instance = (entry.factory)(self);
-                self.singleton_cache
-                    .write()
-                    .unwrap()
-                    .insert(entry.cache_key, instance.clone());
-                Some(instance)
+                // LazyCache::get_or_init_with：build 阶段已预热的走 fast path，
+                // 未预热的（交叉引用边缘情况）懒执行工厂并缓存。
+                // per-key OnceLock 保证多线程下工厂只执行一次，无 TOCTOU 竞态。
+                let factory = entry.factory.clone();
+                let resolver = self as &dyn IServiceResolver;
+                Some(self.singleton_cache.get_or_init_with(entry.cache_key, move || factory(resolver)))
             }
             ServiceLifetime::Scoped => {
                 // Root scope 缓存：ServiceProvider 即 root scope，
                 // 从根解析 Scoped 服务在 root_scoped_cache 内复用。
-                {
-                    let cache = self.root_scoped_cache.read().unwrap();
-                    if let Some(instance) = cache.get(&entry.cache_key) {
-                        return Some(instance.clone());
-                    }
-                }
-                let instance = (entry.factory)(self);
-                self.root_scoped_cache
-                    .write()
-                    .unwrap()
-                    .insert(entry.cache_key, instance.clone());
-                Some(instance)
+                let factory = entry.factory.clone();
+                let resolver = self as &dyn IServiceResolver;
+                Some(self.root_scoped_cache.get_or_init_with(entry.cache_key, move || factory(resolver)))
             }
             ServiceLifetime::Transient => Some((entry.factory)(self)),
         }
