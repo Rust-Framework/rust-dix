@@ -174,4 +174,81 @@ mod tests {
         let c = s2.get::<Sd>();
         assert_ne!(a.0, c.0);
     }
+
+    #[test]
+    fn nested_transient_chain_scoped_binds_to_child_scope() {
+        // 边界场景：双层嵌套 Transient 依赖链 → Scoped
+        //   OuterTransient → MidTransient → ScopedCore
+        // 验证最内层 ScopedCore 在子 scope 内解析（scope.scoped_cache），
+        // 不回退到根 root_scoped_cache。
+        // 严格性：任一层 Transient 若错误用 self.parent 解析依赖，
+        // ScopedCore 都会泄漏到根，三 scope 序号会塌缩为相同值。
+        static CORE_CALLS: AtomicU64 = AtomicU64::new(0);
+
+        struct ScopedCore(u64);
+        struct MidTransient {
+            core: Arc<ScopedCore>,
+        }
+        struct OuterTransient {
+            mid: Arc<MidTransient>,
+        }
+
+        let provider = Arc::new(
+            ServiceCollection::new()
+                .scoped(|_| {
+                    let n = CORE_CALLS.fetch_add(1, Ordering::SeqCst);
+                    Arc::new(ScopedCore(n))
+                })
+                .transient(|r| {
+                    let any = r.get_any(std::any::type_name::<ScopedCore>()).unwrap();
+                    let outer = any.downcast::<Arc<ScopedCore>>().unwrap();
+                    let core: Arc<ScopedCore> = Arc::clone(&*outer);
+                    Arc::new(MidTransient { core })
+                })
+                .transient(|r| {
+                    let any = r.get_any(std::any::type_name::<MidTransient>()).unwrap();
+                    let outer = any.downcast::<Arc<MidTransient>>().unwrap();
+                    let mid: Arc<MidTransient> = Arc::clone(&*outer);
+                    Arc::new(OuterTransient { mid })
+                })
+                .build()
+                .unwrap(),
+        );
+
+        // scope1：首次解析 OuterTransient，ScopedCore 工厂执行（序号 0）。
+        let scope1 = provider.scope();
+        let o1: Arc<OuterTransient> = scope1.get();
+        assert_eq!(o1.mid.core.0, 0, "scope1 的 ScopedCore 应为序号 0");
+
+        // scope1 内再次解析：OuterTransient/MidTransient 每次新建（Transient），
+        // 但 ScopedCore 应复用 scope1.scoped_cache（序号仍 0）。
+        let o1b: Arc<OuterTransient> = scope1.get();
+        assert_eq!(o1b.mid.core.0, 0, "scope1 应复用同一 ScopedCore");
+        assert!(
+            Arc::ptr_eq(&o1.mid.core, &o1b.mid.core),
+            "scope1 内 ScopedCore 必须复用"
+        );
+
+        // scope2：独立子 scope，ScopedCore 工厂再次执行（序号 1）。
+        let scope2 = provider.scope();
+        let o2: Arc<OuterTransient> = scope2.get();
+        assert_eq!(o2.mid.core.0, 1, "scope2 的 ScopedCore 应为序号 1");
+        assert!(
+            !Arc::ptr_eq(&o1.mid.core, &o2.mid.core),
+            "不同 scope 的 ScopedCore 必须独立"
+        );
+
+        // 根 scope：第三个独立实例（序号 2），证明子 scope 未泄漏到根。
+        let root_c: Arc<ScopedCore> = provider.get();
+        assert_eq!(root_c.0, 2, "根 scope 的 ScopedCore 应为序号 2");
+        assert!(!Arc::ptr_eq(&o1.mid.core, &root_c));
+        assert!(!Arc::ptr_eq(&o2.mid.core, &root_c));
+
+        // 全程工厂只执行 3 次（scope1、scope2、根各一次）。
+        assert_eq!(
+            CORE_CALLS.load(Ordering::SeqCst),
+            3,
+            "ScopedCore 工厂应执行 3 次（三 scope 各一次）"
+        );
+    }
 }

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-29
+
+### Changed (Breaking)
+
+- **Root scope 语义对齐 MEDI**: `ServiceProvider` 本身即 root scope，从根直接解析 Scoped 服务时在根内缓存复用（语义等同于根 scope 内单例化），不再退化为每次新建
+  - 新增 `root_scoped_cache` 字段，与 `singleton_cache` 分离
+  - 通过 `create_scope()` 创建的子 Scope 拥有独立 `scoped_cache`，不回退到根
+
+- **LazyCache 统一缓存架构**: 新增 `cache.rs`，用 per-key `OnceLock` 模式彻底消除 TOCTOU 竞态
+  - `RwLock<HashMap<key, Arc<OnceLock<AnyService>>>>` 结构，工厂在无锁状态下执行，避免递归解析死锁
+  - `ServiceProvider`（singleton_cache + root_scoped_cache）与 `Scope`（scoped_cache）统一采用
+
+### Added
+
+- **Captive dependency 检测**: build 阶段拒绝 Singleton 依赖 Scoped（含间接依赖链 Singleton → Transient → Scoped）
+  - `ValidationResolver` 解析栈跟踪祖先 lifetime，通过 panic + `catch_unwind` 传播 `RdiError::SingletonDependsOnScoped`
+  - `RdiError` 派生 `Clone` 以支持 panic 跨 unwind 边界传递
+
+### Fixed
+
+- **Validation 缓存泄漏**: build 阶段 validation 只缓存 Singleton 实例，Transient/Scoped 实例不进入 `singleton_cache`，运行时解析返回新实例
+- **子 scope Transient 依赖绑定**: `Scope` 的 Transient 分支用 `self` 而非 `self.parent` 解析依赖，Transient 工厂内的 Scoped 依赖绑定到当前子 scope
+
+## [0.3.3] - 2026-06-28
+
+### Fixed
+
+- 内部维护版本
+
 ## [0.3.2] - 2024-06-26
 
 ### Fixed
@@ -77,6 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.4.0]: https://gitcode.com/rf2026/rust-di/compare/v0.3.3...v0.4.0
 [0.3.3]: https://gitcode.com/rf2026/rust-di/compare/v0.3.2...v0.3.3
 [0.3.2]: https://gitcode.com/rf2026/rust-di/compare/v0.3.1...v0.3.2
 [0.3.1]: https://gitcode.com/rf2026/rust-di/compare/v0.3.0...v0.3.1
