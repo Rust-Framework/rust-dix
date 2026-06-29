@@ -6,13 +6,17 @@ use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
-/// Validation resolver that tracks resolution chains for cycle detection.
+/// Validation resolver that tracks resolution chains for cycle detection
+/// and captive dependency detection (Singleton depending on Scoped).
 struct ValidationResolver<'a> {
     store: &'a ServiceStore,
     /// Cache keys currently being resolved (for cycle detection).
     /// Uses `RwLock` because `IServiceResolver::get_any` takes `&self`
     /// and the trait requires `Send + Sync`.
     resolving: RwLock<HashSet<usize>>,
+    /// 解析栈：记录当前解析链中每个节点的 (cache_key, lifetime)，
+    /// 用于 captive dependency 检测（Singleton 依赖 Scoped）。
+    stack: RwLock<Vec<(usize, ServiceLifetime)>>,
     /// TypeId → type_name map for error messages
     type_names: &'a HashMap<TypeId, &'static str>,
     /// Reusable instance cache — populated as factories execute during
@@ -31,6 +35,7 @@ impl<'a> ValidationResolver<'a> {
         Self {
             store,
             resolving: RwLock::new(HashSet::new()),
+            stack: RwLock::new(Vec::new()),
             type_names,
             cache,
         }
@@ -50,6 +55,26 @@ impl<'a> ValidationResolver<'a> {
             })
             .unwrap_or_else(|| format!("service {}", cache_key))
     }
+
+    /// Captive dependency 检测：若当前解析链中存在 Singleton 祖先，
+    /// 而当前要解析的服务是 Scoped，则通过 panic 传递
+    /// `RdiError::SingletonDependsOnScoped`，由 `validate_dependencies` 捕获。
+    fn check_captive_dependency(&self, entry: &ServiceEntry) {
+        if entry.lifetime == ServiceLifetime::Scoped {
+            let stack = self.stack.read().unwrap();
+            if let Some(&(ancestor_ck, ServiceLifetime::Singleton)) = stack
+                .iter()
+                .find(|(_, lt)| *lt == ServiceLifetime::Singleton)
+            {
+                let singleton_name = self.get_type_name(ancestor_ck);
+                let scoped_name = self.get_type_name(entry.cache_key);
+                std::panic::panic_any(RdiError::SingletonDependsOnScoped {
+                    singleton: singleton_name,
+                    scoped: scoped_name,
+                });
+            }
+        }
+    }
 }
 
 impl<'a> IServiceResolver for ValidationResolver<'a> {
@@ -62,6 +87,9 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         if let Some(cached) = self.cache.read().unwrap().get(&entry.cache_key) {
             return Some(cached.clone());
         }
+
+        // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
+        self.check_captive_dependency(entry);
 
         // Check for cycle: if already being resolved, we have a cycle
         if self.resolving.read().unwrap().contains(&entry.cache_key) {
@@ -81,14 +109,16 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
         }
 
-        // Mark as resolving
+        // Mark as resolving and push onto the lifetime tracking stack.
         self.resolving.write().unwrap().insert(entry.cache_key);
+        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
 
         // Execute the factory (this may recursively resolve dependencies)
         // We catch panics to convert them to RdiError
         let result = (entry.factory)(self as &dyn IServiceResolver);
 
-        // Mark as resolved
+        // Pop the stack and mark as resolved.
+        self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
 
         // Cache the instance so subsequent resolutions (including Phase 2
@@ -115,6 +145,9 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             return Some(cached.clone());
         }
 
+        // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
+        self.check_captive_dependency(entry);
+
         // Check for cycle
         if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
@@ -133,7 +166,9 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
+        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
         let result = (entry.factory)(self as &dyn IServiceResolver);
+        self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
 
         self.cache
@@ -156,6 +191,12 @@ pub struct ServiceProvider {
     /// The lazy fallback in get_any_by_entry handles this by executing the
     /// factory on-demand and caching the result.
     singleton_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
+    /// Root scope 的 Scoped 实例缓存。
+    ///
+    /// ServiceProvider 本身即 MEDI 的 root scope：从根直接解析 Scoped 服务时，
+    /// 实例在此缓存中复用，语义等同于在根 scope 内单例化。
+    /// 子 Scope（通过 `create_scope()` 创建）拥有独立的 scoped_cache，不回退到此缓存。
+    root_scoped_cache: RwLock<HashMap<usize, Arc<dyn Any + Send + Sync>>>,
     /// String-keyed registry for cross-DLL (cdylib) service access.
     /// Rust's `TypeId` differs across compilation units, so named
     /// lookup is the only reliable mechanism for plugin services.
@@ -196,6 +237,7 @@ impl ServiceProvider {
             store,
             type_map,
             singleton_cache: validation_cache,
+            root_scoped_cache: RwLock::new(HashMap::new()),
             named: RwLock::new(HashMap::new()),
         };
 
@@ -242,6 +284,12 @@ impl ServiceProvider {
                     })) {
                         Ok(_) => {}
                         Err(panic_info) => {
+                            // Check for captive dependency error (RdiError)
+                            if let Some(err) = panic_info.downcast_ref::<RdiError>() {
+                                if let RdiError::SingletonDependsOnScoped { .. } = err {
+                                    return Err(err.clone());
+                                }
+                            }
                             // Check if it's our circular dependency panic
                             if let Some(msg) = panic_info.downcast_ref::<String>() {
                                 if msg.starts_with("CIRCULAR_DEPENDENCY: ") {
@@ -375,7 +423,23 @@ impl ServiceProvider {
                     .insert(entry.cache_key, instance.clone());
                 Some(instance)
             }
-            ServiceLifetime::Transient | ServiceLifetime::Scoped => Some((entry.factory)(self)),
+            ServiceLifetime::Scoped => {
+                // Root scope 缓存：ServiceProvider 即 root scope，
+                // 从根解析 Scoped 服务在 root_scoped_cache 内复用。
+                {
+                    let cache = self.root_scoped_cache.read().unwrap();
+                    if let Some(instance) = cache.get(&entry.cache_key) {
+                        return Some(instance.clone());
+                    }
+                }
+                let instance = (entry.factory)(self);
+                self.root_scoped_cache
+                    .write()
+                    .unwrap()
+                    .insert(entry.cache_key, instance.clone());
+                Some(instance)
+            }
+            ServiceLifetime::Transient => Some((entry.factory)(self)),
         }
     }
 

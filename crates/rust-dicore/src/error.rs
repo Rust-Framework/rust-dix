@@ -1,5 +1,5 @@
 use thiserror::Error;
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum RdiError {
     #[error("service not registered: {0}")]
     ServiceNotFound(&'static str),

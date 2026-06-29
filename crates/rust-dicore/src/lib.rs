@@ -139,6 +139,12 @@ pub use collection::ServiceCollection;
 
 /// Built service provider — the root DI container (read-only after build).
 ///
+/// 兼具 MEDI 中 `IServiceProvider` 与 root scope 双重身份：
+/// - 作为 `IServiceProvider`：提供类型/键控/命名解析入口。
+/// - 作为 root scope：从根直接解析 Scoped 服务时，实例在根内缓存复用，
+///   语义等同于在根 scope 内单例化。通过 `create_scope()` 创建的子 Scope
+///   拥有独立的 scoped 缓存，不回退到根。
+///
 /// Analogous to `IServiceProvider` in MEDI.
 pub use provider::ServiceProvider;
 
