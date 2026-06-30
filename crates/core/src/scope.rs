@@ -138,10 +138,7 @@ impl Scope {
         ServiceProvider::extract(arc)
     }
 
-    fn get_any_by_entry(
-        &self,
-        entry: &crate::entry::ServiceEntry,
-    ) -> Option<AnyService> {
+    fn get_any_by_entry(&self, entry: &crate::entry::ServiceEntry) -> Option<AnyService> {
         match entry.lifetime {
             ServiceLifetime::Singleton => {
                 // Singleton cache lives in parent's eager cache
@@ -158,7 +155,10 @@ impl Scope {
                 // 不回退到根 root_scoped_cache（MEDI 子 scope 隔离语义）。
                 let factory = entry.factory.clone();
                 let resolver = self as &dyn IServiceResolver;
-                Some(self.scoped_cache.get_or_init_with(entry.cache_key, move || factory(resolver)))
+                Some(
+                    self.scoped_cache
+                        .get_or_init_with(entry.cache_key, move || factory(resolver)),
+                )
             }
         }
     }
@@ -170,10 +170,7 @@ impl Scope {
     ///   `scoped_cache`. The factory uses `self` (Scope) as resolver, so
     ///   Scoped deps resolved transitively bind to this child scope (not the
     ///   root), consistent with the Transient-in-child-scope fix.
-    fn create_owned_any_by_entry(
-        &self,
-        entry: &crate::entry::ServiceEntry,
-    ) -> Option<AnyService> {
+    fn create_owned_any_by_entry(&self, entry: &crate::entry::ServiceEntry) -> Option<AnyService> {
         match entry.lifetime {
             ServiceLifetime::Singleton => None,
             ServiceLifetime::Scoped | ServiceLifetime::Transient => {
@@ -212,11 +209,7 @@ impl IServiceResolver for Scope {
         }
         None
     }
-    fn get_keyed_owned_any(
-        &self,
-        key: &str,
-        variant: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let entry = self.parent.entry_by_str(key, variant)?;
         self.create_owned_any_by_entry(entry)
     }

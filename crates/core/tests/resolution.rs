@@ -99,8 +99,8 @@ fn provider_get_all_empty() {
 fn provider_has_correct_keyed_count() {
     let p = ServiceCollection::new()
         .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
-            .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
-            .keyed_singleton("c", |_| Arc::new(common::MyService { value: 3 }))
+        .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
+        .keyed_singleton("c", |_| Arc::new(common::MyService { value: 3 }))
         .build()
         .unwrap();
     assert_eq!(p.get_keyed::<common::MyService>("a").value, 1);

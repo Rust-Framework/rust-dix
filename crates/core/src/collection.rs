@@ -41,7 +41,7 @@ impl ServiceCollection {
     }
 
     /// Register a keyed singleton service.
-    /// 
+    ///
     /// The key distinguishes multiple implementations of the same trait.
     /// Use `get_keyed::<T>(key)` or `try_get_keyed::<T>(key)` to resolve.
     pub fn keyed_singleton<T: ?Sized + Send + Sync + 'static>(

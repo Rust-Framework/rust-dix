@@ -3,8 +3,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input,
-    DeriveInput, Field, Fields, ItemImpl, ItemMod, Token,
+    parse_macro_input, DeriveInput, Field, Fields, ItemImpl, ItemMod, Token,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -562,10 +561,7 @@ fn expand_inject_struct(
 /// factory that calls `__rdi_construct_{Type}` (which must be provided by
 /// `#[derive(Inject)]` or `#[inject]` on the struct) and upcasts to
 /// `dyn Trait`.
-fn expand_inject_impl(
-    impl_item: &ItemImpl,
-    lifetime: LT,
-) -> syn::Result<proc_macro2::TokenStream> {
+fn expand_inject_impl(impl_item: &ItemImpl, lifetime: LT) -> syn::Result<proc_macro2::TokenStream> {
     // Must be a trait impl: `impl Trait for Type`
     let (not, trait_path, _) = impl_item.trait_.as_ref().ok_or_else(|| {
         syn::Error::new_spanned(
@@ -595,8 +591,7 @@ fn expand_inject_impl(
 
     let constructor_fn = format_ident!("__rdi_construct_{}", type_ident);
     let factory_name = format_ident!("__rdi_factory_{}_for_{}", type_ident, trait_suffix);
-    let type_name_fn_name =
-        format_ident!("__rdi_type_name_{}_for_{}", type_ident, trait_suffix);
+    let type_name_fn_name = format_ident!("__rdi_type_name_{}_for_{}", type_ident, trait_suffix);
 
     let lt_ident = lt_to_token(lifetime);
 

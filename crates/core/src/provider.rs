@@ -147,7 +147,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         // Check for cycle: if already being resolved, we have a cycle
         if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self.resolving
+            let chain: Vec<String> = self
+                .resolving
                 .read()
                 .unwrap()
                 .iter()
@@ -164,7 +165,10 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
 
         // Mark as resolving and push onto the lifetime tracking stack.
         self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
+        self.stack
+            .write()
+            .unwrap()
+            .push((entry.cache_key, entry.lifetime));
 
         // Execute the factory (this may recursively resolve dependencies)
         // We catch panics to convert them to RdiError
@@ -203,7 +207,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         // Check for cycle
         if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self.resolving
+            let chain: Vec<String> = self
+                .resolving
                 .read()
                 .unwrap()
                 .iter()
@@ -218,7 +223,10 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
+        self.stack
+            .write()
+            .unwrap()
+            .push((entry.cache_key, entry.lifetime));
         let result = (entry.factory)(self as &dyn IServiceResolver);
         self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
@@ -247,7 +255,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         // Check for cycle
         if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self.resolving
+            let chain: Vec<String> = self
+                .resolving
                 .read()
                 .unwrap()
                 .iter()
@@ -262,7 +271,10 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
+        self.stack
+            .write()
+            .unwrap()
+            .push((entry.cache_key, entry.lifetime));
         let result = (entry.factory)(self as &dyn IServiceResolver);
         self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
@@ -271,11 +283,7 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         Some(result)
     }
 
-    fn get_keyed_owned_any(
-        &self,
-        key: &str,
-        variant: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
         let entry = self
             .store
@@ -287,7 +295,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
 
         if self.resolving.read().unwrap().contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self.resolving
+            let chain: Vec<String> = self
+                .resolving
                 .read()
                 .unwrap()
                 .iter()
@@ -302,7 +311,10 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack.write().unwrap().push((entry.cache_key, entry.lifetime));
+        self.stack
+            .write()
+            .unwrap()
+            .push((entry.cache_key, entry.lifetime));
         let result = (entry.factory)(self as &dyn IServiceResolver);
         self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().remove(&entry.cache_key);
@@ -382,10 +394,7 @@ impl ServiceProvider {
     /// Validate all dependencies: detect cycles.
     /// Instances built during validation are stored in `cache` so they can
     /// be reused by the subsequent eager-init phase.
-    fn validate_dependencies(
-        store: &ServiceStore,
-        cache: &LazyCache,
-    ) -> Result<(), RdiError> {
+    fn validate_dependencies(store: &ServiceStore, cache: &LazyCache) -> Result<(), RdiError> {
         // Build TypeId → type_name map for error messages
         let type_names: HashMap<TypeId, &'static str> = store
             .iter()
@@ -570,10 +579,7 @@ impl ServiceProvider {
         Self::extract(arc)
     }
 
-    pub(crate) fn get_any_by_entry(
-        &self,
-        entry: &ServiceEntry,
-    ) -> Option<AnyService> {
+    pub(crate) fn get_any_by_entry(&self, entry: &ServiceEntry) -> Option<AnyService> {
         match entry.lifetime {
             ServiceLifetime::Singleton => {
                 // LazyCache::get_or_init_with：build 阶段已预热的走 fast path，
@@ -581,14 +587,20 @@ impl ServiceProvider {
                 // per-key OnceLock 保证多线程下工厂只执行一次，无 TOCTOU 竞态。
                 let factory = entry.factory.clone();
                 let resolver = self as &dyn IServiceResolver;
-                Some(self.singleton_cache.get_or_init_with(entry.cache_key, move || factory(resolver)))
+                Some(
+                    self.singleton_cache
+                        .get_or_init_with(entry.cache_key, move || factory(resolver)),
+                )
             }
             ServiceLifetime::Scoped => {
                 // Root scope 缓存：ServiceProvider 即 root scope，
                 // 从根解析 Scoped 服务在 root_scoped_cache 内复用。
                 let factory = entry.factory.clone();
                 let resolver = self as &dyn IServiceResolver;
-                Some(self.root_scoped_cache.get_or_init_with(entry.cache_key, move || factory(resolver)))
+                Some(
+                    self.root_scoped_cache
+                        .get_or_init_with(entry.cache_key, move || factory(resolver)),
+                )
             }
             ServiceLifetime::Transient => Some((entry.factory)(self)),
         }
@@ -602,10 +614,7 @@ impl ServiceProvider {
     ///   (ServiceProvider, i.e. root scope) as resolver, so Scoped deps
     ///   resolved transitively bind to the root scope (consistent with
     ///   `get_any_by_entry`'s Scoped root-cache semantics).
-    pub(crate) fn create_owned_any_by_entry(
-        &self,
-        entry: &ServiceEntry,
-    ) -> Option<AnyService> {
+    pub(crate) fn create_owned_any_by_entry(&self, entry: &ServiceEntry) -> Option<AnyService> {
         match entry.lifetime {
             ServiceLifetime::Singleton => None,
             ServiceLifetime::Scoped | ServiceLifetime::Transient => {
@@ -701,11 +710,7 @@ impl IServiceResolver for ServiceProvider {
         let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
         self.create_owned_any_by_entry(entry)
     }
-    fn get_keyed_owned_any(
-        &self,
-        key: &str,
-        variant: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let entry = self.entry_by_str(key, variant)?;
         self.create_owned_any_by_entry(entry)
     }

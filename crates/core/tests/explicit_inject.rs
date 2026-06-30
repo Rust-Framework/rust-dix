@@ -34,7 +34,11 @@ struct UnmarkedHandler {
 #[test]
 fn unmarked_field_uses_default_even_when_type_registered() {
     let p = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "registered".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "registered".into(),
+            })
+        })
         .transient(|r| __rdi_construct_UnmarkedHandler(r))
         .build()
         .unwrap();
@@ -136,8 +140,16 @@ struct MixedMarkedHandler {
 #[test]
 fn mixed_marked_and_unmarked_fields() {
     let p = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "main".into() }))
-        .keyed_singleton("audit", |_| Arc::new(common::Logger { prefix: "audit".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "main".into(),
+            })
+        })
+        .keyed_singleton("audit", |_| {
+            Arc::new(common::Logger {
+                prefix: "audit".into(),
+            })
+        })
         .transient(|_| Arc::new(common::MyService { value: 1 }))
         .keyed_transient("primary", |_| Arc::new(common::MyService { value: 2 }))
         .transient(|r| __rdi_construct_MixedMarkedHandler(r))

@@ -59,8 +59,14 @@ fn scoped_get_owned_bypasses_cache() {
 
     // get_owned did not pollute the cache: get() still returns the cached Arc.
     let c = p.get::<common::MyService>();
-    assert!(Arc::ptr_eq(&a, &c), "get_owned must not pollute root_scoped_cache");
-    assert_eq!(c.value, 0, "owned mutation must not leak into cached instance");
+    assert!(
+        Arc::ptr_eq(&a, &c),
+        "get_owned must not pollute root_scoped_cache"
+    );
+    assert_eq!(
+        c.value, 0,
+        "owned mutation must not leak into cached instance"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -194,7 +200,11 @@ struct MixedHandler {
 fn derive_inject_owned_field() {
     let p = ServiceCollection::new()
         .transient(|_| Arc::new(common::MyService { value: 0 }))
-        .singleton(|_| Arc::new(common::Logger { prefix: "log".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "log".into(),
+            })
+        })
         .transient(|r| __rdi_construct_MixedHandler(r))
         .build()
         .unwrap();
@@ -293,7 +303,11 @@ struct BlogHandler {
 fn mixed_handler_mutable_self_e2e() {
     let p = ServiceCollection::new()
         .transient(|_| Arc::new(DbContext::default()))
-        .singleton(|_| Arc::new(common::Logger { prefix: "ef".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "ef".into(),
+            })
+        })
         .transient(|r| __rdi_construct_BlogHandler(r))
         .build()
         .unwrap();
@@ -304,7 +318,11 @@ fn mixed_handler_mutable_self_e2e() {
     // &mut self methods work directly — no RwLock, no unsafe.
     h.ctx.add();
     h.ctx.add();
-    assert_eq!(h.ctx.total(), 2, "&mut self mutation succeeds on owned DbContext");
+    assert_eq!(
+        h.ctx.total(),
+        2,
+        "&mut self mutation succeeds on owned DbContext"
+    );
     assert_eq!(h.logger.prefix, "ef");
 }
 

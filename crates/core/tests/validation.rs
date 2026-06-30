@@ -16,7 +16,7 @@ fn circular_dependency_self_reference() {
         .build();
     assert!(result.is_err());
     match result {
-        Err(RdiError::CircularDependency(_)) => {},
+        Err(RdiError::CircularDependency(_)) => {}
         _ => panic!("Expected CircularDependency"),
     }
 }
@@ -35,7 +35,7 @@ fn circular_dependency_indirect() {
         .build();
     assert!(result.is_err());
     match result {
-        Err(RdiError::CircularDependency(_)) => {},
+        Err(RdiError::CircularDependency(_)) => {}
         _ => panic!("Expected CircularDependency"),
     }
 }
@@ -223,7 +223,7 @@ fn scoped_correct_usage() {
         ServiceCollection::new()
             .scoped(|_| Arc::new(ServiceA))
             .build()
-            .unwrap()
+            .unwrap(),
     );
 
     let scope = provider.scope();
@@ -332,8 +332,7 @@ fn root_scope_scoped_factory_executed_once_under_concurrency() {
             s
         }));
     }
-    let results: Vec<Arc<ScopedService>> =
-        handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let results: Vec<Arc<ScopedService>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
     assert_eq!(
         SCOPED_CALLS.load(Ordering::SeqCst),
@@ -342,10 +341,7 @@ fn root_scope_scoped_factory_executed_once_under_concurrency() {
     );
     assert_eq!(results[0].0, 0, "唯一实例应携带序号 0");
     for r in &results {
-        assert!(
-            Arc::ptr_eq(&results[0], r),
-            "所有线程应拿到同一 Arc 实例"
-        );
+        assert!(Arc::ptr_eq(&results[0], r), "所有线程应拿到同一 Arc 实例");
     }
 }
 

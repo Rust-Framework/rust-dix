@@ -76,8 +76,7 @@ fn scope_transient_scoped_dependency_binds_to_child_scope() {
     // 而非回退到根 root_scoped_cache（MEDI 子 scope 隔离语义）。
     // 若 scope.rs 的 Transient 分支错误地用 self.parent 解析依赖，
     // 两个子 scope 的 Transient 内的 Scoped 会指向根缓存同一实例。
-    static SCOPED_CALLS: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(0);
+    static SCOPED_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     use std::sync::atomic::Ordering;
 
     struct ScopedDep(u64);

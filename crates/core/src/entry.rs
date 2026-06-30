@@ -91,12 +91,7 @@ pub trait IServiceResolver: Send + Sync {
             .downcast::<Arc<T>>()
             .ok()
             .map(|d| Arc::clone(&*d))
-            .unwrap_or_else(|| {
-                panic!(
-                    "get_owned: type mismatch: {}",
-                    std::any::type_name::<T>()
-                )
-            });
+            .unwrap_or_else(|| panic!("get_owned: type mismatch: {}", std::any::type_name::<T>()));
         Arc::try_unwrap(arc_t).unwrap_or_else(|_| {
             panic!(
                 "get_owned: {} is shared (refcount > 1)",
@@ -111,10 +106,7 @@ pub trait IServiceResolver: Send + Sync {
         Self: Sized,
     {
         let arc_any = self.get_owned_any(std::any::type_name::<T>())?;
-        let arc_t: Arc<T> = arc_any
-            .downcast::<Arc<T>>()
-            .ok()
-            .map(|d| Arc::clone(&*d))?;
+        let arc_t: Arc<T> = arc_any.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d))?;
         Arc::try_unwrap(arc_t).ok()
     }
 
@@ -158,10 +150,7 @@ pub trait IServiceResolver: Send + Sync {
         Self: Sized,
     {
         let arc_any = self.get_keyed_owned_any(std::any::type_name::<T>(), variant)?;
-        let arc_t: Arc<T> = arc_any
-            .downcast::<Arc<T>>()
-            .ok()
-            .map(|d| Arc::clone(&*d))?;
+        let arc_t: Arc<T> = arc_any.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d))?;
         Arc::try_unwrap(arc_t).ok()
     }
 }
