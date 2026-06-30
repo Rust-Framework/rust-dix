@@ -525,21 +525,30 @@ let provider = ServiceCollection::from_injected()
 **功能：** 标注在 struct 上，在编译期生成三项代码：
 
 1. 一个构造函数 `__rdi_construct_<StructName>(resolver: &dyn IServiceResolver) -> Arc<StructName>`，
-   自动从 DI 容器解析所有命名字段
+   自动从 DI 容器解析所有**标记了 `#[inject(...)]` 的**命名字段（未标记字段用 `Default::default()`）
 2. 一个工厂函数，将构造函数包装为 `ServiceFactory` 签名
 3. 通过 `rust_dicore::inventory::submit!` 提交 `ServiceRegistration` 条目，供
    `ServiceCollection::from_injected()` 收集
 
-**字段属性（`#[rdi(...)]`）：**
+**字段属性（`#[inject(...)]`）：**
 
-在 struct 字段上使用的辅助属性：
+显式注入策略：只有标记了 `#[inject(...)]` 的字段才从容器解析，未标记字段使用 `Default::default()`。
+可选性由字段类型（`Option<...>`）决定，无需额外标记。
 
-| 属性 | 含义 |
-|------|------|
-| `#[rdi(skip)]` | 该字段使用 `Default::default()`，不从容器解析 |
-| `#[rdi(optional)]` | 该字段解析为 `Option<Arc<T>>`，服务未注册时返回 `None` |
-| `#[rdi(provider)]` | 该字段注入 `dyn IServiceResolver` 本身 |
-| `#[rdi(key = "...")]` | 该字段按 key 解析键控服务 |
+| 属性 | 字段类型 | 含义 |
+|------|---------|------|
+| *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
+| `#[inject]` | `Arc<T>` | 必选共享 — 未注册则 panic |
+| `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享，找不到 key 则 panic |
+| `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
+| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
+| `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
+| `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver 自身 |
+
+> 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
+> `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
 
 **示例：**
 
@@ -563,10 +572,9 @@ impl ILogger for ConsoleLogger {
 // 字段属性示例
 #[rust_dicore::inject(singleton)]
 struct AppService {
-    #[rdi(optional)]
+    #[inject]
     logger: Option<Arc<dyn ILogger>>,
-    #[rdi(skip)]
-    name: String,
+    name: String,  // 未标记 → Default::default()
 }
 
 let provider = ServiceCollection::from_injected()
@@ -588,7 +596,7 @@ struct MyService { /* ... */ }
 构造函数。与 `#[rust_dicore::inject]` 的区别：**不自注册到容器**，仅生成构造函数代码，
 需手动通过 `ServiceCollection::new().transient(|p| __rdi_construct_MyService(p))` 等方式注册。
 
-字段属性 `#[rdi(...)]` 的语义与 `#[rust_dicore::inject]` 相同。
+字段属性 `#[inject(...)]` 的语义与 `#[rust_dicore::inject]` 相同。
 
 ### `#[rust_dicore::module]` — 编译期模块扫描
 

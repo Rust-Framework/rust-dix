@@ -264,14 +264,16 @@ assert_eq!(ctx.total(), 1);
 | **Scoped** | Bypasses cache, new instance each call ✓ |
 | **Singleton** | Panics (shared instance cannot be owned); use `try_get_owned` for `None` |
 
-**With `#[derive(Inject)]`**: a bare `T` field is auto-resolved as owned;
-`Arc<T>` fields stay shared. `Option<T>` → `try_get_owned`,
+**With `#[derive(Inject)]`**: mark bare `T` fields with `#[inject(owned)]`
+and `Arc<T>` fields with `#[inject]`. `Option<T>` → `try_get_owned`,
 `Option<Arc<T>>` → `try_get`:
 
 ```rust
 #[derive(Inject)]
 struct Handler {
+    #[inject(owned)]
     ctx: DbContext,           // owned  → get_owned
+    #[inject]
     logger: Arc<Logger>,      // shared → get
 }
 // ...

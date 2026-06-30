@@ -2,7 +2,7 @@
 
 rust-dicore（原 lrdi）的过程宏近期经历了一次重构：crate 名称从 `lrdi` 改为 `rust-dicore`，属性宏 `inject_attr` 改名为 `inject`，函数式宏 `inject!` 改名为 `register!`，并移除了 `as = dyn Trait` 语法，改为通过在 `impl Trait for T` 块上放置 `#[inject]` 来实现接口注册。
 
-本指南面向新 API 编写。所有示例使用 `rust_dicore::` 导入路径与 `#[rdi(...)]` 字段属性。
+本指南面向新 API 编写。所有示例使用 `rust_dicore::` 导入路径与 `#[inject(...)]` 字段属性。
 
 ---
 
@@ -26,7 +26,7 @@ rust-dicore 的过程宏体系围绕三个**正交**的放置位置展开，理�
 > - `lrdi::` → `rust_dicore::`；`lrdi-macros` → `rust-dicore-macros`
 > - `#[lrdi::inject_attr(...)]` → `#[rust_dicore::inject(...)]`（属性宏改名）
 > - `lrdi::inject!(...)` → `rust_dicore::register!(...)`（函数式宏改名，让出 `inject` 名字给属性宏——Rust 不允许同一 crate 内属性宏与函数式宏同名）
-> - `#[inject(...)]` 字段属性 → `#[rdi(...)]`（派生宏声明改为 `#[proc_macro_derive(Inject, attributes(rdi))]`）
+> - 字段属性统一为 `#[inject(...)]`（派生宏声明为 `#[proc_macro_derive(Inject, attributes(inject))]`）。**显式注入**：只有标记了 `#[inject]` / `#[inject(owned)]` 的字段才从容器解析，未标记字段用 `Default::default()`。可选性由字段类型 `Option<...>` 决定，不再有 `skip`/`optional` 标记。
 > - **`as = dyn Trait` 与 `as = [dyn A, dyn B]` 语法已移除**。`InjectArgs` 不再有 `Plain`/`AsTrait`/`AsTraits` 变体。接口注册改用「在 `impl Trait for T` 上放 `#[inject]`」的方式。
 
 ---
@@ -82,8 +82,7 @@ trait IPlugin: Send + Sync {
 // 第一步：struct 上用 #[derive(Inject)] 生成构造函数（不注册）
 #[derive(Inject)]
 struct TestPlugin {
-    #[rdi(skip)]
-    name: &'static str,
+    name: &'static str,  // 未标记 → Default::default()
 }
 
 impl IPlugin for TestPlugin {
@@ -151,7 +150,7 @@ struct 放置的展开由 `expand_inject_struct` 完成，分为五个阶段：
 
 **阶段 2：解析结构体字段**
 
-遍历 `Fields::Named`（也支持 `Fields::Unit`），对每个字段调用 `parse_ia`，扫描字段上的 `#[rdi(...)]` 属性填充 `IA` 结构体（详见 §3.3）。
+遍历 `Fields::Named`（也支持 `Fields::Unit`），对每个字段调用 `parse_ia`，扫描字段上的 `#[inject(...)]` 属性填充 `IA` 结构体（详见 §3.3）。
 
 **阶段 3：生成构造器函数**
 
@@ -204,15 +203,15 @@ rust_dicore::inventory::submit! {
 }
 ```
 
-**最后：剥离字段上的 `#[rdi(...)]` 属性后输出 struct。**
+**最后：剥离字段上的 `#[inject(...)]` 属性后输出 struct。**
 
-由于没有 `#[derive(Inject)]` 时编译器不认识 `rdi` 这个 helper attribute，`expand_inject_struct` 在输出 struct 前会 `retain` 掉字段上所有 `path` 为 `rdi` 的属性，避免编译错误：
+由于没有 `#[derive(Inject)]` 时编译器不认识 `inject` 这个 helper attribute，`expand_inject_struct` 在输出 struct 前会 `retain` 掉字段上所有 `path` 为 `inject` 的属性，避免编译错误：
 
 ```rust
 let mut stripped = struct_item.clone();
 if let syn::Fields::Named(n) = &mut stripped.fields {
     for field in n.named.iter_mut() {
-        field.attrs.retain(|a| !a.path().is_ident("rdi"));
+        field.attrs.retain(|a| !a.path().is_ident("inject"));
     }
 }
 ```
@@ -314,9 +313,9 @@ rust_dicore::inventory::submit! {
 ```rust
 #[rust_dicore::inject(singleton)]
 struct MyService {
+    #[inject]
     logger: Arc<Logger>,
-    #[rdi(skip)]
-    label: String,
+    label: String,  // 未标记 → Default::default()
 }
 ```
 
@@ -337,7 +336,7 @@ struct MyService { /* ... */ }
 trait IPlugin: Send + Sync { fn name(&self) -> &'static str; }
 
 #[derive(Inject)]
-struct TestPlugin { #[rdi(skip)] name: &'static str }
+struct TestPlugin { name: &'static str }  // 未标记 → Default::default()
 
 impl IPlugin for TestPlugin {
     fn name(&self) -> &'static str { self.name }
@@ -372,18 +371,26 @@ impl ILogger for DualService {}
 
 生成 `__rdi_factory_DualService_for_IPlugin` 与 `__rdi_factory_DualService_for_ILogger` 两个独立注册，两者复用同一个 `__rdi_construct_DualService` 构造函数。
 
-#### 语法 4：字段 `#[rdi(...)]` 属性
+#### 语法 4：字段 `#[inject(...)]` 属性
 
-struct 上的 `#[rust_dicore::inject]` 与 `#[derive(Inject)]` 共用同一套字段属性，但属性名是 `rdi`（不是旧的 `inject`）：
+struct 上的 `#[rust_dicore::inject]` 与 `#[derive(Inject)]` 共用同一套字段属性，属性名为 `inject`。
+**显式注入策略**：只有标记了 `#[inject(...)]` 的字段才从容器解析，未标记字段使用 `Default::default()`。
+可选性由字段类型（`Option<...>`）决定，无需 `optional` 标记。
 
 | 属性 | 字段类型 | 含义 |
 |------|---------|------|
-| 无标记 | `Arc<T>` | 必须注册，否则 panic |
-| `#[rdi(skip)]` | 任意（需 `Default`） | 使用 `Default::default()` |
-| `#[rdi(optional)]` | `Option<Arc<T>>` | 可选，未注册时返回 `None` |
-| `#[rdi(key = "k")]` | `Arc<T>` | 键控解析，必须注册 |
-| `#[rdi(optional, key = "k")]` | `Option<Arc<T>>` | 键控可选 |
-| `#[rdi(provider)]` | `Arc<dyn IServiceResolver>` | 直接注入 resolver |
+| *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
+| `#[inject]` | `Arc<T>` | 必选共享 — 未注册则 panic |
+| `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享，找不到 key 则 panic |
+| `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
+| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
+| `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
+| `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 直接注入 resolver |
+
+> 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
+> `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
 
 详见 §3.3。
 
@@ -450,8 +457,7 @@ use std::sync::Arc;
 // ── 普通注册（struct 上）──
 #[rust_dicore::inject(singleton)]
 struct Logger {
-    #[rdi(skip)]
-    prefix: String,
+    prefix: String,  // 未标记 → Default::default()
 }
 
 impl Default for Logger {
@@ -465,8 +471,7 @@ trait IPlugin: Send + Sync {
 
 #[derive(Inject)]
 struct TestPlugin {
-    #[rdi(skip)]
-    name: &'static str,
+    name: &'static str,  // 未标记 → Default::default()
 }
 
 impl IPlugin for TestPlugin {
@@ -500,14 +505,14 @@ impl ILogger for DualService {}
 // ── 字段注入完整示例 ──
 #[rust_dicore::inject(singleton)]
 struct OrderService {
+    #[inject]
     logger: Arc<Logger>,
-    #[rdi(optional)]
+    #[inject]
     notifier: Option<Arc<Logger>>,
-    #[rdi(key = "audit")]
+    #[inject(key = "audit")]
     audit: Arc<Logger>,
-    #[rdi(skip)]
-    label: String,
-    #[rdi(provider)]
+    label: String,  // 未标记 → Default::default()
+    #[inject(provider)]
     resolver: Arc<dyn IServiceResolver>,
 }
 
@@ -553,8 +558,10 @@ fn main() -> Result<(), RdiError> {
 | `"#[inject] does not support negative impls"` | 用在 `impl !Trait for T` 上 | 移除属性，不支持 negative impl |
 | `"expected a path type"` | impl 的 self type 不是路径类型 | 确保 `for` 后是简单路径类型 |
 | `unknown lifetime: ...` | 生命周期参数拼写错误 | 使用 `singleton`、`scoped` 或 `transient` |
-| `#[rdi]` 属性解析失败 | 字段属性拼写错误，如 `#[rdi(keyed = "...")]` | 仅支持 `skip`、`optional`、`key`、`provider` |
-| `Default` 缺失 | `#[rdi(skip)]` 或 impl 块复用的构造函数要求 `Default` | 为该类型实现 `Default` |
+| `#[inject]` 属性解析失败 | 字段属性拼写错误，如 `#[inject(keyed = "...")]` | 仅支持 `owned`、`provider`、`key` |
+| `Default` 缺失 | 未标记字段或 impl 块复用的构造函数要求 `Default` | 为该类型实现 `Default` |
+| `#[inject] requires Arc<T> or Option<Arc<T>>` | `#[inject]` 标在了裸 `T` 字段上 | 改用 `#[inject(owned)]` |
+| `#[inject(owned)] requires bare T or Option<T>` | `#[inject(owned)]` 标在了 `Arc<T>` 字段上 | 改用 `#[inject]` |
 | 运行时 panic `"svc not registered"` | 依赖未注册 | 检查 `from_injected()` 或手动注册 |
 | 运行时 panic `"keyed not found"` | 键控依赖未注册 | 确保键名拼写匹配 |
 
@@ -566,7 +573,7 @@ fn main() -> Result<(), RdiError> {
 > 推荐使用 `#[rust_dicore::inject(...)]` 替代——后者在相同构造函数生成能力的基础上额外自动完成 inventory 注册。
 > 以下内容供需要手动控制注册流程、为 impl 块提供构造函数、或理解底层原理时参考。
 
-派生宏声明为 `#[proc_macro_derive(Inject, attributes(rdi))]`，因此字段上的 helper 属性名是 **`rdi`**（不是 `inject`）。
+派生宏声明为 `#[proc_macro_derive(Inject, attributes(inject))]`，因此字段上的 helper 属性名是 **`inject`**。
 
 ### 3.1 宏展开原理
 
@@ -599,30 +606,32 @@ fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStr
 
 若为元组结构体，报错 `"named fields or unit struct"`；若不是 struct（enum/union），报错 `"struct only"`。
 
-**第二阶段：遍历字段，解析 `#[rdi(...)]` 属性**
+**第二阶段：遍历字段，解析 `#[inject(...)]` 属性**
 
 对每个字段调用 `parse_ia`，扫描字段属性并填充 `IA` 结构体：
 
 ```rust
 #[derive(Default)]
 struct IA {
-    skip: bool,
-    optional: bool,
-    provider: bool,
+    inject: bool,      // 是否有 #[inject] 标记（非 provider）
+    owned: bool,       // owned 注入
+    provider: bool,    // 注入 resolver
     key: Option<String>,
 }
 fn parse_ia(f: &Field) -> IA {
     let mut a = IA::default();
     for attr in &f.attrs {
-        if !attr.path().is_ident("rdi") {   // ← 注意是 "rdi"，不是 "inject"
+        if !attr.path().is_ident("inject") {   // ← 字段 helper 属性名是 "inject"
             continue;
         }
-        let Ok(l) = attr.meta.require_list() else { continue; };
+        a.inject = true;
+        let Ok(l) = attr.meta.require_list() else { continue; };  // #[inject] 无 list → 仅共享注入标记
         l.parse_nested_meta(|m| {
-            if m.path.is_ident("skip") { a.skip = true; }
-            else if m.path.is_ident("optional") { a.optional = true; }
-            else if m.path.is_ident("provider") { a.provider = true; }
-            else if m.path.is_ident("key") {
+            if m.path.is_ident("owned") { a.owned = true; }
+            else if m.path.is_ident("provider") {
+                a.provider = true;
+                a.inject = false;
+            } else if m.path.is_ident("key") {
                 a.key = Some(m.value()?.parse::<syn::LitStr>()?.value());
             }
             Ok(())
@@ -634,16 +643,16 @@ fn parse_ia(f: &Field) -> IA {
 
 **第三阶段：为每个字段生成解析表达式**
 
-先调用 `saw(&field.ty)` 获取剥离包装后的内层类型（详见 §3.2），然后按优先级生成代码片段：
+`gen_field_init` 返回 `syn::Result<TokenStream>`（支持编译期类型校验报错）。先调用 `classify_field(&field.ty)` 获取内层类型与 `FieldKind`（详见 §3.2），再按标记分发：
 
-| 优先级 | 判断条件 | 生成逻辑 |
-|-------|---------|---------|
-| 1 | `attrs.skip == true` | `Default::default()` |
-| 2 | `attrs.provider == true` | `resolver.clone()` |
-| 3 | `attrs.optional == true` 且 有 key | `get_keyed_any` → downcast → `map(Arc::clone)`（返回 Option） |
-| 4 | `attrs.optional == true` 且 无 key | `get_any` → downcast → `map(Arc::clone)`（返回 Option） |
-| 5 | 有 key（非 optional） | `get_keyed_any` → downcast → `unwrap_or_else(panic!("keyed not found"))` |
-| 6 | 无标记（默认） | `get_any` → downcast → `unwrap_or_else(panic!("svc not registered"))` |
+| 判断条件 | FieldKind 校验 | 生成逻辑 |
+|---------|---------------|---------|
+| 未标记（`!inject && !provider`） | 不校验 | `Default::default()` |
+| `provider` | 不校验 | `resolver.clone()` |
+| `inject && !owned` | 必须 `Arc` / `OptionArc`，否则 `syn::Error` | `OptionArc` → `get(_keyed)_any` 返回 Option；`Arc` → `get(_keyed)_any` + `unwrap_or_else(panic!)` |
+| `inject && owned` | 必须 `Owned` / `OptionOwned`，否则 `syn::Error` | `OptionOwned` → `get(_keyed)_owned_any` + `try_unwrap` 返回 Option；`Owned` → + `unwrap_or_else(panic!)` |
+
+可选性完全由 `FieldKind::OptionArc` / `OptionOwned`（即字段类型 `Option<...>`）决定，无需 `optional` 标记。
 
 **第四阶段：生成构造器函数**
 
@@ -664,98 +673,109 @@ pub fn __rdi_construct_{Name}(resolver: &dyn rust_dicore::IServiceResolver)
 
 ---
 
-### 3.2 `saw()` 函数——类型剥离
+### 3.2 `classify_field()` 函数——类型分类
 
-`saw()` 从字段类型中剥离外层包装，提取出内层的实际类型 `T`。
+`classify_field()` 从字段类型中剥离外层包装，提取内层类型 `T` 并返回 `FieldKind`，供 `gen_field_init` 决定解析路径与类型校验。
 
 ```rust
-fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
-    // 返回值：(inner_type_tokens, is_arc)
+#[derive(Clone, Copy, PartialEq)]
+enum FieldKind {
+    Arc,          // Arc<T>           → 共享注入
+    OptionArc,    // Option<Arc<T>>   → 可选共享
+    Owned,        // 裸 T             → owned 注入
+    OptionOwned,  // Option<T>        → 可选 owned
+}
+
+fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
+    // 返回值：(inner_type_tokens, FieldKind)
 }
 ```
 
 **识别规则：**
 
-| 输入类型 | 输出 `inner` | `is_arc` | 说明 |
-|---------|-------------|----------|------|
-| `Arc<Logger>` | `Logger` | `true` | 匹配 `Path("Arc")` 且包含泛型参数 |
-| `Option<Arc<MyService>>` | `MyService` | `true` | 嵌套匹配：`Option` → `Arc` → 泛型参数 |
-| `String` | `String` | `false` | 不匹配任何包装，原样返回 |
-| `Arc<dyn ITrait>` | `dyn ITrait` | `true` | trait object 同样支持 |
+| 输入类型 | 输出 `inner` | `FieldKind` | 说明 |
+|---------|-------------|------------|------|
+| `Arc<Logger>` | `Logger` | `Arc` | 匹配 `Path("Arc")` 且含泛型参数 |
+| `Option<Arc<MyService>>` | `MyService` | `OptionArc` | 嵌套匹配：`Option` → `Arc` → 泛型参数 |
+| `Option<MyService>` | `MyService` | `OptionOwned` | `Option<T>` 中 `T` 非 `Arc` |
+| `String` / 裸 `T` | `String` / `T` | `Owned` | 不匹配任何包装，原样返回 |
+| `Arc<dyn ITrait>` | `dyn ITrait` | `Arc` | trait object 同样支持 |
 
 **实现细节**（出自 `crates/rust-dicore-macros/src/lib.rs`）：
 
 ```rust
-fn saw(ty: &syn::Type) -> (proc_macro2::TokenStream, bool) {
+fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
     if let syn::Type::Path(p) = ty {
-        let l = p.path.segments.last().unwrap();
-        // 匹配 Arc<T>
-        if l.ident == "Arc" {
-            if let syn::PathArguments::AngleBracketed(a) = &l.arguments {
-                if let Some(syn::GenericArgument::Type(i)) = a.args.first() {
-                    return (quote! {#i}, true);
+        if let Some(last) = p.path.segments.last() {
+            match last.ident.to_string().as_str() {
+                "Arc" => {
+                    if let Some(inner) = single_generic_type(last) {
+                        return (quote! {#inner}, FieldKind::Arc);
+                    }
                 }
-            }
-        }
-        // 匹配 Option<Arc<T>>
-        if l.ident == "Option" {
-            if let syn::PathArguments::AngleBracketed(a) = &l.arguments {
-                if let Some(syn::GenericArgument::Type(syn::Type::Path(ip))) = a.args.first() {
-                    if ip.path.segments.last()
-                        .map(|s| s.ident == "Arc").unwrap_or(false)
-                    {
-                        if let syn::PathArguments::AngleBracketed(ia) =
-                            &ip.path.segments.last().unwrap().arguments
-                        {
-                            if let Some(syn::GenericArgument::Type(t)) = ia.args.first() {
-                                return (quote! {#t}, true);
+                "Option" => {
+                    if let Some(inner_ty) = single_generic_type(last) {
+                        if let syn::Type::Path(ip) = inner_ty {
+                            if let Some(ilast) = ip.path.segments.last() {
+                                if ilast.ident == "Arc" {
+                                    if let Some(t) = single_generic_type(ilast) {
+                                        return (quote! {#t}, FieldKind::OptionArc);
+                                    }
+                                } else {
+                                    // Option<T> where T is not Arc → OptionOwned
+                                    return (quote! {#inner_ty}, FieldKind::OptionOwned);
+                                }
                             }
                         }
                     }
                 }
+                _ => {}
             }
         }
     }
-    (quote! {#ty}, false)
+    (quote! {#ty}, FieldKind::Owned)
 }
 ```
 
-该函数提取的内层类型用于 `::std::any::type_name::<#inner>()` 调用，即用于类型名称字符串查找。
+`FieldKind` 同时承担两个职责：决定解析 API（`get_any` vs `get_owned_any`）与**严格类型校验**——`#[inject]` 拒绝非 `Arc`/`OptionArc`，`#[inject(owned)]` 拒绝非 `Owned`/`OptionOwned`，由 `gen_field_init` 返回 `syn::Error` 触发编译错误。
 
 ---
 
 ### 3.3 字段属性完整参考表
 
-字段属性名是 **`rdi`**（与派生宏声明 `#[proc_macro_derive(Inject, attributes(rdi))]` 对应）：
+字段属性名是 **`inject`**（与派生宏声明 `#[proc_macro_derive(Inject, attributes(inject))]` 对应）。显式注入：未标记字段用 `Default::default()`，可选性由 `FieldKind`（`Option<...>`）决定：
 
 | 属性标记 | 字段类型要求 | 解析行为 | 未找到时行为 |
 |---------|------------|---------|------------|
-| **无标记** | `Arc<T>` | `resolver.get_any(type_name::<T>())` → downcast 到 `Arc<T>` | **panic!** `"svc not registered"` |
-| `#[rdi(skip)]` | 任意（需实现 `Default`） | `Default::default()` | N/A（直接使用默认值） |
-| `#[rdi(optional)]` | `Option<Arc<T>>` | `resolver.get_any` → downcast → `map(Arc::clone)` | 返回 `None`（不 panic） |
-| `#[rdi(key = "k")]` | `Arc<T>` | `resolver.get_keyed_any(type_name::<T>(), "k")` → downcast | **panic!** `"keyed not found"` |
-| `#[rdi(optional, key = "k")]` | `Option<Arc<T>>` | `resolver.get_keyed_any` → downcast → `map` | 返回 `None`（不 panic） |
-| `#[rdi(provider)]` | `Arc<dyn IServiceResolver>` | `resolver.clone()` | N/A（直接传入 resolver） |
+| **无标记** | 任意（需 `Default`） | `Default::default()` | N/A（直接使用默认值） |
+| `#[inject]` | `Arc<T>` | `resolver.get_any(type_name::<T>())` → downcast 到 `Arc<T>` | **panic!** `"svc not registered"` |
+| `#[inject]` | `Option<Arc<T>>` | `resolver.get_any` → downcast → `map(Arc::clone)` | 返回 `None`（不 panic） |
+| `#[inject(key = "k")]` | `Arc<T>` | `resolver.get_keyed_any(type_name::<T>(), "k")` → downcast | **panic!** `"keyed not found"` |
+| `#[inject(key = "k")]` | `Option<Arc<T>>` | `resolver.get_keyed_any` → downcast → `map` | 返回 `None`（不 panic） |
+| `#[inject(owned)]` | 裸 `T` | `resolver.get_owned_any(type_name::<T>())` → downcast → `try_unwrap` | **panic!** `"owned svc not registered or Singleton"` |
+| `#[inject(owned)]` | `Option<T>` | `resolver.get_owned_any` → downcast → `try_unwrap` → `map` | 返回 `None`（不 panic） |
+| `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | `resolver.get_keyed_owned_any(type_name::<T>(), "k")` → downcast → `try_unwrap` | panic / `None`（同上） |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | `resolver.clone()` | N/A（直接传入 resolver） |
 
 **属性组合规则：**
 
-- `skip` 为最高优先级，一旦设置，`optional`、`key`、`provider` 均被忽略
-- `provider` 为第二优先级，设置后 `optional` 和 `key` 被忽略
-- `optional` 与 `key` 可组合使用
-- `skip`、`optional`、`provider` 不可同时使用（虽不会报错，但仅有最高优先级的生效）
+- `provider` 与 `owned`/`key` 互斥：`provider` 设置后 `inject` 置 false，仅注入 resolver
+- `owned` 与 `key` 可组合：`#[inject(owned, key = "k")]` 表示键控 owned
+- `key` 可与共享 `#[inject]` 或 owned `#[inject(owned)]` 组合，不能与 `provider` 组合
+- 可选性不由标记决定，而由字段类型 `Option<...>` 决定（`FieldKind::OptionArc` / `OptionOwned`）
 
 ---
 
 ### 3.4 实战：完整服务定义
 
-以下示例展示一个包含全部 6 种字段类型的 `OrderService`：
+以下示例展示一个覆盖全部字段形态的 `OrderService`：
 
 ```rust
 use rust_dicore::*;
 use rust_dicore_macros::Inject;
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
-// 被 skip 的类型必须实现 Default
+// 未标记字段类型必须实现 Default
 #[derive(Default)]
 struct Counter(AtomicU64);
 
@@ -763,30 +783,34 @@ impl Counter {
     fn next(&self) -> u64 { self.0.fetch_add(1, Ordering::SeqCst) }
 }
 
-// 带有全部 6 种字段类型的完整服务
+// 覆盖全部字段形态的完整服务
 #[derive(Inject)]
 struct OrderService {
-    // 1. 无标记：必须已注册，否则 panic
+    // 1. #[inject] 必选共享：必须已注册，否则 panic
+    #[inject]
     logger: Arc<Logger>,
 
-    // 2. skip：使用 Default::default()
-    #[rdi(skip)]
+    // 2. 未标记：内部字段，使用 Default::default()
     counter: Counter,
 
-    // 3. optional：可选的依赖，未注册时返回 None
-    #[rdi(optional)]
+    // 3. #[inject] 可选共享：未注册时返回 None（由 Option 类型决定）
+    #[inject]
     notifier: Option<Arc<Notifier>>,
 
-    // 4. key：按键解析，必须已注册，否则 panic
-    #[rdi(key = "order-logger")]
+    // 4. #[inject(key)] 键控共享：必须已注册，否则 panic
+    #[inject(key = "order-logger")]
     order_logger: Arc<Logger>,
 
-    // 5. optional + key：按键可选解析
-    #[rdi(optional, key = "audit")]
+    // 5. #[inject(key)] 可选键控共享：未注册键 → None
+    #[inject(key = "audit")]
     audit_logger: Option<Arc<Logger>>,
 
-    // 6. provider：直接获取 resolver
-    #[rdi(provider)]
+    // 6. #[inject(owned)] 必选 owned：未注册或 Singleton 则 panic
+    #[inject(owned)]
+    ctx: DbContext,
+
+    // 7. #[inject(provider)]：直接获取 resolver
+    #[inject(provider)]
     resolver: Arc<dyn IServiceResolver>,
 }
 
@@ -796,12 +820,15 @@ struct Logger { prefix: String }
 #[derive(Default)]
 struct Notifier;
 
+struct DbContext { n: u64 }
+
 // 注册所有依赖
 fn build_provider() -> Result<Arc<ServiceProvider>, RdiError> {
     Ok(Arc::new(ServiceCollection::new()
         .singleton(|_| Arc::new(Logger { prefix: "main".into() }))
         .keyed("order-logger", |_| Arc::new(Logger { prefix: "order".into() }))
         .singleton(|_| Arc::new(Notifier))
+        .transient(|_| Arc::new(DbContext { n: 0 }))
         .build()?))
 }
 
@@ -810,11 +837,12 @@ fn test_order_service() {
     let provider = build_provider().unwrap();
     let service = __rdi_construct_OrderService(&provider);
 
-    assert_eq!(service.logger.prefix, "main");          // 无标记解析
-    assert_eq!(service.counter.next(), 0);               // skip → Default
-    assert!(service.notifier.is_some());                 // optional → Some
-    assert_eq!(service.order_logger.prefix, "order");    // 键控解析
+    assert_eq!(service.logger.prefix, "main");          // #[inject] 共享
+    assert_eq!(service.counter.next(), 0);               // 未标记 → Default
+    assert!(service.notifier.is_some());                 // 可选共享 → Some
+    assert_eq!(service.order_logger.prefix, "order");    // 键控共享
     assert!(service.audit_logger.is_none());             // 未注册键 → None
+    // service.ctx 是 owned DbContext（每次新建）
     // service.resolver 可直接用于后续解析
 }
 ```
@@ -827,8 +855,10 @@ fn test_order_service() {
 |---------|------|---------|
 | `"named fields or unit struct"` | 结构体是元组结构体（如 `struct Foo(i32)`） | 改为 `struct Foo { field: T }` 或单元结构体 `struct Foo;` |
 | `"struct only"` | 对 `enum` 或 `union` 使用了 `#[derive(Inject)]` | 仅对 `struct` 使用此宏 |
-| `#[rdi]` 属性解析失败 | 属性拼写错误，如 `#[rdi(keyed = "...")]` 或误用 `#[inject(...)]` | 检查属性名是 `rdi`，键名仅 `skip`、`optional`、`key`、`provider` |
-| `Default` trait 缺失 | 被 `#[rdi(skip)]` 标记的字段类型未实现 `Default` | 为该类型实现 `Default`，如 `#[derive(Default)]` 或手动 `impl` |
+| `#[inject]` 属性解析失败 | 属性拼写错误，如 `#[inject(keyed = "...")]` | 检查属性名是 `inject`，子标记仅 `owned`、`provider`、`key` |
+| `#[inject] requires Arc<T> or Option<Arc<T>>` | `#[inject]` 标在了裸 `T` 字段上 | 改用 `#[inject(owned)]` |
+| `#[inject(owned)] requires bare T or Option<T>` | `#[inject(owned)]` 标在了 `Arc<T>` 字段上 | 改用 `#[inject]` |
+| `Default` trait 缺失 | 未标记字段类型未实现 `Default` | 为该类型实现 `Default`，如 `#[derive(Default)]` 或手动 `impl` |
 | 运行时 panic `"svc not registered"` / `"keyed not found"` | 对应服务未注册 | 检查 `ServiceCollection` 注册：类型名和 key 必须匹配 |
 
 ---
@@ -1286,7 +1316,7 @@ fn build_with_feature_toggle(enable_cache: bool) -> Result<Arc<ServiceProvider>,
 | **自动注册（dyn Trait）** | ❌ 手写 | ✅ inventory（impl 块放置） | ❌ 手写 | ✅（`dyn T => Impl` 语法） |
 | **控制粒度** | 最细，完全可控 | 中等 | 消除构造器样板 | 消除注册样板 |
 | **代码量** | 最多 | 最少 | 中等（需手写注册） | 较少 |
-| **灵活性** | 最高 | 较高 | 中等（需配合 `#[rdi(provider)]`） | 较低（局限于 Default 构造） |
+| **灵活性** | 最高 | 较高 | 中等（需配合 `#[inject(provider)]`） | 较低（局限于 Default 构造） |
 | **编译期安全** | 运行时发现缺失 | 运行时 panic 缺失 | 运行时 panic 缺失 | 编译期检测重复 key |
 | **适用场景** | 复杂依赖链 | **通用首选** | 仅需构造函数、为 impl 块提供构造器 | 外部类型、条件编译、插件 |
 
@@ -1349,9 +1379,11 @@ struct Logger { prefix: String }
 
 #[rust_dicore::inject(singleton)]
 struct OrderProcessor {
+    #[inject]
     logger: Arc<Logger>,
+    #[inject]
     db_config: Arc<DatabaseConfig>,
-    #[rdi(optional)]
+    #[inject]
     cache_config: Option<Arc<CacheConfig>>,
 }
 
@@ -1414,11 +1446,12 @@ fn main() -> Result<(), RdiError> {
 
 | 宏/概念 | 源码位置 (`crates/rust-dicore-macros/src/lib.rs`) | 关键类型/函数 |
 |--------|--------------------------------------------------|-------------|
-| `#[derive(Inject)]` 入口 | 第 14-19 行 | `#[proc_macro_derive(Inject, attributes(rdi))]` → `inject_derive()` |
-| 派生宏展开逻辑 | 第 21-59 行 | `expand_inject_derive()`（处理 `Fields::Named` 与 `Fields::Unit`） |
-| 类型剥离 `saw()` | 第 62-95 行 | `saw(ty) -> (inner, is_arc)`（剥 `Arc<T>` / `Option<Arc<T>>`） |
-| 字段属性 `IA` 结构体 | 第 97-103 行 | `IA { skip, optional, provider, key }` |
-| `parse_ia()` 字段属性解析 | 第 104-128 行 | `attr.path().is_ident("rdi")`（注意是 `rdi`） |
+| `#[derive(Inject)]` 入口 | 第 14-19 行 | `#[proc_macro_derive(Inject, attributes(inject))]` → `inject_derive()` |
+| 派生宏展开逻辑 | 第 21-41 行 | `expand_inject_derive()`（处理 `Fields::Named` 与 `Fields::Unit`） |
+| 类型分类 `classify_field()` | 第 43-96 行 | `FieldKind { Arc, OptionArc, Owned, OptionOwned }` + `classify_field(ty) -> (inner, FieldKind)` |
+| 字段初始化 `gen_field_init()` | 第 98-183 行 | `gen_field_init(field) -> syn::Result<TokenStream>`（显式注入分发 + 严格类型校验） |
+| 字段属性 `IA` 结构体 | 第 185-191 行 | `IA { inject, owned, provider, key }` |
+| `parse_ia()` 字段属性解析 | 第 192-216 行 | `attr.path().is_ident("inject")`（注意是 `inject`） |
 | `register!` 占位函数式宏 | 第 139-142 行 | `#[proc_macro] register()` → 展开为空 |
 | `#[module]` 入口 | 第 148-153 行 | `#[proc_macro_attribute] module()` |
 | 模块展开 `expand_md()` | 第 155-220 行 | 检测 `register` / `rust_dicore::register` 路径 |
@@ -1429,7 +1462,7 @@ fn main() -> Result<(), RdiError> {
 | `InjectArgs` 结构体 + `Parse` | 第 350-362 行 | `InjectArgs { lifetime: Option<LT> }`（无 Plain/AsTrait/AsTraits） |
 | `#[inject]` 属性宏入口 | 第 364-372 行 | `#[proc_macro_attribute] inject()` |
 | `expand_inject()` 分发 | 第 374-384 行 | `Item::Struct` → `expand_inject_struct`；`Item::Impl` → `expand_inject_impl` |
-| struct 放置展开 | 第 387-488 行 | `expand_inject_struct()`：构造器 + `__rdi_factory_{Name}` + `__rdi_type_name_{Name}` + inventory + 剥离 `#[rdi]` |
+| struct 放置展开 | 第 387-488 行 | `expand_inject_struct()`：构造器 + `__rdi_factory_{Name}` + `__rdi_type_name_{Name}` + inventory + 剥离 `#[inject]` |
 | impl 块放置展开 | 第 496-573 行 | `expand_inject_impl()`：自动检测 trait，生成 `__rdi_factory_{Type}_for_{Trait}`，注册为 `dyn Trait` |
 | `lt_to_token()` | 第 575-581 行 | `LT` → `rust_dicore::ServiceLifetime::*` |
 

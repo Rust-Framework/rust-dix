@@ -97,7 +97,7 @@ struct NamedService {
 
 该宏包含 `#[derive(Inject)]` 的功能——放在 struct 上时，内部生成相同的构造函数
 （`__rdi_construct_{类型}`），使用相同的字段属性语法
-（`#[rdi(skip)]`、`#[rdi(optional)]`、`#[rdi(key = "...")]` 等），
+（`#[inject]`、`#[inject(owned)]`、`#[inject(key = "...")]` 等），
 **无需同时使用两者**。impl 块放置方式**不会**生成构造函数——它复用 struct 放置方式已经生成的构造函数。
 
 > **迁移说明**：旧的冗长语法 `#[rust_dicore::inject_attr(singleton, as = dyn Trait<...>)]`
@@ -107,8 +107,9 @@ struct NamedService {
 
 #### `#[derive(Inject)]` — 自动生成构造函数
 
-**功能**：读取结构体字段及其 `#[rdi(...)]` 属性，生成一个工厂函数
-`__rdi_construct_{类型名}()`，自动从容器中解析每个字段。
+**功能**：读取结构体字段及其 `#[inject(...)]` 属性，生成一个工厂函数
+`__rdi_construct_{类型名}()`，自动从容器中解析每个**标记的**字段。
+未标记字段使用 `Default::default()` 作为内部状态。
 
 > **注意**：此派生宏已被 struct 上的 `#[rust_dicore::inject]` 包含。仅当你需要生成
 > 构造函数但不想自动注册时（例如手动用自定义工厂闭包注册），才使用 `#[derive(Inject)]`。
@@ -131,8 +132,9 @@ let provider = ServiceCollection::new()
 ```rust
 #[derive(Inject)]
 struct MyService {
+    #[inject]
     logger: Arc<Logger>,
-    #[rdi(key = "main")]
+    #[inject(key = "main")]
     cache: Arc<Cache>,
 }
 // 生成: __rdi_construct_MyService(resolver) -> Arc<MyService>
@@ -146,19 +148,25 @@ let provider = ServiceCollection::new()
     .build().unwrap();
 ```
 
-**字段属性**（`#[rdi(...)]`）：
+**字段属性**（`#[inject(...)]`）：
+
+显式注入策略：只有标记的字段才会从容器解析，未标记字段使用 `Default::default()`
+作为内部状态。可选性由字段类型（`Option<...>`）决定，无需额外标记。
 
 | 属性 | 字段类型 | 行为 |
 |-----------|-----------|------|
-| *(无标记)* | `Arc<T>` | 必选 — 未注册则 panic |
-| `#[rdi(skip)]` | 任意 | 使用 `Default::default()` |
-| `#[rdi(optional)]` | `Option<Arc<T>>` | 未注册返回 `None` |
-| `#[rdi(key = "k")]` | `Arc<T>` | 键控解析，找不到 key 则 panic |
-| `#[rdi(optional, key = "k")]` | `Option<Arc<T>>` | 可选键控解析 |
-| `#[rdi(provider)]` | `Arc<dyn IServiceResolver>` | 注入容器自身 |
+| *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
+| `#[inject]` | `Arc<T>` | 必选共享 — 未注册则 panic |
+| `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享，找不到 key 则 panic |
+| `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
+| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
+| `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
+| `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver 自身 |
 
-> 字段辅助属性是 `#[rdi(...)]`，不是 `#[inject(...)]`。后者在两个宏都在作用域中时
-> 会与 `inject` 属性宏冲突。
+> 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
+> `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
 
 ---
 
@@ -238,7 +246,7 @@ rust_dicore::register!(singleton: MyService);
 
 | 方式 | 优点 | 缺点 |
 |------|------|------|
-| `#[rust_dicore::inject]`（推荐） | 零样板，自动注册，impl 块 trait 推断 | 需要 `inventory`；`String` 字段需 `#[rdi(skip)]` |
+| `#[rust_dicore::inject]`（推荐） | 零样板，自动注册，impl 块 trait 推断 | 需要 `inventory`；未标记字段需 `Default` |
 | 手动工厂闭包 | 完全可控，显式 | 服务多时样板代码多 |
 | `#[derive(Inject)]` | 构造器零样板 | 仍需手动注册 |
 | `#[rust_dicore::module]` | 声明式，集中管理 | 动态注册灵活性较差 |

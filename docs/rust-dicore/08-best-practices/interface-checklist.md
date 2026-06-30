@@ -162,8 +162,9 @@ let writer: Arc<dyn IWriter> = provider.get();
 // ✅ 正确
 #[rust_dicore::inject(singleton)]
 pub struct CreateUserHandler {
+    #[inject]
     user_svc: Arc<dyn IUserService>,   // 接口
-    #[rdi(optional)]
+    #[inject]
     logger: Option<Arc<dyn ILogger>>,  // 可选接口
 }
 

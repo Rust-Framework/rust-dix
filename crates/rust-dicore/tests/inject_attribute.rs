@@ -34,7 +34,6 @@ fn inject_on_struct_default_lifetime() {
 /// Explicit singleton with a skipped field.
 #[rust_dicore::inject(singleton)]
 struct ExplicitSingleton {
-    #[rdi(skip)]
     label: String,
 }
 
@@ -61,8 +60,9 @@ fn inject_on_struct_transient() {
 #[rust_dicore::inject]
 #[allow(dead_code)]
 struct FieldInjectionService {
+    #[inject]
     dep: Arc<DefaultLifetimeService>,
-    #[rdi(optional)]
+    #[inject]
     maybe: Option<Arc<ExplicitSingleton>>,
 }
 

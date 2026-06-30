@@ -185,11 +185,11 @@ ServiceCollection::new()
 ```rust
 #[rust_dicore::inject(singleton)]
 struct FileLogger {
+    #[inject]
     config: Arc<dyn IConfig>,  // 自动解析
-    #[rdi(optional)]
+    #[inject]
     fallback: Option<Arc<dyn ILogger>>,
-    #[rdi(skip)]
-    name: String,  // 使用 Default::default()
+    name: String,  // 未标记 → 使用 Default::default()
 }
 
 #[rust_dicore::inject]
@@ -198,25 +198,36 @@ impl ILogger for FileLogger { /* ... */ }
 
 ## 字段属性详解
 
-| 属性 | 说明 |
-|------|------|
-| `#[rdi(skip)]` | 该字段不解析，使用 `Default::default()` |
-| `#[rdi(optional)]` | 该字段解析为 `Option<Arc<T>>` |
-| `#[rdi(provider)]` | 该字段注入 `dyn IServiceResolver` |
-| `#[rdi(key = "...")]` | 该字段按 key 解析键控服务 |
+显式注入策略：只有标记了 `#[inject(...)]` 的字段才从容器解析，未标记字段使用 `Default::default()`。
+可选性由字段类型（`Option<...>`）决定，无需额外标记。
+
+| 属性 | 字段类型 | 说明 |
+|------|---------|------|
+| *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
+| `#[inject]` | `Arc<T>` | 必选共享 — 未注册则 panic |
+| `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享，找不到 key 则 panic |
+| `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
+| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
+| `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
+| `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver 自身 |
+
+> 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
+> `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
 
 ```rust
 #[rust_dicore::inject(transient)]
 struct Handler {
-    user_svc: Arc<dyn IUserService>,           // 默认解析
-    #[rdi(optional)]
-    logger: Option<Arc<dyn ILogger>>,          // 可选
-    #[rdi(key = "wechat")]
+    #[inject]
+    user_svc: Arc<dyn IUserService>,           // 必选共享
+    #[inject]
+    logger: Option<Arc<dyn ILogger>>,          // 可选共享
+    #[inject(key = "wechat")]
     pay: Arc<dyn IPayGateway>,                 // 键控
-    #[rdi(provider)]
+    #[inject(provider)]
     resolver: Arc<dyn IServiceResolver>,       // 注入解析器
-    #[rdi(skip)]
-    name: String,                              // 不解析
+    name: String,                              // 未标记 → Default
 }
 ```
 

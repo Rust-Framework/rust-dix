@@ -122,12 +122,12 @@ ServiceCollection::new()
 当前版本无循环依赖检测。解决方案：
 
 1. **重构依赖方向**：消除循环
-2. **延迟解析**：用 `#[rdi(provider)]` 按需解析
+2. **延迟解析**：用 `#[inject(provider)]` 按需解析
 
 ```rust
 #[rust_dicore::inject(singleton)]
 struct ServiceA {
-    #[rdi(provider)]
+    #[inject(provider)]
     resolver: Arc<dyn IServiceResolver>,  // 按需解析
 }
 
@@ -248,18 +248,22 @@ panic: svc not registered
 
 ### 原因
 
-过程宏生成的构造函数解析字段时，字段类型未注册：
+过程宏生成的构造函数解析**标记了 `#[inject]` 的**字段时，字段类型未注册：
 
 ```rust
 #[rust_dicore::inject(singleton)]
 struct Handler {
+    #[inject]
     user_svc: Arc<dyn IUserService>,  // IUserService 未注册
 }
 ```
 
+> 注：未标记字段走 `Default::default()`，不会触发此 panic。
+> 若字段本应注入却忘了加 `#[inject]`，会静默使用 `Default`——务必显式标记依赖字段。
+
 ### 排查
 
-确保所有依赖字段都已注册：
+确保所有依赖字段都已注册，且显式标 `#[inject]`：
 
 ```rust
 // ✅ 先注册依赖
@@ -271,6 +275,7 @@ impl IUserService for UserService { /* ... */ }
 
 #[rust_dicore::inject(singleton)]
 struct Handler {
+    #[inject]
     user_svc: Arc<dyn IUserService>,  // OK
 }
 ```
@@ -294,7 +299,7 @@ panic: get_owned: not registered or Singleton: DbContext
 2. **Scoped owned 绕过缓存**：`get_owned` 对 Scoped 绕过 `scoped_cache` /
    `root_scoped_cache`，每次调用创建新实例。这是有意为之——owned `&mut self`
    与 scope 共享语义不兼容。
-3. **宏裸 T 字段未注册或为 Singleton**：`#[derive(Inject)]` 的裸 `T` 字段
+3. **宏 owned 字段未注册或为 Singleton**：`#[derive(Inject)]` 的 `#[inject(owned)]` 裸 `T` 字段
    走 owned 路径，若该类型未注册或注册为 Singleton，构造时 panic。
 
 ```rust
@@ -314,7 +319,7 @@ let b = provider.get_owned::<DbContext>();
 
 - 需要 `&mut self` 的服务（如 DbContext）应注册为 **Transient 或 Scoped**，不要 Singleton。
 - 若需共享 + 可变，用 `Arc<RwLock<T>>`（interior mutability）而非 `get_owned`。
-- `#[derive(Inject)]` 裸 `T` 字段：确保对应类型已注册为 Transient/Scoped。
+- `#[derive(Inject)]` `#[inject(owned)]` 裸 `T` 字段：确保对应类型已注册为 Transient/Scoped。
 
 ```rust
 // ✅ DbContext 注册为 Transient，可 owned

@@ -70,7 +70,7 @@ description: >
    - `#[rust_dicore::inject(singleton)]` — 具体类型 Singleton
    - `#[rust_dicore::inject(transient)]` — 具体类型 Transient
    - 接口注册：在 struct 上用 `#[rust_dicore::inject(transient)]`，再在 `impl Trait for Type` 上用 `#[rust_dicore::inject]`
-   - 支持自动解析字段依赖（通过 `#[rdi(...)]` 字段属性控制注入行为）
+   - 支持自动解析字段依赖（通过 `#[inject(...)]` 字段属性显式标记注入字段；未标记字段用 `Default::default()`）
 3. **备选方案**：手动 `ServiceCollection` API
    - 具体类型 + 全局唯一 → `.singleton(|_| Arc::new(T))`
    - 具体类型 + 每次新建 → `.transient(|_| Arc::new(T))`  
@@ -110,7 +110,7 @@ description: >
 1. 加载 `guides/macros.md`
 2. **第一步（首选）**：`#[rust_dicore::inject(singleton)]` 直接标注在 struct 上，自动注册和构造
    - 标注生命周期参数（`singleton` / `transient` / `scoped`）
-   - 字段通过 `#[rdi(...)]` 属性控制依赖注入行为
+   - 字段通过 `#[inject(...)]` 属性显式标记注入字段（未标记字段走 `Default::default()`）
 3. **第二步**：面向接口编程时，先在 struct 上用 `#[rust_dicore::inject]`（或 `#[derive(Inject)]`）生成构造函数，再在 `impl Trait for T` 块上用 `#[rust_dicore::inject]` 完成接口注册
 4. **第三步（备选）**：复杂场景（简单工厂、键控服务、跨模块组装）用 `#[rust_dicore::module]` + `rust_dicore::register!()`
 5. 检查编译错误：重复 key、非命名结构体、缺失 `Default` 实现
@@ -294,7 +294,7 @@ fn test_business_logic() {
 2. **panic: "keyed service not registered: xxx:yyy"** → 检查 key 名称拼写，或用 `try_get_keyed` 替代
 3. **`#[derive(Inject)]` 编译失败** → 检查是否用了元组结构体（不支持），加载 `guides/macros.md`
 4. **`#[rust_dicore::inject]` 编译失败** → 检查 struct 是否为命名结构体或单元结构体（不支持元组结构体）
-5. **`#[rust_dicore::inject]` 无法推断依赖** → 检查字段类型是否已注册，或使用 `#[rdi(provider)]` 手动获取
+5. **`#[rust_dicore::inject]` 无法推断依赖** → 检查字段是否显式标了 `#[inject]` / `#[inject(owned)]`，类型是否已注册；按需解析用 `#[inject(provider)]`
 6. **`#[rust_dicore::module]` 编译失败** → 检查是否有重复 key，检查 `register!` 语法
 7. **服务未按预期缓存** → 检查生命周期设置，Singleton 在 provider 构建时即初始化
 

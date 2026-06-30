@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 #[derive(Inject)]
 struct FullFeatured {
+    #[inject]
     log: Arc<common::Logger>,
-    #[rdi(optional)]
+    #[inject]
     maybe: Option<Arc<common::MyService>>,
-    #[rdi(key = "special")]
+    #[inject(key = "special")]
     special: Arc<common::Logger>,
-    #[rdi(skip)]
     label: String,
 }
 

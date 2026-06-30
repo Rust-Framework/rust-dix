@@ -11,7 +11,7 @@ use syn::{
 // #[derive(Inject)] — auto-generate constructor from struct fields
 // ───────────────────────────────────────────────────────────────────────────
 
-#[proc_macro_derive(Inject, attributes(rdi))]
+#[proc_macro_derive(Inject, attributes(inject))]
 pub fn inject_derive(input: TokenStream) -> TokenStream {
     expand_inject_derive(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(|e| e.to_compile_error())
@@ -26,7 +26,7 @@ fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStr
             Fields::Named(named) => {
                 let mut inits = Vec::new();
                 for field in named.named.iter() {
-                    inits.push(gen_field_init(field));
+                    inits.push(gen_field_init(field)?);
                 }
                 quote! { #name { #(#inits),* } }
             }
@@ -99,16 +99,26 @@ fn single_generic_type(seg: &syn::PathSegment) -> Option<&syn::Type> {
 ///
 /// Shared between `#[derive(Inject)]` and `#[inject]` on a struct to avoid
 /// duplicating the owned/Arc dispatch logic.
-fn gen_field_init(field: &Field) -> proc_macro2::TokenStream {
+///
+/// Field marking rules (explicit injection):
+/// - No `#[inject]` → `Default::default()` (internal field)
+/// - `#[inject]` → shared injection (requires `Arc<T>` / `Option<Arc<T>>`)
+/// - `#[inject(owned)]` → owned injection (requires bare `T` / `Option<T>`)
+/// - `#[inject(provider)]` → inject resolver itself
+/// - `#[inject(key = "k")]` / `#[inject(owned, key = "k")]` → keyed variant
+/// - Optionality is determined by the field type (`Option<...>`), not by a marker.
+fn gen_field_init(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
     let attrs = parse_ia(field);
     let fnm = field.ident.as_ref().unwrap();
     let (inner, kind) = classify_field(&field.ty);
 
-    if attrs.skip {
-        return quote! { #fnm: ::std::default::Default::default() };
+    // Unmarked field → internal state, use Default.
+    if !attrs.inject && !attrs.provider {
+        return Ok(quote! { #fnm: ::std::default::Default::default() });
     }
+    // #[inject(provider)] → resolver.clone().
     if attrs.provider {
-        return quote! { #fnm: resolver.clone() };
+        return Ok(quote! { #fnm: resolver.clone() });
     }
 
     // Arc<T> extraction: downcast Arc<dyn Any> → Arc<Arc<T>> → clone inner Arc<T>.
@@ -124,77 +134,77 @@ fn gen_field_init(field: &Field) -> proc_macro2::TokenStream {
     };
 
     let key = &attrs.key;
-    match kind {
-        // Option<Arc<T>>: field type already Option, always Option-returning path.
-        FieldKind::OptionArc => {
-            if let Some(k) = key {
-                quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract }
-            } else {
-                quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract }
-            }
-        }
-        // Option<T>: field type already Option, always Option-returning owned path.
-        FieldKind::OptionOwned => {
-            if let Some(k) = key {
-                quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract }
-            } else {
-                quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract }
-            }
-        }
-        // Arc<T>: attr-first (preserve existing behavior, incl. #[rdi(optional)]).
-        FieldKind::Arc => {
-            if attrs.optional {
+
+    if !attrs.owned {
+        // #[inject] — shared injection; only Arc<T> / Option<Arc<T>> allowed.
+        match kind {
+            FieldKind::OptionArc => {
                 if let Some(k) = key {
-                    quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract }
+                    Ok(quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract })
                 } else {
-                    quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract }
+                    Ok(quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract })
                 }
-            } else if let Some(k) = key {
-                quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract .unwrap_or_else(|| ::std::panic!("keyed not found")) }
-            } else {
-                quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract .unwrap_or_else(|| ::std::panic!("svc not registered")) }
             }
-        }
-        // bare T: attr-first owned path (new).
-        FieldKind::Owned => {
-            if attrs.optional {
+            FieldKind::Arc => {
                 if let Some(k) = key {
-                    quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract }
+                    Ok(quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract .unwrap_or_else(|| ::std::panic!("keyed not found")) })
                 } else {
-                    quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract }
+                    Ok(quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract .unwrap_or_else(|| ::std::panic!("svc not registered")) })
                 }
-            } else if let Some(k) = key {
-                quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract .unwrap_or_else(|| ::std::panic!("keyed owned not found")) }
-            } else {
-                quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract .unwrap_or_else(|| ::std::panic!("owned svc not registered or Singleton")) }
             }
+            _ => Err(syn::Error::new_spanned(
+                field,
+                "#[inject] requires Arc<T> or Option<Arc<T>> field type; use #[inject(owned)] for bare T",
+            )),
+        }
+    } else {
+        // #[inject(owned)] — owned injection; only bare T / Option<T> allowed.
+        match kind {
+            FieldKind::OptionOwned => {
+                if let Some(k) = key {
+                    Ok(quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract })
+                } else {
+                    Ok(quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract })
+                }
+            }
+            FieldKind::Owned => {
+                if let Some(k) = key {
+                    Ok(quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract .unwrap_or_else(|| ::std::panic!("keyed owned not found")) })
+                } else {
+                    Ok(quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract .unwrap_or_else(|| ::std::panic!("owned svc not registered or Singleton")) })
+                }
+            }
+            _ => Err(syn::Error::new_spanned(
+                field,
+                "#[inject(owned)] requires bare T or Option<T> field type; use #[inject] for Arc<T>",
+            )),
         }
     }
 }
 
 #[derive(Default)]
 struct IA {
-    skip: bool,
-    optional: bool,
+    inject: bool,
+    owned: bool,
     provider: bool,
     key: Option<String>,
 }
 fn parse_ia(f: &Field) -> IA {
     let mut a = IA::default();
     for attr in &f.attrs {
-        if !attr.path().is_ident("rdi") {
+        if !attr.path().is_ident("inject") {
             continue;
         }
+        a.inject = true;
         let Ok(l) = attr.meta.require_list() else {
-            continue;
+            continue; // #[inject] with no list — shared injection marker only.
         };
         l.parse_nested_meta(|m| {
-            if m.path.is_ident("skip") {
-                a.skip = true;
-            } else if m.path.is_ident("optional") {
-                a.optional = true;
+            if m.path.is_ident("owned") {
+                a.owned = true;
             } else if m.path.is_ident("provider") {
                 a.provider = true;
+                a.inject = false;
             } else if m.path.is_ident("key") {
                 a.key = Some(m.value()?.parse::<syn::LitStr>()?.value());
             }
@@ -475,7 +485,7 @@ fn expand_inject_struct(
         syn::Fields::Named(n) => {
             let mut inits = Vec::new();
             for field in n.named.iter() {
-                inits.push(gen_field_init(field));
+                inits.push(gen_field_init(field)?);
             }
             quote! { #name { #(#inits),* } }
         }
@@ -527,13 +537,13 @@ fn expand_inject_struct(
         }
     };
 
-    // Strip #[rdi(...)] helper attributes from fields before emitting the
+    // Strip #[inject(...)] helper attributes from fields before emitting the
     // struct. Without #[derive(Inject)] on the struct, the compiler doesn't
-    // know `rdi` is a valid helper attribute and would reject it.
+    // know `inject` is a valid helper attribute and would reject it.
     let mut stripped = struct_item.clone();
     if let syn::Fields::Named(n) = &mut stripped.fields {
         for field in n.named.iter_mut() {
-            field.attrs.retain(|a| !a.path().is_ident("rdi"));
+            field.attrs.retain(|a| !a.path().is_ident("inject"));
         }
     }
 

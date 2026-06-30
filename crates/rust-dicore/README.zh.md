@@ -250,14 +250,16 @@ assert_eq!(ctx.total(), 1);
 | **Scoped** | 绕过缓存，每次调用新建 ✓ |
 | **Singleton** | panic（共享实例无法 owned）；用 `try_get_owned` 返回 `None` |
 
-**配合 `#[derive(Inject)]`**：裸 `T` 字段自动按 owned 解析；
-`Arc<T>` 字段保持共享。`Option<T>` → `try_get_owned`，
+**配合 `#[derive(Inject)]`**：裸 `T` 字段用 `#[inject(owned)]` 标记按 owned 解析；
+`Arc<T>` 字段用 `#[inject]` 保持共享。`Option<T>` → `try_get_owned`，
 `Option<Arc<T>>` → `try_get`：
 
 ```rust
 #[derive(Inject)]
 struct Handler {
+    #[inject(owned)]
     ctx: DbContext,           // owned  → get_owned
+    #[inject]
     logger: Arc<Logger>,      // shared → get
 }
 // ...
@@ -315,7 +317,7 @@ let provider = ServiceCollection::from_injected()
 // 消费方依赖接口，不依赖具体实现
 #[rust_dicore::inject(transient)]
 struct OrderService {
-    #[rdi(provider)]  // 按需解析策略
+    #[inject(provider)]  // 按需解析策略
     resolver: Arc<dyn IServiceResolver>,
 }
 

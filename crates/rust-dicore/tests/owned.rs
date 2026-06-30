@@ -109,6 +109,7 @@ struct ScopedCore(u64);
 
 #[derive(Inject)]
 struct OwnedHandler {
+    #[inject]
     core: Arc<ScopedCore>,
 }
 
@@ -183,7 +184,9 @@ fn keyed_singleton_get_owned_panics() {
 
 #[derive(Inject)]
 struct MixedHandler {
+    #[inject(owned)]
     svc: common::MyService,
+    #[inject]
     logger: Arc<common::Logger>,
 }
 
@@ -210,6 +213,7 @@ fn derive_inject_owned_field() {
 
 #[derive(Inject)]
 struct OptHandler {
+    #[inject(owned)]
     maybe: Option<common::MyService>,
 }
 
@@ -241,7 +245,7 @@ fn derive_inject_option_owned_field_absent() {
 
 #[derive(Inject)]
 struct KeyedOwnedHandler {
-    #[rdi(key = "primary")]
+    #[inject(owned, key = "primary")]
     svc: common::MyService,
 }
 
@@ -279,7 +283,9 @@ impl DbContext {
 
 #[derive(Inject)]
 struct BlogHandler {
+    #[inject(owned)]
     ctx: DbContext,
+    #[inject]
     logger: Arc<common::Logger>,
 }
 
@@ -314,6 +320,7 @@ struct CaptiveScoped;
 
 #[derive(Inject)]
 struct CaptiveSingleton {
+    #[inject(owned)]
     ctx: CaptiveScoped,
 }
 

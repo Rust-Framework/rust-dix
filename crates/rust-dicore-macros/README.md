@@ -106,7 +106,7 @@ struct NamedService {
 This macro subsumes `#[derive(Inject)]` — when placed on a struct, it
 internally generates the same constructor function
 (`__rdi_construct_{Type}`) using the same field attribute syntax
-(`#[rdi(skip)]`, `#[rdi(optional)]`, `#[rdi(key = "...")]`, etc.). You do
+(`#[inject]`, `#[inject(owned)]`, `#[inject(key = "...")]`, etc.). You do
 NOT need both. The impl-block placement does **not** generate a constructor —
 it reuses the one already produced by the struct placement.
 
@@ -118,9 +118,9 @@ it reuses the one already produced by the struct placement.
 
 #### `#[derive(Inject)]` — Auto-generated constructor
 
-**What it does**: Reads the struct fields and their `#[rdi(...)]` attributes,
+**What it does**: Reads the struct fields and their `#[inject(...)]` attributes,
 then generates a factory function `__rdi_construct_{TypeName}()` that resolves
-each field from the container.
+each marked field from the container. Unmarked fields use `Default::default()`.
 
 > **Note**: This derive macro is subsumed by `#[rust_dicore::inject]` on a
 > struct. You only need `#[derive(Inject)]` if you want to generate the
@@ -145,8 +145,9 @@ let provider = ServiceCollection::new()
 ```rust
 #[derive(Inject)]
 struct MyService {
+    #[inject]
     logger: Arc<Logger>,
-    #[rdi(key = "main")]
+    #[inject(key = "main")]
     cache: Arc<Cache>,
 }
 // Generates: __rdi_construct_MyService(resolver) -> Arc<MyService>
@@ -160,19 +161,27 @@ let provider = ServiceCollection::new()
     .build().unwrap();
 ```
 
-**Field attributes** (`#[rdi(...)]`):
+**Field attributes** (`#[inject(...)]`):
+
+Explicit injection: only marked fields consult the resolver. Unmarked fields
+use `Default::default()` and are treated as internal state. Optionality is
+driven by the field type (`Option<...>`), not by a marker.
 
 | Attribute | Field type | Behavior |
 |-----------|-----------|----------|
-| *(none)* | `Arc<T>` | Required — panics if `T` not registered |
-| `#[rdi(skip)]` | any | Uses `Default::default()` |
-| `#[rdi(optional)]` | `Option<Arc<T>>` | Returns `None` if `T` not registered |
-| `#[rdi(key = "k")]` | `Arc<T>` | Keyed resolution, panics if key missing |
-| `#[rdi(optional, key = "k")]` | `Option<Arc<T>>` | Optional keyed resolution |
-| `#[rdi(provider)]` | `Arc<dyn IServiceResolver>` | Injects the container itself |
+| *(none)* | any (`Default`) | Internal field — uses `Default::default()` |
+| `#[inject]` | `Arc<T>` | Required shared — panics if `T` not registered |
+| `#[inject]` | `Option<Arc<T>>` | Optional shared — `None` if `T` not registered |
+| `#[inject(key = "k")]` | `Arc<T>` | Keyed shared, panics if key missing |
+| `#[inject(key = "k")]` | `Option<Arc<T>>` | Optional keyed shared |
+| `#[inject(owned)]` | bare `T` | Required owned — panics if not registered or Singleton |
+| `#[inject(owned)]` | `Option<T>` | Optional owned — `None` if not registered or Singleton |
+| `#[inject(owned, key = "k")]` | bare `T` / `Option<T>` | Keyed owned |
+| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | Injects the resolver itself |
 
-> The helper attribute is `#[rdi(...)]`, not `#[inject(...)]`. The latter
-> would conflict with the `inject` attribute macro when both are in scope.
+> Type checking is strict: `#[inject]` only accepts `Arc<T>` / `Option<Arc<T>>`,
+> `#[inject(owned)]` only accepts bare `T` / `Option<T>`. Mismatched markers
+> produce a compile-time error.
 
 ---
 
@@ -258,7 +267,7 @@ or want to declare DI configuration declaratively.
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| `#[rust_dicore::inject]` (recommended) | Zero boilerplate, auto-registration, impl-block trait inference | Requires `inventory`; `String` fields need `#[rdi(skip)]` |
+| `#[rust_dicore::inject]` (recommended) | Zero boilerplate, auto-registration, impl-block trait inference | Requires `inventory`; unmarked fields need `Default` |
 | Manual factories | Full control, explicit | Boilerplate for many services |
 | `#[derive(Inject)]` | Zero boilerplate for constructors | Manual registration still needed |
 | `#[rust_dicore::module]` | Declarative, centralized | Less flexible for dynamic registration |
