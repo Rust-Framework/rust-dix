@@ -68,15 +68,76 @@ fn provider_inject_works_through_scope() {
 
     let scope = p.scope();
     let h: HandlerWithProvider = scope.get_owned();
-    // Through scope, provider_arc delegates to parent — owned resolution bypasses cache
+    // Scope 现持有 scope_provider；注入的字段是 scope 范围 provider，
+    // 解析 Scoped 命中 scope 自己的 root_scoped_cache（不泄漏到 root）。
     assert_eq!(h.resolve_dep().value, 99);
+
+    // 验证注入的 provider 是 scope 范围（非 root）：
+    // 同一 scope 内多次 get Scoped 返回同一 Arc（scope 缓存命中）。
+    let s1: Arc<common::MyService> = h.provider.get();
+    let s2: Arc<common::MyService> = h.provider.get();
+    assert!(
+        Arc::ptr_eq(&s1, &s2),
+        "scope 内 Scoped 应缓存复用（同一 Arc）"
+    );
+    // scope 与 root 应有独立 Scoped 实例（不同 Arc），证明未泄漏到 root。
+    let root_svc: Arc<common::MyService> = p.get();
+    assert!(
+        !Arc::ptr_eq(&s1, &root_svc),
+        "scope 与 root 的 Scoped 实例应独立"
+    );
 }
 
 #[test]
-#[should_panic(expected = "ServiceProvider not available")]
+fn scope_provider_resolves_scoped_within_scope() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+
+    struct ScopedSvc(u64);
+
+    let p = ServiceCollection::new()
+        .scoped(|_| {
+            let n = CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(ScopedSvc(n))
+        })
+        .transient(|r| __rdi_construct_HandlerWithProvider(r))
+        .build()
+        .unwrap()
+        .into_arc();
+
+    // scope1：注入字段拿到 scope-local provider，解析 ScopedSvc 命中 scope1 缓存。
+    let scope1 = p.scope();
+    let h1: HandlerWithProvider = scope1.get_owned();
+    let a: Arc<ScopedSvc> = h1.provider.get();
+    let b: Arc<ScopedSvc> = h1.provider.get();
+    assert_eq!(a.0, b.0, "scope1 内 ScopedSvc 复用同一序号");
+    assert!(Arc::ptr_eq(&a, &b), "scope1 缓存命中（同一 Arc）");
+
+    // scope2：独立子 scope，ScopedSvc 工厂再次执行（新序号）。
+    let scope2 = p.scope();
+    let h2: HandlerWithProvider = scope2.get_owned();
+    let c: Arc<ScopedSvc> = h2.provider.get();
+    assert_ne!(a.0, c.0, "scope2 应有独立 ScopedSvc 实例");
+    assert!(!Arc::ptr_eq(&a, &c), "不同 scope 的 ScopedSvc 必须独立");
+
+    // 根 scope：第三个独立实例，证明子 scope 未泄漏到根。
+    let root_svc: Arc<ScopedSvc> = p.get();
+    assert_ne!(a.0, root_svc.0);
+    assert_ne!(c.0, root_svc.0);
+
+    // 全程工厂只执行 3 次（scope1、scope2、根各一次）。
+    assert_eq!(
+        CALLS.load(Ordering::SeqCst),
+        3,
+        "ScopedSvc 工厂应执行 3 次（三 scope 各一次）"
+    );
+}
+
+#[test]
 fn provider_inject_panics_without_into_arc() {
     // Using Arc::new(build()) instead of into_arc() — self_weak is never initialized.
-    // provider_arc() returns None → .expect() panics.
+    // provider_arc() returns None → .expect() panics with &'static str →
+    // run_factory_safely 包装为 RdiError::FactoryPanic（类型安全，避免锁中毒）。
     let p = Arc::new(
         ServiceCollection::new()
             .transient(|r| __rdi_construct_HandlerWithProvider(r))
@@ -84,8 +145,28 @@ fn provider_inject_panics_without_into_arc() {
             .unwrap(),
     );
 
-    // This should panic because self_weak was never set.
-    let _h = p.get_owned::<HandlerWithProvider>();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _h = p.get_owned::<HandlerWithProvider>();
+    }));
+    assert!(result.is_err(), "应 panic：self_weak 未初始化");
+
+    let payload = result.unwrap_err();
+    let err = payload
+        .downcast_ref::<RdiError>()
+        .expect("run_factory_safely 应将 panic 包装为 RdiError");
+    match err {
+        RdiError::FactoryPanic { service, payload } => {
+            assert!(
+                service.contains("HandlerWithProvider"),
+                "service 应为 HandlerWithProvider，实际: {service}"
+            );
+            assert!(
+                payload.contains("ServiceProvider not available"),
+                "payload 应保留原始 panic 消息，实际: {payload}"
+            );
+        }
+        other => panic!("期望 FactoryPanic，实际: {other:?}"),
+    }
 }
 
 /// Service with provider + regular injected dependency side by side.

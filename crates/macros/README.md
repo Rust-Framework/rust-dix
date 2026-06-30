@@ -177,11 +177,12 @@ driven by the field type (`Option<...>`), not by a marker.
 | `#[inject(owned)]` | bare `T` | Required owned — panics if not registered or Singleton |
 | `#[inject(owned)]` | `Option<T>` | Optional owned — `None` if not registered or Singleton |
 | `#[inject(owned, key = "k")]` | bare `T` / `Option<T>` | Keyed owned |
+| `#[inject]` | `Vec<Arc<T>>` | Polymorphic — collects all registered implementations (default + keyed); key not supported |
 | `#[inject(provider)]` | `Arc<ServiceProvider>` | Injects the provider for on-demand resolution |
 
-> Type checking is strict: `#[inject]` only accepts `Arc<T>` / `Option<Arc<T>>`,
-> `#[inject(owned)]` only accepts bare `T` / `Option<T>`. Mismatched markers
-> produce a compile-time error.
+> Type checking is strict: `#[inject]` accepts `Arc<T>`, `Option<Arc<T>>`, or
+> `Vec<Arc<T>>`, `#[inject(owned)]` only accepts bare `T` / `Option<T>`.
+> Mismatched markers produce a compile-time error.
 
 ---
 
