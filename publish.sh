@@ -83,7 +83,7 @@ echo ""
 
 # ── Step 2: Publish rust-dicore-macros ──
 
-MACROS_DIR="crates/rust-dicore-macros"
+MACROS_DIR="crates/macros"
 MACROS_VER=$(grep '^version ' "$MACROS_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
 echo "==> 2. Publishing rust-dicore-macros v${MACROS_VER}..."
 (cd "$MACROS_DIR" && cargo publish $DRY_RUN --allow-dirty)
@@ -98,7 +98,7 @@ echo ""
 
 # ── Step 3: Publish rust-dicore ──
 
-RDI_DIR="crates/rust-dicore"
+RDI_DIR="crates/core"
 RDI_VER=$(grep '^version ' "$RDI_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
 echo "==> 3. Publishing rust-dicore v${RDI_VER}..."
 (cd "$RDI_DIR" && cargo publish $DRY_RUN --allow-dirty)

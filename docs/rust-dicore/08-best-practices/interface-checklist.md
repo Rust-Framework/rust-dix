@@ -2,6 +2,8 @@
 
 本文档提供面向接口开发的规则速查表，供代码审查和开发参考。
 
+> 本文示例采用简短路径风格，假定文件顶部已 `use rust_dicore::*;`。导入约定详见 [用法指南](usage-guide.md#1-导入约定路径简化)。
+
 ## 一、分层规则
 
 ### contracts 层（接口层）
@@ -36,19 +38,21 @@ pub struct User {
 | ✅ 应该 | ❌ 避免 |
 |--------|--------|
 | 实现 trait | 定义 trait |
-| 在 `impl Trait for Type` 上加 `#[rust_dicore::inject]` | 直接 `singleton` 注册为具体类型 |
+| 在 `impl Trait for Type` 上加 `#[inject]` | 直接 `singleton` 注册为具体类型 |
 | 字段依赖 `Arc<dyn Trait>` | 字段依赖具体实现类型 |
 | 自动注册到容器 | 在 main.rs 手动逐个注册 |
+| struct 用 `#[derive(Inject)]` 仅生成构造函数 | struct 与 impl 同时用 `#[inject]`（双重注册） |
 
 ```rust
 // ✅ handlers/user.rs
-#[rust_dicore::inject(singleton)]
+// struct 用 #[derive(Inject)] 仅生成构造函数（不注册），impl 用 #[inject] 注册为 dyn IUserService
+#[derive(Inject)]
 pub struct UserService {
     db: Arc<dyn IDbContext>,       // 接口依赖
     logger: Arc<dyn ILogger>,      // 接口依赖
 }
 
-#[rust_dicore::inject]
+#[inject]
 impl IUserService for UserService {
     fn create(&self, req: CreateUserRequest) -> Result<User, String> {
         // ...
@@ -132,15 +136,15 @@ ServiceCollection::new()
 一个实现注册为多个 trait：
 
 ```rust
-// ✅ 一个实现暴露多个接口
-#[rust_dicore::inject(singleton)]
+// ✅ 一个实现暴露多个接口：struct 用 #[derive(Inject)] 仅生成构造函数（不注册），两个 impl 块各注册一个 trait
+#[derive(Inject)]
 pub struct FileStream {
     path: String,
 }
 
-#[rust_dicore::inject]
+#[inject]
 impl IReader for FileStream { ... }
-#[rust_dicore::inject]
+#[inject]
 impl IWriter for FileStream { ... }
 
 // 分别解析
@@ -159,8 +163,8 @@ let writer: Arc<dyn IWriter> = provider.get();
 | `Option<Arc<dyn IService>>` | `Option<Arc<ServiceImpl>>` |
 
 ```rust
-// ✅ 正确
-#[rust_dicore::inject(singleton)]
+// ✅ 正确：Handler 推荐放 impl 上——struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
 pub struct CreateUserHandler {
     #[inject]
     user_svc: Arc<dyn IUserService>,   // 接口
@@ -168,7 +172,7 @@ pub struct CreateUserHandler {
     logger: Option<Arc<dyn ILogger>>,  // 可选接口
 }
 
-#[rust_dicore::inject]
+#[inject]
 impl IRequestHandler<CreateUserRequest, User> for CreateUserHandler { /* ... */ }
 
 // ❌ 错误
@@ -187,13 +191,13 @@ pub struct CreateUserHandler {
 
 ```rust
 // ❌ 错误：Singleton 依赖 Scoped
-#[rust_dicore::inject(singleton)]
+#[inject(singleton)]
 pub struct GlobalService {
     session: Arc<Session>,  // Session 注册为 Scoped → build 阶段拒绝
 }
 
 // ✅ 正确：Scoped 依赖 Singleton
-#[rust_dicore::inject(scoped)]
+#[inject(scoped)]
 pub struct RequestHandler {
     config: Arc<AppConfig>,  // Singleton → OK
 }
@@ -287,7 +291,8 @@ fn test_create_user() {
 |------|--------|
 | 分层 | trait 是否在 contracts / 实现是否在 handlers |
 | 依赖 | 字段是否都是 `Arc<dyn Trait>` |
-| 注册 | 是否在 `impl Trait for Type` 上加 `#[rust_dicore::inject]` |
+| 注册 | 是否在 `impl Trait for Type` 上加 `#[inject]` |
+| 放置位置 | struct 与 impl 是否同时用 `#[inject]`（应二选一；面向接口时 struct 用 `#[derive(Inject)]`） |
 | 多实现 | 是否用 keyed 注册替代实现 |
 | 生命周期 | Singleton 不依赖 Scoped（build 阶段自动检测） |
 | 容器 | 是否只构建一次 |

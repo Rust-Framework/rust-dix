@@ -88,6 +88,7 @@
 ### [第八章 最佳实践](08-best-practices/INDEX.md)
 
 - [面向接口开发清单](08-best-practices/interface-checklist.md)
+- [用法指南与决策矩阵](08-best-practices/usage-guide.md)
 - [常见陷阱与排查](08-best-practices/common-pitfalls.md)
 - [性能优化建议](08-best-practices/performance-tips.md)
 - [反模式警示](08-best-practices/anti-patterns.md)

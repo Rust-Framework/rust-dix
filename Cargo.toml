@@ -3,8 +3,8 @@
 resolver = "2"
 
 members = [
-    "crates/rust-dicore",
-    "crates/rust-dicore-macros",
+    "crates/core",
+    "crates/macros",
 ]
 
 [workspace.package]

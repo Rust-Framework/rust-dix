@@ -27,6 +27,19 @@ rust-dicore = "0.4"
 rust-dicore-macros = "0.4"
 ```
 
+## 导入约定
+
+> `rust-dicore` 已重新导出全部宏与类型，**无需单独依赖 `rust-dicore-macros`**。
+
+在每个使用 DI 的文件顶部加两行 use，之后所有宏（`#[inject]`、`#[derive(Inject)]`、`#[module]`、`register!()`）与类型（`ServiceCollection`、`ServiceProvider` 等）均可直接短名引用：
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+```
+
+完整导入约定与路径简化对照表详见 [用法指南 · 导入约定](../08-best-practices/usage-guide.md#1-导入约定路径简化)。
+
 ## 第一个 DI 容器
 
 ```rust

@@ -6,6 +6,7 @@
 
 | 小节 | 内容 |
 |------|------|
+| [用法指南与决策矩阵](usage-guide.md) | 导入约定、场景推荐、简洁性技巧（首选阅读） |
 | [面向接口开发清单](interface-checklist.md) | 核心规则速查 |
 | [常见陷阱与排查](common-pitfalls.md) | 高频错误 |
 | [性能优化建议](performance-tips.md) | 性能建议 |
@@ -41,4 +42,4 @@
 
 ## 下一步
 
-从 [面向接口开发清单](interface-checklist.md) 开始。
+从 [用法指南与决策矩阵](usage-guide.md) 开始，建立导入约定与场景选择的整体认知。

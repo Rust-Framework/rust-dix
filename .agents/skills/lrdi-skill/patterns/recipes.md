@@ -1,5 +1,116 @@
 # LRDI 完整应用示例集
 
+## 快速起步模板
+
+### 模板 1：最小化 LRDI 项目（`#[inject]` 属性宏）
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+#[inject(singleton)]
+struct Config;
+
+#[inject(transient)]
+struct AppService {
+    #[inject]
+    config: Arc<Config>,
+}
+
+// handlers 层：实现接口并注册（struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait）
+#[derive(Inject)]
+struct UserService {
+    #[inject]
+    db: Arc<dyn IDbContext>,  // 依赖接口
+}
+
+#[inject]  // 在 impl 上：注册为接口
+impl IUserService for UserService {
+    fn create(&self, name: &str) -> User { ... }
+}
+
+// Handler 依赖接口
+#[inject(transient)]
+struct CreateUserHandler {
+    #[inject]
+    user_svc: Arc<dyn IUserService>,  // 接口依赖，可测试可替换
+}
+
+fn main() {
+    let provider = Arc::new(
+        ServiceCollection::from_injected()
+            .build()
+            .unwrap()
+    );
+    let handler: Arc<CreateUserHandler> = provider.get();
+    handler.user_svc.create("Alice");
+}
+```
+
+### 模板 2：策略模式（keyed 多实现）
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+// 多实现策略：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
+struct CreditCardGateway;
+
+#[inject]  // 在 impl 上：注册为默认 dyn IPayGateway
+impl IPayGateway for CreditCardGateway { ... }
+
+// 组合根补充 keyed 注册
+let provider = ServiceCollection::from_injected()
+    .keyed_singleton::<dyn IPayGateway>("wechat", |_| Arc::new(WechatGateway))
+    .keyed_singleton::<dyn IPayGateway>("alipay", |_| Arc::new(AlipayGateway))
+    .build()
+    .unwrap();
+
+// 运行时路由
+let gateway: Arc<dyn IPayGateway> = provider
+    .try_get_keyed(method)
+    .unwrap_or_else(|| provider.get());  // 回退默认
+```
+
+### 模板 3：带作用域的 Web 请求处理
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+fn handle_request(provider: &Arc<ServiceProvider>, req: Request) -> Response {
+    let scope = provider.create_scope();
+    let ctx: Arc<RequestContext> = scope.get();
+    let handler: Arc<RequestHandler> = scope.get();
+    handler.handle(ctx, req)
+}
+```
+
+### 模板 4：带 mock 的测试
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+#[test]
+fn test_business_logic() {
+    let p = ServiceCollection::new()
+        .singleton(|_| Arc::new(MockRepo::new()))
+        .transient(|p| Arc::new(MyService::new(p.get())))
+        .build().unwrap();
+    let svc: Arc<MyService> = p.get();
+    let result = svc.do_something();
+    assert!(result.is_ok());
+}
+```
+
+---
+
+## 端到端示例
+
+以下为完整应用示例大纲，适合需要多文件协作的复杂场景。
+
 ## 1. Web 服务（三层架构 + Scoped 请求）
 
 完整的 Actix-web / Axum 风格 Web 服务示例：

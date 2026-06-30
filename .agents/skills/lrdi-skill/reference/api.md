@@ -2,6 +2,8 @@
 
 > 本文档是 LRDI（Rust 依赖注入框架）的权威 API 参考。根据框架源代码逐方法生成，涵盖所有公开 API 的签名、参数、返回值、副作用和使用示例。
 
+> **导入约定**：本文示例为明确宏来源使用全限定路径（`#[rust_dicore::inject]` 等）。实际编码推荐 `use rust_dicore::*;` 后用 `#[inject]` 等简短形式，详见 `guides/usage-guide.md`。
+
 ---
 
 ## 目录
@@ -514,6 +516,8 @@ let provider = ServiceCollection::from_injected()
 //   #[rust_dicore::inject]                      // 放在 `impl Trait for T` 上：按 trait 注册
 ```
 
+> **放置位置二选一**：`#[inject]` 一般只放一处。放 struct 上 = 注册具体类型；放 impl 上 = 注册 `dyn Trait`。两者同时用会双重注册（通常非预期）。面向接口时 struct 上用 `#[derive(Inject)]`（仅生成构造函数、不注册），impl 上用 `#[inject]`。详见 `guides/usage-guide.md` §放置位置决策与 `guides/macros.md` §2.1。
+
 **生命周期参数：**
 
 | 生命周期 | 含义 |
@@ -562,7 +566,8 @@ trait ILogger: Send + Sync { fn log(&self, msg: &str); }
 #[rust_dicore::inject(singleton)]
 struct Logger { prefix: String }
 
-// 按 trait 注册：在 `impl Trait for T` 块上标注
+// 按 trait 注册：struct 上先用 #[derive(Inject)] 生成构造函数（不注册），再在 impl 块上用 #[inject] 注册为 dyn Trait
+#[derive(Inject)]
 struct ConsoleLogger;
 #[rust_dicore::inject]
 impl ILogger for ConsoleLogger {

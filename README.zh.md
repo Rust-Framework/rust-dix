@@ -23,8 +23,8 @@ Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框�
 
 | Crate | 功能 | 适用人群 |
 |-------|------|---------|
-| [`rust-dicore`](./crates/rust-dicore/) | 核心 DI 容器 — 注册、构建、解析、作用域 | 任何希望解耦、可测试、可插拔架构的 Rust 应用 |
-| [`rust-dicore-macros`](./crates/rust-dicore-macros/) | 过程宏 — `#[derive(Inject)]`、`#[rust_dicore::inject]`、`#[rust_dicore::module]` | 使用 `rust-dicore` 并希望编译期自动生成代码的用户 |
+| [`rust-dicore`](./crates/core/) | 核心 DI 容器 — 注册、构建、解析、作用域 | 任何希望解耦、可测试、可插拔架构的 Rust 应用 |
+| [`rust-dicore-macros`](./crates/macros/) | 过程宏 — `#[derive(Inject)]`、`#[rust_dicore::inject]`、`#[rust_dicore::module]` | 使用 `rust-dicore` 并希望编译期自动生成代码的用户 |
 
 ### 快速开始
 
@@ -75,9 +75,9 @@ let logger: Arc<Config> = provider.get();
 
 ### 目录
 
-- [在哪些场景下灵活应用？](./crates/rust-dicore/README.md#-在哪些场景下灵活应用)
-- [crates/rust-dicore — 主库完整文档](./crates/rust-dicore/README.md)
-- [crates/rust-dicore-macros — 过程宏文档](./crates/rust-dicore-macros/README.md)
+- [在哪些场景下灵活应用？](./crates/core/README.md#-在哪些场景下灵活应用)
+- [crates/core — 主库完整文档](./crates/core/README.md)
+- [crates/macros — 过程宏文档](./crates/macros/README.md)
 
 ---
 

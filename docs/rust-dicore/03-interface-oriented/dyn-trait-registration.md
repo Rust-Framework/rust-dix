@@ -67,12 +67,14 @@ ServiceCollection::new()
 
 ### 过程宏自动注册
 
+`#[inject]` 放置位置二选一：面向接口时 struct 上用 `#[derive(Inject)]`（仅生成构造函数、不注册），impl 上用 `#[inject]` 注册为 `dyn Trait`。**禁止** struct 与 impl 同时用 `#[inject]`（会双重注册，详见 [用法指南](../08-best-practices/usage-guide.md#放置位置struct-还是-impl二选一避免双重注册)）。
+
 ```rust
-// #[rust_dicore::inject] 属性宏
-#[rust_dicore::inject(singleton)]
+// struct 上用 #[derive(Inject)] 仅生成构造函数（不注册），impl 上用 #[inject] 注册为 dyn ILogger
+#[derive(Inject)]
 struct FileLogger;
 
-#[rust_dicore::inject]
+#[inject]
 impl ILogger for FileLogger {
     fn log(&self, msg: &str) { println!("[FILE] {}", msg); }
 }
@@ -93,14 +95,15 @@ let logger: Arc<dyn ILogger> = provider.get();
 trait IReader: Send + Sync { fn read(&self) -> String; }
 trait IWriter: Send + Sync { fn write(&self, data: &str); }
 
-#[rust_dicore::inject(singleton)]
+// struct 上用 #[derive(Inject)] 仅生成构造函数（不注册），两个 impl 块各注册一个 trait
+#[derive(Inject)]
 struct FileStream {
     path: String,
 }
 
-#[rust_dicore::inject]
+#[inject]
 impl IReader for FileStream { fn read(&self) -> String { "data" } }
-#[rust_dicore::inject]
+#[inject]
 impl IWriter for FileStream { fn write(&self, data: &str) { println!("{}", data); } }
 
 // 分别解析
@@ -183,7 +186,8 @@ ServiceCollection::new()
 过程宏自动处理字段依赖：
 
 ```rust
-#[rust_dicore::inject(singleton)]
+// struct 上用 #[derive(Inject)] 仅生成构造函数（不注册），impl 上用 #[inject] 注册为 dyn ILogger
+#[derive(Inject)]
 struct FileLogger {
     #[inject]
     config: Arc<dyn IConfig>,  // 自动解析
@@ -192,7 +196,7 @@ struct FileLogger {
     name: String,  // 未标记 → 使用 Default::default()
 }
 
-#[rust_dicore::inject]
+#[inject]
 impl ILogger for FileLogger { /* ... */ }
 ```
 
@@ -217,7 +221,7 @@ impl ILogger for FileLogger { /* ... */ }
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
 
 ```rust
-#[rust_dicore::inject(transient)]
+#[inject(transient)]
 struct Handler {
     #[inject]
     user_svc: Arc<dyn IUserService>,           // 必选共享
@@ -238,7 +242,8 @@ struct Handler {
 | `singleton::<dyn Trait>(...)` | `singleton(|_| Arc::new(Impl))` |
 | `provider.get::<dyn Trait>()` | `provider.get::<Impl>()` |
 | 字段声明 `Arc<dyn Trait>` | 字段声明 `Arc<Impl>` |
-| `#[rust_dicore::inject] impl Trait for Type` | 仅 `#[rust_dicore::inject(singleton)]`（不注册为 trait） |
+| 面向接口：struct 用 `#[derive(Inject)]` + impl 用 `#[inject]` | struct 与 impl 同时用 `#[inject]`（双重注册） |
+| 仅注册为 trait（`#[inject] impl Trait for Type`） | 仅 `#[inject(singleton)]` 在 struct 上（不注册为 trait） |
 
 ---
 

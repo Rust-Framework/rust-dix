@@ -163,7 +163,9 @@ struct Worker { logger: Arc<Config> }
 // trait 类型从 `impl Trait for Type` 自动推断，无需 `as = dyn Trait` 样板
 trait UserRepo { /* ... */ }
 
-#[rust_dicore::inject(transient)]   // 在 struct 上：具体类型注册
+// 面向接口的服务：struct 上用 #[derive(Inject)] 仅生成构造函数（不注册），
+// impl 上用 #[inject] 注册为 trait。struct 与 impl 同时用 #[inject] 会双重注册。
+#[derive(Inject)]
 struct PgUserRepo { db: Arc<DbPool> }
 
 #[rust_dicore::inject]              // 在 impl 上：trait 注册（默认 singleton）
@@ -189,10 +191,13 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 |---------|--------|----------------|
 | `#[inject]` 在 struct 上 | 具体类型 `T` | 自行生成 |
 | `#[inject]` 在 `impl Trait for T` 上 | `dyn Trait` | 复用 `__rdi_construct_T` |
+| `#[derive(Inject)]` 在 struct 上 | *（不注册，仅生成构造函数）* | — |
 
-同一个 struct 可以**同时**携带一个 struct 级别的 `#[inject]`（具体类型注册）
-和多个 impl 级别的 `#[inject]`（每个 trait 接口一个）。这取代了旧的
-`as = dyn Trait` / `as = [dyn A, dyn B]` 语法。
+**二选一，避免双重注册**：`#[inject]` 一般只放一处——struct 上或 impl 上，不要同时放。
+两者同时用会让同一 struct 注册两次（具体类型 + `dyn Trait`），通常非预期——消费者能
+绕过 trait 直接 `get::<具体类型>()`。面向接口的服务（Handler / Service / Repository）
+推荐 struct 上用 `#[derive(Inject)]`（仅生成构造函数、不注册），impl 上用 `#[inject]`
+注册为 trait。这取代了旧的 `as = dyn Trait` / `as = [dyn A, dyn B]` 语法。
 
 #### 解析（`ServiceProvider` / `Scope`）
 
@@ -299,8 +304,8 @@ trait PaymentGateway: Send + Sync {
     fn charge(&self, amount: f64) -> Result<(), String>;
 }
 
-// handlers 层实现接口，用 #[inject] 自动注册
-#[rust_dicore::inject(singleton)]
+// handlers 层实现接口：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
 struct CreditCardGateway;
 
 #[rust_dicore::inject]  // 在 impl 上：注册为默认 dyn PaymentGateway
@@ -426,7 +431,7 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 
 ### 与 rust-dicore-macros 的关系
 
-`rust-dicore` 可以独立使用，也可以配合 [`rust-dicore-macros`](../rust-dicore-macros/) 使用。
+`rust-dicore` 可以独立使用，也可以配合 [`rust-dicore-macros`](../macros/) 使用。
 过程宏提供三个编译期便利：
 
 - **`#[rust_dicore::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
@@ -435,7 +440,7 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 - **`#[rust_dicore::module]`** — 编译期收集 `rust_dicore::register!()` 声明，生成完整的 provider
   构建函数。适用于外部类型注册、条件编译和集中式管理。
 
-详见 [`rust-dicore-macros/README.md`](../rust-dicore-macros/README.md)。
+详见 [`macros/README.md`](../macros/README.md)。
 
 ---
 

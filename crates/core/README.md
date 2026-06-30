@@ -172,7 +172,10 @@ struct Worker { logger: Arc<Config> }
 // so no `as = dyn Trait` boilerplate is needed.
 trait UserRepo { /* ... */ }
 
-#[rust_dicore::inject(transient)]   // on the struct: concrete registration
+// For trait-oriented services, use #[derive(Inject)] on the struct (generates
+// a constructor but does NOT register) and #[inject] on the impl block only.
+// Putting #[inject] on BOTH struct and impl causes double registration.
+#[derive(Inject)]
 struct PgUserRepo { db: Arc<DbPool> }
 
 #[rust_dicore::inject]              // on the impl: trait registration (singleton by default)
@@ -201,10 +204,15 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 |-----------|-------------------|---------------------|
 | `#[inject]` on struct | Concrete type `T` | Generates its own |
 | `#[inject]` on `impl Trait for T` | `dyn Trait` | Reuses `__rdi_construct_T` |
+| `#[derive(Inject)]` on struct | *(nothing — constructor only)* | — |
 
-The same struct can carry **both** a struct-level `#[inject]` (concrete
-registration) and one or more impl-level `#[inject]` annotations (one per
-trait interface). This replaces the old `as = dyn Trait` /
+**Choose one site, don't double-register:** `#[inject]` generally goes on
+either the struct *or* the impl block, not both. Putting `#[inject]` on both
+registers the same struct twice (concrete type + `dyn Trait`), which is rarely
+intended — consumers can then bypass the trait via `get::<ConcreteType>()`.
+For trait-oriented services (handlers, services, repositories), prefer
+`#[derive(Inject)]` on the struct (constructor only, no registration) plus
+`#[inject]` on the impl block. This replaces the old `as = dyn Trait` /
 `as = [dyn A, dyn B]` syntax.
 
 #### Resolution (`ServiceProvider` / `Scope`)
@@ -404,7 +412,7 @@ let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
 
 ### Relationship with rust-dicore-macros
 
-`rust-dicore` works with or without [`rust-dicore-macros`](../rust-dicore-macros/). The macros
+`rust-dicore` works with or without [`rust-dicore-macros`](../macros/). The macros
 provide three compile-time conveniences:
 
 - **`#[rust_dicore::inject(...)]`** (recommended) — Attribute macro that combines
@@ -417,7 +425,7 @@ provide three compile-time conveniences:
   time and generate a complete provider builder. Useful for external types,
   conditional compilation, and centralized management.
 
-See [`rust-dicore-macros/README.md`](../rust-dicore-macros/README.md) for details.
+See [`macros/README.md`](../macros/README.md) for details.
 
 ---
 

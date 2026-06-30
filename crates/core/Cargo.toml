@@ -13,7 +13,7 @@ keywords = ["di", "dependency-injection", "ioc", "rust-dicore", "service-provide
 [dependencies]
 thiserror.workspace = true
 inventory = "0.3"
-rust-dicore-macros = { path = "../rust-dicore-macros", version = "0.5.0" }
+rust-dicore-macros = { path = "../macros", version = "0.5.0" }
 
 [features]
 default = []

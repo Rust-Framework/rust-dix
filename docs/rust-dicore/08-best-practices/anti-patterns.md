@@ -2,6 +2,8 @@
 
 本文档列举 rust-dicore 开发中的常见反模式及其修正方案。
 
+> 本文示例采用简短路径风格，假定文件顶部已 `use rust_dicore::*;`。导入约定详见 [用法指南](usage-guide.md#1-导入约定路径简化)。
+
 ## 反模式 1：依赖具体类型
 
 ### ❌ 错误做法
@@ -22,14 +24,14 @@ pub struct CreateUserHandler {
 ### ✅ 正确做法
 
 ```rust
-// Handler 依赖接口
-#[rust_dicore::inject(singleton)]
+// Handler 依赖接口：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
 pub struct CreateUserHandler {
     user_svc: Arc<dyn IUserService>,  // 接口
     logger: Arc<dyn ILogger>,         // 接口
 }
 
-#[rust_dicore::inject]
+#[inject]
 impl IRequestHandler<CreateUserRequest, User> for CreateUserHandler { /* ... */ }
 ```
 
@@ -126,10 +128,11 @@ fn main() {
 
 ```rust
 // handlers/user.rs
-#[rust_dicore::inject(singleton)]
+// struct 用 #[derive(Inject)] 仅生成构造函数（不注册），impl 用 #[inject] 注册为 dyn IUserService
+#[derive(Inject)]
 pub struct UserService { ... }
 
-#[rust_dicore::inject]
+#[inject]
 impl IUserService for UserService { /* ... */ }
 
 // main.rs
@@ -173,7 +176,7 @@ impl OrderService {
 
 ```rust
 // 显式声明依赖
-#[rust_dicore::inject(singleton)]
+#[inject(singleton)]
 pub struct OrderService {
     user_svc: Arc<dyn IUserService>,  // 显式依赖
     pay_svc: Arc<dyn IPayGateway>,    // 显式依赖
@@ -195,11 +198,11 @@ impl OrderService {
 
 ```rust
 // Session 注册为 Scoped
-#[rust_dicore::inject(scoped)]
+#[inject(scoped)]
 pub struct Session { ... }
 
 // GlobalService 注册为 Singleton
-#[rust_dicore::inject(singleton)]
+#[inject(singleton)]
 pub struct GlobalService {
     session: Arc<Session>,  // Singleton 依赖 Scoped
 }
@@ -214,14 +217,14 @@ pub struct GlobalService {
 
 ```rust
 // Scoped 服务只依赖 Singleton 或 Scoped
-#[rust_dicore::inject(scoped)]
+#[inject(scoped)]
 pub struct RequestHandler {
     config: Arc<AppConfig>,       // Singleton → OK
     session: Arc<Session>,        // Scoped → OK
 }
 
 // Singleton 只依赖 Singleton
-#[rust_dicore::inject(singleton)]
+#[inject(singleton)]
 pub struct GlobalService {
     config: Arc<AppConfig>,       // Singleton → OK
 }
@@ -345,6 +348,69 @@ impl IRequestHandler<CreateOrderRequest, Order> for CreateOrderHandler {
 
 ---
 
+## 反模式 10：struct 与 impl 同时用 `#[inject]`（双重注册）
+
+### ❌ 错误做法
+
+```rust
+// struct 和 impl 都用 #[inject] → 容器里既有 UserHandler（具体类型）又有 dyn IUserHandler
+#[inject(transient)]
+struct UserHandler {
+    #[inject]
+    user_svc: Arc<dyn IUserService>,
+}
+
+#[inject]
+impl IUserHandler for UserHandler { /* ... */ }  // 消费者可 get::<UserHandler>() 绕过接口
+```
+
+**问题**：
+- 同一 struct 被注册两次（具体类型 + `dyn Trait`），通常非预期
+- 消费者能绕过 trait 接口直接 `get::<具体类型>()`，破坏面向接口原则
+- 破坏可 mock 性——测试中替换 `dyn IUserHandler` 后，`get::<UserHandler>()` 仍返回真实实现
+
+### ✅ 正确做法
+
+`#[inject]` 放置位置二选一：面向接口时 struct 上用 `#[derive(Inject)]`（仅生成构造函数、不注册），impl 上用 `#[inject]` 注册为 `dyn Trait`。
+
+```rust
+// Handler 推荐放 impl 上：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
+struct UserHandler {
+    #[inject]
+    user_svc: Arc<dyn IUserService>,
+}
+
+#[inject]  // 仅注册为 dyn IUserHandler
+impl IUserHandler for UserHandler {
+    fn handle(&self, req: Req) -> Resp { /* ... */ }
+}
+```
+
+| 目标身份 | struct 上 | impl 上 | 结果 |
+|---------|----------|---------|------|
+| 仅具体类型（无 trait，如配置/值对象） | `#[inject]` | *不放* | ✅ |
+| 仅 `dyn Trait`（面向接口，**Handler/Service/Repository 推荐**） | `#[derive(Inject)]` | `#[inject]` | ✅ |
+| 两者都要（罕见，确需同时暴露） | `#[inject]` | `#[inject]` | ⚠️ 需注释说明意图 |
+| 仅 impl、struct 无构造函数 | *不放* | `#[inject]` | ❌ 编译失败 |
+
+**何时放 struct 上**：服务作为具体类型对外暴露（配置、值对象，无 trait 契约）。
+**何时放 impl 上**：服务有 trait 契约，面向接口便于 mock（Handler / Service / Repository，**推荐**）。
+
+### 为什么宏无法编译时检测双重注册？
+
+双重注册只能靠门禁 A9/B6 在代码生成阶段拦截，过程宏本身**无法**编译时检测，原因有三：
+
+1. **过程宏跨调用无状态**：`#[inject]` 标在 struct 上和标在 impl 上是两次独立的宏调用，彼此看不见对方，Rust 过程宏按设计即无共享状态。
+2. **TypeId 不冲突**：struct 放置注册为 `TypeId::of::<T>()`（具体类型），impl 放置注册为 `TypeId::of::<dyn Trait>()`（trait 对象）—— 两者 TypeId 不同，在 `ServiceStore` 中落入不同桶，无运行时冲突可检测。
+3. **双重注册是被支持的特性**：测试 `inject_combined_concrete_and_trait` 明确验证同一 struct 同时注册为具体类型 + `dyn Trait` 两者均可解析（"Concrete is also usable as the trait"）。加检测会破坏此合法用例（罕见但确需同时暴露）。
+
+因此，双重注册的防范完全依赖**文档约束 + 门禁 A9/B6**，而非编译期检查。
+
+> 详见 [用法指南 · 放置位置决策](usage-guide.md#放置位置struct-还是-impl二选一避免双重注册) 与 [常见陷阱 · 陷阱 10](common-pitfalls.md#陷阱-10struct-与-impl-同时用-inject双重注册)。
+
+---
+
 ## 反模式速查表
 
 | 反模式 | 问题 | 正确做法 |
@@ -358,6 +424,7 @@ impl IRequestHandler<CreateOrderRequest, Order> for CreateOrderHandler {
 | 每次重建容器 | 性能开销 | 构建一次 Arc 持有 |
 | 根 Provider 解析 Scoped | Scope 语义丢失 | 从 Scope 解析 |
 | Handler 直接调用 | 绕过 DI | 通过 Mediator 或注入服务 |
+| struct 与 impl 同时用 `#[inject]` | 双重注册，可绕过接口 | struct 用 `#[derive(Inject)]`，impl 用 `#[inject]` |
 
 ---
 

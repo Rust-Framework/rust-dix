@@ -21,8 +21,8 @@ Rust, inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 | Crate | What it does | Who needs it |
 |-------|-------------|--------------|
-| [`rust-dicore`](./crates/rust-dicore/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
-| [`rust-dicore-macros`](./crates/rust-dicore-macros/) | Procedural macros — `#[derive(Inject)]`, `#[rust_dicore::inject]`, `#[rust_dicore::module]` | Anyone using `rust-dicore` who wants compile-time code generation instead of manual wiring |
+| [`rust-dicore`](./crates/core/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
+| [`rust-dicore-macros`](./crates/macros/) | Procedural macros — `#[derive(Inject)]`, `#[rust_dicore::inject]`, `#[rust_dicore::module]` | Anyone using `rust-dicore` who wants compile-time code generation instead of manual wiring |
 
 ## Quick Start
 
@@ -77,8 +77,8 @@ rust-dicore = "0.4"
 
 ## Further reading
 
-- [crates/rust-dicore — core library docs](./crates/rust-dicore/README.md)
-- [crates/rust-dicore-macros — procedural macro docs](./crates/rust-dicore-macros/README.md)
+- [crates/core — core library docs](./crates/core/README.md)
+- [crates/macros — procedural macro docs](./crates/macros/README.md)
 
 ## License
 

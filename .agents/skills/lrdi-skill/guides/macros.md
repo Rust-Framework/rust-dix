@@ -4,6 +4,8 @@ rust-dicore（原 lrdi）的过程宏近期经历了一次重构：crate 名称�
 
 本指南面向新 API 编写。所有示例使用 `rust_dicore::` 导入路径与 `#[inject(...)]` 字段属性。
 
+> **导入约定**：本文示例为明确宏来源使用全限定路径（`#[rust_dicore::inject]` 等）。实际编码推荐 `use rust_dicore::*;` 后用 `#[inject]` 等简短形式，详见 `guides/usage-guide.md`。
+
 ---
 
 ## 一、宏全景：三种放置位置
@@ -69,7 +71,7 @@ let svc: Arc<MyService> = provider.get::<MyService>();
 
 #### 位置二：impl 块上——注册为 `dyn Trait`
 
-接口注册需要两步：先让 struct 拥有构造函数（用 `#[derive(Inject)]` 或 struct 上的 `#[rust_dicore::inject]`），再在 `impl Trait for T` 块上放 `#[rust_dicore::inject]`。
+接口注册需要两步：先让 struct 拥有构造函数（**推荐用 `#[derive(Inject)]`**——仅生成构造函数、不注册；若用 struct 上的 `#[rust_dicore::inject]` 会同时把具体类型也注册进 inventory，导致双重注册），再在 `impl Trait for T` 块上放 `#[rust_dicore::inject]` 完成接口注册。
 
 ```rust
 use rust_dicore::*;
@@ -104,11 +106,52 @@ let plugin: Arc<dyn IPlugin> = provider.get::<dyn IPlugin>();
 - 工厂内部调用 `__rdi_construct_{Type}`——这个构造函数必须由 struct 侧的 `#[derive(Inject)]` 或 struct 上的 `#[rust_dicore::inject]` 提供
 - 不支持 negative impl（`impl !Trait for T`），会编译报错
 
+#### 放置位置二选一（避免双重注册）
+
+`#[inject]` 放 struct 上 = 注册为**具体类型**；放 impl 块上 = 注册为 **`dyn Trait`**。两者同时用 = 同一 struct 被注册两次（具体类型 + trait），通常非预期——消费者能绕过 trait 直接 `get::<具体类型>()`，破坏面向接口原则。
+
+**核心区分**：`#[derive(Inject)]` 与 `#[inject]` 都能在 struct 侧生成构造函数，但只有 `#[inject]` 会向 inventory 提交注册。因此面向接口时 struct 上应选 `#[derive(Inject)]`（仅构造、不注册）。
+
+| 目标注册身份 | struct 上 | impl 上 | 结果 |
+|------------|----------|---------|------|
+| 仅具体类型（无 trait） | `#[inject]` | *不放* | ✅ 单一注册 |
+| 仅 `dyn Trait`（**推荐**） | `#[derive(Inject)]` | `#[inject]` | ✅ 单一注册 |
+| 两者都要（罕见） | `#[inject]` | `#[inject]` | ⚠️ 双重注册，需注释说明 |
+| 仅 impl、struct 无构造 | *不放* | `#[inject]` | ❌ 编译失败 |
+
+```rust
+// ✅ Handler 面向接口：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
+struct UserHandler {
+    #[inject]
+    user_svc: Arc<dyn IUserService>,
+}
+
+#[inject]  // 仅注册为 dyn IUserHandler
+impl IUserHandler for UserHandler {
+    fn handle(&self, req: Req) -> Resp { /* ... */ }
+}
+
+// ❌ 双重注册：struct 和 impl 都用 #[inject] → 容器里既有 UserHandler 又有 dyn IUserHandler
+#[inject(transient)]
+struct UserHandler { /* ... */ }
+
+#[inject]
+impl IUserHandler for UserHandler { /* ... */ }  // 消费者可 get::<UserHandler>() 绕过接口
+
+// ✅ 无 trait 契约的简单服务：只在 struct 上用 #[inject]
+#[inject(singleton)]
+struct Config { port: u16 }
+```
+
+**何时放 struct 上**：服务作为具体类型对外暴露（无 trait，或消费者直接用具体类型，如配置、值对象）。
+**何时放 impl 上**：服务有 trait 契约，面向接口便于 mock 替换（Handler / Service / Repository 均属此类，**推荐**）。**Handler 推荐放 impl 上**，struct 上用 `#[derive(Inject)]`。
+
 ---
 
 ### 2.2 宏展开原理：struct 放置
 
-`#[rust_dicore::inject]` 的入口是 `inject` 函数（源码：`crates/rust-dicore-macros/src/lib.rs`）。它把属性参数解析为 `InjectArgs`，把 item 解析为 `syn::Item`，再交给 `expand_inject` 分发：
+`#[rust_dicore::inject]` 的入口是 `inject` 函数（源码：`crates/macros/src/lib.rs`）。它把属性参数解析为 `InjectArgs`，把 item 解析为 `syn::Item`，再交给 `expand_inject` 分发：
 
 ```rust
 fn expand_inject(args: InjectArgs, item: syn::Item) -> syn::Result<proc_macro2::TokenStream> {
@@ -417,7 +460,7 @@ pub fn from_injected() -> Self {
 }
 ```
 
-`ServiceRegistration` 的定义（`crates/rust-dicore/src/registration.rs`）：
+`ServiceRegistration` 的定义（`crates/core/src/registration.rs`）：
 
 ```rust
 pub struct ServiceRegistration {
@@ -701,7 +744,7 @@ fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
 | `String` / 裸 `T` | `String` / `T` | `Owned` | 不匹配任何包装，原样返回 |
 | `Arc<dyn ITrait>` | `dyn ITrait` | `Arc` | trait object 同样支持 |
 
-**实现细节**（出自 `crates/rust-dicore-macros/src/lib.rs`）：
+**实现细节**（出自 `crates/macros/src/lib.rs`）：
 
 ```rust
 fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
@@ -1442,9 +1485,9 @@ fn main() -> Result<(), RdiError> {
 
 ## 六、源码映射速查表
 
-源码文件：`crates/rust-dicore-macros/src/lib.rs`（共约 581 行）。行号为近似范围，可能随重构微调。
+源码文件：`crates/macros/src/lib.rs`（共约 581 行）。行号为近似范围，可能随重构微调。
 
-| 宏/概念 | 源码位置 (`crates/rust-dicore-macros/src/lib.rs`) | 关键类型/函数 |
+| 宏/概念 | 源码位置 (`crates/macros/src/lib.rs`) | 关键类型/函数 |
 |--------|--------------------------------------------------|-------------|
 | `#[derive(Inject)]` 入口 | 第 14-19 行 | `#[proc_macro_derive(Inject, attributes(inject))]` → `inject_derive()` |
 | 派生宏展开逻辑 | 第 21-41 行 | `expand_inject_derive()`（处理 `Fields::Named` 与 `Fields::Unit`） |
@@ -1470,5 +1513,5 @@ fn main() -> Result<(), RdiError> {
 
 | 概念 | 源码位置 | 关键定义 |
 |------|---------|---------|
-| `ServiceRegistration` | `crates/rust-dicore/src/registration.rs` | `{ lifetime, type_id, type_name_fn, factory }` + `inventory::collect!` |
-| `ServiceCollection::from_injected()` | `crates/rust-dicore/src/collection.rs` 第 129-142 行 | 遍历 `inventory::iter::<ServiceRegistration>`，运行时调用 `(reg.type_name_fn)()` |
+| `ServiceRegistration` | `crates/core/src/registration.rs` | `{ lifetime, type_id, type_name_fn, factory }` + `inventory::collect!` |
+| `ServiceCollection::from_injected()` | `crates/core/src/collection.rs` 第 129-142 行 | 遍历 `inventory::iter::<ServiceRegistration>`，运行时调用 `(reg.type_name_fn)()` |
