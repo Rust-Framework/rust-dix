@@ -5,7 +5,7 @@ use crate::lifetime::ServiceLifetime;
 use crate::store::ServiceStore;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock, Weak};
 
 /// Validation resolver that tracks resolution chains for cycle detection
 /// and captive dependency detection (Singleton depending on Scoped).
@@ -159,8 +159,8 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             } else {
                 format!("{} -> {}", chain.join(" -> "), type_name)
             };
-            // Use a panic with message that will be caught
-            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+            // Type-safe panic_any: validate_dependencies downcasts RdiError directly.
+            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
         }
 
         // Mark as resolving and push onto the lifetime tracking stack.
@@ -219,7 +219,7 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             } else {
                 format!("{} -> {}", chain.join(" -> "), type_name)
             };
-            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
@@ -267,7 +267,7 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             } else {
                 format!("{} -> {}", chain.join(" -> "), type_name)
             };
-            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
@@ -307,7 +307,7 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
             } else {
                 format!("{} -> {}", chain.join(" -> "), type_name)
             };
-            panic!("CIRCULAR_DEPENDENCY: {}", cycle_desc);
+            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
         }
 
         self.resolving.write().unwrap().insert(entry.cache_key);
@@ -324,23 +324,33 @@ impl<'a> IServiceResolver for ValidationResolver<'a> {
 }
 
 pub struct ServiceProvider {
-    store: ServiceStore,
+    /// Service registry. Shared across root + scope-derived providers via `Arc`.
+    store: Arc<ServiceStore>,
     /// String → TypeId lookup for IServiceLocator string-based resolution.
-    type_map: HashMap<&'static str, TypeId>,
+    /// Shared across root + scope-derived providers via `Arc`.
+    type_map: Arc<HashMap<&'static str, TypeId>>,
     /// Singleton 实例缓存（per-key `OnceLock`，多线程下工厂只执行一次）。
     /// build 阶段 validation + Phase 2 eager init 预热，运行时 lazy fallback。
-    singleton_cache: LazyCache,
+    /// Shared across root + scope-derived providers via `Arc`（全局单例语义）。
+    singleton_cache: Arc<LazyCache>,
     /// Root scope 的 Scoped 实例缓存。
     ///
     /// ServiceProvider 本身即 MEDI 的 root scope：从根直接解析 Scoped 服务时，
     /// 实例在此缓存中复用，语义等同于在根 scope 内单例化。
     /// 子 Scope（通过 `create_scope()` 创建）拥有独立的 scoped_cache，不回退到此缓存。
     /// per-key `OnceLock` 保证多线程下工厂只执行一次，无 TOCTOU 竞态。
+    /// **每个 provider 独立**：root 与 scope-derived 各自持有一份。
     root_scoped_cache: LazyCache,
     /// String-keyed registry for cross-DLL (cdylib) service access.
     /// Rust's `TypeId` differs across compilation units, so named
     /// lookup is the only reliable mechanism for plugin services.
-    pub(crate) named: RwLock<HashMap<String, Arc<dyn Any + Send + Sync>>>,
+    /// Shared across root + scope-derived providers via `Arc`.
+    pub(crate) named: Arc<RwLock<HashMap<String, Arc<dyn Any + Send + Sync>>>>,
+    /// Self-referential weak pointer, initialized by [`Self::into_arc`] or
+    /// [`Self::new_scope`]. Enables [`IServiceResolver::provider_arc`] to hand
+    /// out `Arc<ServiceProvider>` to services using `#[inject(provider)]`.
+    /// **每个 provider 独立**：scope-derived provider 的 self_weak 指向自身。
+    self_weak: OnceLock<Weak<ServiceProvider>>,
 }
 
 impl ServiceProvider {
@@ -358,7 +368,7 @@ impl ServiceProvider {
         // cycles, and caches the resulting instances so Phase 2 can reuse
         // them instead of re-executing the factories (which would double-fire
         // side effects like counters / log lines).
-        let singleton_cache = LazyCache::new();
+        let singleton_cache = Arc::new(LazyCache::new());
         Self::validate_dependencies(&store, &singleton_cache)?;
 
         // Phase 1: collect all singleton entries.
@@ -373,11 +383,12 @@ impl ServiceProvider {
         // Reuse instances already built during validation; only execute
         // factories whose results are not yet cached.
         let sp = Self {
-            store,
-            type_map,
+            store: Arc::new(store),
+            type_map: Arc::new(type_map),
             singleton_cache,
             root_scoped_cache: LazyCache::new(),
-            named: RwLock::new(HashMap::new()),
+            named: Arc::new(RwLock::new(HashMap::new())),
+            self_weak: OnceLock::new(),
         };
 
         for (ck, factory) in &singleton_entries {
@@ -389,6 +400,30 @@ impl ServiceProvider {
         }
 
         Ok(sp)
+    }
+
+    /// 创建一个 scope 范围的 ServiceProvider，共享 store/type_map/singleton_cache/named，
+    /// 独立 root_scoped_cache 和 self_weak。
+    ///
+    /// 供 [`Scope::new`](crate::scope::Scope::new) 调用。这使 `#[inject(provider)]`
+    /// 字段拿到的是 **scope 范围的 provider** 而非根 provider——经该字段解析 Scoped 服务
+    /// 会命中 scope 自己的 `root_scoped_cache`，符合 MEDI `IServiceScope` 语义。
+    ///
+    /// 与 [`Self::into_arc`] 一样初始化 self_weak，使 scope provider 自身可被
+    /// `provider_arc()` 返回。
+    pub(crate) fn new_scope(parent: &Arc<Self>) -> Arc<Self> {
+        let sp = Self {
+            store: Arc::clone(&parent.store),
+            type_map: Arc::clone(&parent.type_map),
+            singleton_cache: Arc::clone(&parent.singleton_cache),
+            root_scoped_cache: LazyCache::new(),
+            named: Arc::clone(&parent.named),
+            self_weak: OnceLock::new(),
+        };
+        let arc = Arc::new(sp);
+        let this: &Self = &arc;
+        this.self_weak.get_or_init(|| Arc::downgrade(&arc));
+        arc
     }
 
     /// Validate all dependencies: detect cycles.
@@ -413,32 +448,19 @@ impl ServiceProvider {
                 if entry.lifetime == ServiceLifetime::Singleton {
                     let resolver = ValidationResolver::new(store, &type_names, cache);
                     let type_name = entry.type_name;
-                    // Attempt to resolve - if there's a cycle, we'll catch the panic
+                    // Attempt to resolve - if there's a cycle or captive dependency,
+                    // ValidationResolver throws via panic_any(RdiError) and we downcast it here.
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         resolver.get_any(type_name)
                     })) {
                         Ok(_) => {}
                         Err(panic_info) => {
-                            // Check for captive dependency error (RdiError)
+                            // All framework-thrown panics use panic_any(RdiError):
+                            // CircularDependency + SingletonDependsOnScoped + FactoryPanic.
                             if let Some(err) = panic_info.downcast_ref::<RdiError>() {
-                                if let RdiError::SingletonDependsOnScoped { .. } = err {
-                                    return Err(err.clone());
-                                }
+                                return Err(err.clone());
                             }
-                            // Check if it's our circular dependency panic
-                            if let Some(msg) = panic_info.downcast_ref::<String>() {
-                                if msg.starts_with("CIRCULAR_DEPENDENCY: ") {
-                                    let cycle = msg.strip_prefix("CIRCULAR_DEPENDENCY: ").unwrap();
-                                    return Err(RdiError::CircularDependency(cycle.to_string()));
-                                }
-                            }
-                            if let Some(msg) = panic_info.downcast_ref::<&str>() {
-                                if msg.starts_with("CIRCULAR_DEPENDENCY: ") {
-                                    let cycle = msg.strip_prefix("CIRCULAR_DEPENDENCY: ").unwrap();
-                                    return Err(RdiError::CircularDependency(cycle.to_string()));
-                                }
-                            }
-                            // Other panic - re-panic
+                            // Unknown panic — re-panic to preserve original behavior.
                             std::panic::panic_any(panic_info);
                         }
                     }
@@ -539,6 +561,18 @@ impl ServiceProvider {
         crate::scope::Scope::new(self.clone())
     }
 
+    /// Wrap this provider in an `Arc` and enable `provider_arc()` resolution.
+    ///
+    /// Services using `#[inject(provider)]` require the provider to be
+    /// created via this method (not `Arc::new(provider)`) so that the
+    /// self-referential weak pointer is initialized.
+    pub fn into_arc(self) -> Arc<Self> {
+        let arc = Arc::new(self);
+        let this: &Self = &arc;
+        this.self_weak.get_or_init(|| Arc::downgrade(&arc));
+        arc
+    }
+
     /// Alias for `scope()` with MEDI-inspired naming.
     pub fn create_scope(self: &Arc<Self>) -> crate::scope::Scope {
         self.scope()
@@ -587,22 +621,25 @@ impl ServiceProvider {
                 // per-key OnceLock 保证多线程下工厂只执行一次，无 TOCTOU 竞态。
                 let factory = entry.factory.clone();
                 let resolver = self as &dyn IServiceResolver;
-                Some(
-                    self.singleton_cache
-                        .get_or_init_with(entry.cache_key, move || factory(resolver)),
-                )
+                let svc_name = entry.type_name;
+                Some(self.singleton_cache.get_or_init_with(entry.cache_key, move || {
+                    Self::run_factory_safely(svc_name, move || factory(resolver))
+                }))
             }
             ServiceLifetime::Scoped => {
                 // Root scope 缓存：ServiceProvider 即 root scope，
                 // 从根解析 Scoped 服务在 root_scoped_cache 内复用。
                 let factory = entry.factory.clone();
                 let resolver = self as &dyn IServiceResolver;
-                Some(
-                    self.root_scoped_cache
-                        .get_or_init_with(entry.cache_key, move || factory(resolver)),
-                )
+                let svc_name = entry.type_name;
+                Some(self.root_scoped_cache.get_or_init_with(entry.cache_key, move || {
+                    Self::run_factory_safely(svc_name, move || factory(resolver))
+                }))
             }
-            ServiceLifetime::Transient => Some((entry.factory)(self)),
+            ServiceLifetime::Transient => {
+                let svc_name = entry.type_name;
+                Some(Self::run_factory_safely(svc_name, || (entry.factory)(self)))
+            }
         }
     }
 
@@ -618,7 +655,44 @@ impl ServiceProvider {
         match entry.lifetime {
             ServiceLifetime::Singleton => None,
             ServiceLifetime::Scoped | ServiceLifetime::Transient => {
-                Some((entry.factory)(self as &dyn IServiceResolver))
+                let svc_name = entry.type_name;
+                Some(Self::run_factory_safely(svc_name, || {
+                    (entry.factory)(self as &dyn IServiceResolver)
+                }))
+            }
+        }
+    }
+
+    /// 在 catch_unwind 中执行工厂，捕获 panic 并转换为类型安全的 RdiError。
+    ///
+    /// - 若 panic payload 是 RdiError（循环依赖/captive），保持原样重新抛出
+    ///   （上层 `validate_dependencies` 统一 downcast 处理）。
+    /// - 若是其他 panic，包装为 `RdiError::FactoryPanic` 重新抛出（类型安全，
+    ///   运行期用户可通过 catch_unwind 识别）。
+    ///
+    /// 配合 LazyCache 的无锁工厂执行设计（工厂在 RwLock 临界区外执行），
+    /// 确保 panic 不会让任何 RwLock 中毒——catch_unwind 捕获 panic 后，
+    /// 调用方仍可正常使用 ServiceProvider 后续解析。
+    fn run_factory_safely<F>(service_name: &'static str, factory: F) -> AnyService
+    where
+        F: FnOnce() -> AnyService,
+    {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(factory)) {
+            Ok(v) => v,
+            Err(payload) => {
+                // RdiError 直接重新抛出，保留原始错误类型（循环依赖/captive）。
+                if payload.is::<RdiError>() {
+                    std::panic::panic_any(payload);
+                }
+                let msg = payload
+                    .downcast_ref::<&'static str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().map(|s| s.clone()))
+                    .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                std::panic::panic_any(RdiError::FactoryPanic {
+                    service: service_name.to_string(),
+                    payload: msg,
+                });
             }
         }
     }
@@ -632,11 +706,6 @@ impl ServiceProvider {
         Some(Arc::clone(&*double))
     }
 
-    /// Get entries by TypeId (used internally and by Scope).
-    pub(crate) fn entries_by_tid(&self, tid: &TypeId) -> Option<&Vec<ServiceEntry>> {
-        self.store.get(tid)
-    }
-
     /// Find entry by string type_name + variant (for string-based resolution).
     pub(crate) fn entry_by_str(&self, type_name: &str, variant: &str) -> Option<&ServiceEntry> {
         let tid = self.type_map.get(type_name)?;
@@ -644,12 +713,6 @@ impl ServiceProvider {
             .get(tid)?
             .iter()
             .find(|e| e.key.as_deref() == Some(variant))
-    }
-
-    /// Get entries by string type_name (for string-based resolution).
-    pub(crate) fn entries_by_str(&self, type_name: &str) -> Option<&Vec<ServiceEntry>> {
-        let tid = self.type_map.get(type_name)?;
-        self.store.get(tid)
     }
 
     /// Cross-DLL safe named service resolution (generic).
@@ -705,6 +768,21 @@ impl IServiceResolver for ServiceProvider {
         let entry = self.entry_by_str(key, variant)?;
         self.get_any_by_entry(entry)
     }
+    fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        // 复用 type_map → store 路径，遍历某 TypeId 下所有 entry（default + keyed），
+        // 逐个 get_any_by_entry 收集。空注册返回空 Vec，不 panic。
+        let tid = match self.type_map.get(key) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        match self.store.get(tid) {
+            Some(entries) => entries
+                .iter()
+                .filter_map(|e| self.get_any_by_entry(e))
+                .collect(),
+            None => Vec::new(),
+        }
+    }
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let tid = self.type_map.get(key)?;
         let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
@@ -713,6 +791,9 @@ impl IServiceResolver for ServiceProvider {
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let entry = self.entry_by_str(key, variant)?;
         self.create_owned_any_by_entry(entry)
+    }
+    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
+        self.self_weak.get().and_then(|w| w.upgrade())
     }
 }
 

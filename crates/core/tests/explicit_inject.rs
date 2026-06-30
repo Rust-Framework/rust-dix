@@ -4,7 +4,7 @@
 //! - Unmarked fields use `Default::default()` and never consult the resolver.
 //! - `#[inject]` marks shared injection (Arc<T> / Option<Arc<T>>).
 //! - `#[inject(owned)]` marks owned injection (bare T / Option<T>).
-//! - `#[inject(provider)]` injects the resolver itself.
+//! - `#[inject(provider)]` injects `Arc<ServiceProvider>` for on-demand resolution.
 //! - Optionality is driven by the field type (`Option<...>`), not by a marker.
 
 #![allow(non_snake_case)]

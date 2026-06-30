@@ -35,6 +35,20 @@ impl IServiceResolver for RdiProvider {
             RdiProvider::Wrapped(w) => IServiceResolver::get_keyed_any(w.as_ref(), key, variant),
         }
     }
+
+    fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        match self {
+            RdiProvider::Root(p) => IServiceResolver::get_all_any(p.as_ref(), key),
+            RdiProvider::Wrapped(w) => IServiceResolver::get_all_any(w.as_ref(), key),
+        }
+    }
+
+    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
+        match self {
+            RdiProvider::Root(p) => Some(Arc::clone(p)),
+            RdiProvider::Wrapped(w) => IServiceResolver::provider_arc(w.as_ref()),
+        }
+    }
 }
 
 impl RdiProvider {

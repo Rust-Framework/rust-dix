@@ -1,4 +1,5 @@
 use crate::lifetime::ServiceLifetime;
+use crate::provider::ServiceProvider;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -8,6 +9,33 @@ use std::sync::Arc;
 pub trait IServiceResolver: Send + Sync {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>>;
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>>;
+
+    /// Type-erased polymorphic resolution: return all registered instances
+    /// (default + keyed) of the given type.
+    ///
+    /// Used by `Vec<Arc<T>>` field injection (`#[inject]` on `Vec<Arc<T>>`)
+    /// to collect all implementations — equivalent to C# MEDI
+    /// `IEnumerable<IFoo>` constructor injection.
+    ///
+    /// Default empty `Vec` keeps external implementors backward-compatible.
+    fn get_all_any(&self, _key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        Vec::new()
+    }
+
+    /// Return an `Arc<ServiceProvider>` for on-demand service resolution.
+    ///
+    /// Used by `#[inject(provider)]` to give a service access to the DI container
+    /// so it can resolve scoped/owned instances on-demand (e.g., per-request
+    /// `DbContext` in a web handler).
+    ///
+    /// Returns `None` if the resolver is not backed by a `ServiceProvider`
+    /// (e.g., `ValidationResolver` during build-time validation) or if the
+    /// provider was not created via [`ServiceProvider::into_arc`].
+    ///
+    /// Default `None` keeps external implementors backward-compatible.
+    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
+        None
+    }
 
     /// Resolve a service by type (concrete or `dyn Trait`).
     /// Panics if not registered.
@@ -52,6 +80,22 @@ pub trait IServiceResolver: Send + Sync {
     {
         self.get_keyed_any(std::any::type_name::<T>(), variant)
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
+    }
+
+    /// Resolve all registered instances of `T` (default + keyed).
+    ///
+    /// Equivalent to C# MEDI `GetServices<T>()`. Types implementing `IServiceResolver`
+    /// get this for free via `get_all_any`; types with an inherent `get_all<T>`
+    /// method (e.g. `ServiceProvider`, `Scope`) use that instead — Rust's method
+    /// resolution gives inherent methods priority over trait methods.
+    fn get_all<T: ?Sized + Sync + Send + 'static>(&self) -> Vec<Arc<T>>
+    where
+        Self: Sized,
+    {
+        self.get_all_any(std::any::type_name::<T>())
+            .into_iter()
+            .filter_map(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
+            .collect()
     }
 
     /// Type-erased owned resolution: bypass cache, call factory fresh, return

@@ -177,7 +177,7 @@ driven by the field type (`Option<...>`), not by a marker.
 | `#[inject(owned)]` | bare `T` | Required owned — panics if not registered or Singleton |
 | `#[inject(owned)]` | `Option<T>` | Optional owned — `None` if not registered or Singleton |
 | `#[inject(owned, key = "k")]` | bare `T` / `Option<T>` | Keyed owned |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | Injects the resolver itself |
+| `#[inject(provider)]` | `Arc<ServiceProvider>` | Injects the provider for on-demand resolution |
 
 > Type checking is strict: `#[inject]` only accepts `Arc<T>` / `Option<Arc<T>>`,
 > `#[inject(owned)]` only accepts bare `T` / `Option<T>`. Mismatched markers

@@ -549,7 +549,7 @@ let provider = ServiceCollection::from_injected()
 | `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver 自身 |
+| `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入 provider 供按需解析（需 `into_arc()`） |
 
 > 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。

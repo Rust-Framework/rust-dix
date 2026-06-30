@@ -323,7 +323,7 @@ let provider = ServiceCollection::from_injected()
 #[rust_dicore::inject(transient)]
 struct OrderService {
     #[inject(provider)]  // 按需解析策略
-    resolver: Arc<dyn IServiceResolver>,
+    provider: Arc<ServiceProvider>,
 }
 
 impl OrderService {

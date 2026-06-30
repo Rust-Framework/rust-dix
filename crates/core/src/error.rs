@@ -9,4 +9,6 @@ pub enum RdiError {
     CircularDependency(String),
     #[error("singleton '{singleton}' cannot depend on scoped service '{scoped}'")]
     SingletonDependsOnScoped { singleton: String, scoped: String },
+    #[error("factory panicked while resolving service '{service}': {payload}")]
+    FactoryPanic { service: String, payload: String },
 }

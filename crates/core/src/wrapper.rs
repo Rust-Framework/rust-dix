@@ -76,6 +76,15 @@ impl IServiceResolver for ServiceProviderWrapper {
         IServiceResolver::get_keyed_any(self.child.as_ref(), key, variant)
             .or_else(|| IServiceResolver::get_keyed_any(self.root.as_ref(), key, variant))
     }
+    fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        // 合并 child + root：与 inherent `get_all` 的 child-then-root 顺序一致。
+        let mut result = IServiceResolver::get_all_any(self.child.as_ref(), key);
+        result.extend(IServiceResolver::get_all_any(self.root.as_ref(), key));
+        result
+    }
+    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
+        Some(Arc::clone(&self.child))
+    }
 }
 
 impl ServiceProviderWrapper {

@@ -45,12 +45,14 @@ fn expand_inject_derive(input: DeriveInput) -> syn::Result<proc_macro2::TokenStr
 /// - `OptionArc`  → `Option<Arc<T>>`   : optional shared, returns `Option<Arc<T>>`.
 /// - `Owned`      → bare `T`           : owned, resolve via `get_owned_any` + `try_unwrap`.
 /// - `OptionOwned`→ `Option<T>`        : optional owned, returns `Option<T>`.
+/// - `VecArc`     → `Vec<Arc<T>>`      : polymorphic, resolve via `get_all_any` + downcast each.
 #[derive(Clone, Copy, PartialEq)]
 enum FieldKind {
     Arc,
     OptionArc,
     Owned,
     OptionOwned,
+    VecArc,
 }
 
 fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
@@ -73,6 +75,20 @@ fn classify_field(ty: &syn::Type) -> (proc_macro2::TokenStream, FieldKind) {
                                 } else {
                                     // Option<T> where T is not Arc → OptionOwned
                                     return (quote! {#inner_ty}, FieldKind::OptionOwned);
+                                }
+                            }
+                        }
+                    }
+                }
+                "Vec" => {
+                    // Vec<Arc<T>> / Vec<Arc<dyn Trait>> → polymorphic injection.
+                    if let Some(inner) = single_generic_type(last) {
+                        if let syn::Type::Path(ip) = inner {
+                            if let Some(ilast) = ip.path.segments.last() {
+                                if ilast.ident == "Arc" {
+                                    if let Some(t) = single_generic_type(ilast) {
+                                        return (quote! {#t}, FieldKind::VecArc);
+                                    }
                                 }
                             }
                         }
@@ -115,9 +131,14 @@ fn gen_field_init(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
     if !attrs.inject && !attrs.provider {
         return Ok(quote! { #fnm: ::std::default::Default::default() });
     }
-    // #[inject(provider)] → resolver.clone().
+    // #[inject(provider)] → resolver.provider_arc().expect(...)
+    // Field type must be `Arc<ServiceProvider>`.
     if attrs.provider {
-        return Ok(quote! { #fnm: resolver.clone() });
+        return Ok(quote! {
+            #fnm: resolver.provider_arc().expect(
+                "ServiceProvider not available; use ServiceProvider::into_arc() to enable #[inject(provider)]"
+            )
+        });
     }
 
     // Arc<T> extraction: downcast Arc<dyn Any> → Arc<Arc<T>> → clone inner Arc<T>.
@@ -151,9 +172,31 @@ fn gen_field_init(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
                     Ok(quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract .unwrap_or_else(|| ::std::panic!("svc not registered")) })
                 }
             }
+            FieldKind::VecArc => {
+                // 多态注入：收集某 trait/类型下所有注册（default + keyed），等价 C# IEnumerable<IFoo>。
+                // key 不适用——key 是 per-implementation 的，由 store 决定哪些 entry 被收集。
+                if attrs.key.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        field,
+                        "#[inject] on Vec<Arc<T>> does not support key; key is per-implementation",
+                    ));
+                }
+                Ok(quote! {
+                    #fnm: resolver.get_all_any(::std::any::type_name::<#inner>())
+                        .into_iter()
+                        .map(|a| a.downcast::<::std::sync::Arc<#inner>>()
+                            .ok()
+                            .unwrap_or_else(|| ::std::panic!(
+                                "polymorphic inject: type mismatch for {}",
+                                ::std::any::type_name::<#inner>()
+                            )))
+                        .map(|d| ::std::sync::Arc::clone(&*d))
+                        .collect::<::std::vec::Vec<::std::sync::Arc<#inner>>>()
+                })
+            }
             _ => Err(syn::Error::new_spanned(
                 field,
-                "#[inject] requires Arc<T> or Option<Arc<T>> field type; use #[inject(owned)] for bare T",
+                "#[inject] requires Arc<T>, Option<Arc<T>>, or Vec<Arc<T>> field type; use #[inject(owned)] for bare T",
             )),
         }
     } else {

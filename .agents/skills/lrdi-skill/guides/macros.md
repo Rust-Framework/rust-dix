@@ -430,7 +430,7 @@ struct 上的 `#[rust_dicore::inject]` 与 `#[derive(Inject)]` 共用同一套�
 | `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 直接注入 resolver |
+| `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入 provider 供按需解析（需 `into_arc()` 创建） |
 
 > 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
@@ -556,7 +556,7 @@ struct OrderService {
     audit: Arc<Logger>,
     label: String,  // 未标记 → Default::default()
     #[inject(provider)]
-    resolver: Arc<dyn IServiceResolver>,
+    provider: Arc<ServiceProvider>,
 }
 
 // ── 构建 provider ──
@@ -852,9 +852,9 @@ struct OrderService {
     #[inject(owned)]
     ctx: DbContext,
 
-    // 7. #[inject(provider)]：直接获取 resolver
+    // 7. #[inject(provider)]：注入 provider 供按需解析
     #[inject(provider)]
-    resolver: Arc<dyn IServiceResolver>,
+    provider: Arc<ServiceProvider>,
 }
 
 #[derive(Default)]

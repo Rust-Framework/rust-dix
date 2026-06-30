@@ -1,229 +1,127 @@
-use crate::cache::{AnyService, LazyCache};
 use crate::entry::IServiceResolver;
-use crate::lifetime::ServiceLifetime;
 use crate::provider::ServiceProvider;
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::sync::Arc;
 
+/// A scoped service provider — created via [`ServiceProvider::scope`].
+///
+/// 内部持有一个 scope 范围的 `ServiceProvider`（由 [`ServiceProvider::new_scope`] 派生），
+/// 共享 root 的 store/singleton_cache/named，独立 `root_scoped_cache`。
+///
+/// 所有解析方法委托给内嵌的 `scope_provider`，确保：
+/// - Scoped 服务在 scope 内缓存复用（命中 `scope_provider.root_scoped_cache`）。
+/// - Transient 依赖通过 `scope_provider` 解析，正确绑定到当前 scope（MEDI 语义）。
+/// - `#[inject(provider)]` 字段拿到的是 scope 范围的 provider，经该字段解析 Scoped
+///   服务命中 scope 缓存——不泄漏到 root。
 pub struct Scope {
-    parent: Arc<ServiceProvider>,
-    /// 子 scope 的 Scoped 实例缓存（per-key `OnceLock`，多线程下工厂只执行一次）。
-    /// 与 ServiceProvider 的 root_scoped_cache 结构一致，统一懒初始化架构。
-    scoped_cache: LazyCache,
+    scope_provider: Arc<ServiceProvider>,
 }
 
 impl Scope {
     pub(crate) fn new(parent: Arc<ServiceProvider>) -> Self {
         Self {
-            parent,
-            scoped_cache: LazyCache::new(),
+            scope_provider: ServiceProvider::new_scope(&parent),
         }
     }
 
+    /// Returns the scope-local `ServiceProvider` backing this scope.
+    ///
+    /// Exposed for advanced use cases (e.g. passing the scope provider to
+    /// `ServiceProviderWrapper`). Most callers should use [`Self::get`] /
+    /// [`Self::get_owned`] directly.
+    pub fn scope_provider(&self) -> &Arc<ServiceProvider> {
+        &self.scope_provider
+    }
+
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
-        self.try_get::<T>()
-            .unwrap_or_else(|| panic!("service not registered: {}", std::any::type_name::<T>()))
+        self.scope_provider.get::<T>()
     }
 
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        self.try_get::<T>()
+        self.scope_provider.get_optional::<T>()
     }
 
     /// Alias for `get_optional()` with MEDI-inspired naming.
     pub fn get_service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        self.get_optional::<T>()
+        self.scope_provider.get_service::<T>()
     }
 
     /// Alias for `get()` with MEDI-inspired naming.
     pub fn get_required_service<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
-        self.get::<T>()
+        self.scope_provider.get_required_service::<T>()
     }
 
     /// Return all registered instances of the given type.
     /// MEDI-inspired naming.
     pub fn get_services<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
-        self.get_all::<T>()
+        self.scope_provider.get_services::<T>()
     }
 
     pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Arc<T> {
-        self.try_get_keyed::<T>(key).unwrap_or_else(|| {
-            panic!(
-                "keyed service not registered: {}:{}",
-                std::any::type_name::<T>(),
-                key
-            )
-        })
+        self.scope_provider.get_keyed::<T>(key)
     }
 
     /// Resolve owned `T` within this scope (bypass cache, fresh each call).
     /// Panics if not registered or the service is Singleton.
     pub fn get_owned<T: Send + Sync + 'static>(&self) -> T {
-        self.try_get_owned::<T>().unwrap_or_else(|| {
-            panic!(
-                "get_owned: not registered or Singleton: {}",
-                std::any::type_name::<T>()
-            )
-        })
+        self.scope_provider.get_owned::<T>()
     }
 
     /// Resolve owned `T`, returning `None` if not registered or Singleton.
     pub fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T> {
-        let tid = TypeId::of::<T>();
-        let entry = self
-            .parent
-            .entries_by_tid(&tid)?
-            .iter()
-            .find(|e| e.key.is_none())?;
-        let arc_any = self.create_owned_any_by_entry(entry)?;
-        let arc_t = ServiceProvider::extract(arc_any)?;
-        Arc::try_unwrap(arc_t).ok()
+        self.scope_provider.try_get_owned::<T>()
     }
 
     /// Resolve owned keyed `T`. Panics if not found or Singleton.
     pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> T {
-        self.try_get_keyed_owned::<T>(key).unwrap_or_else(|| {
-            panic!(
-                "get_keyed_owned: not registered or Singleton: {}:{}",
-                std::any::type_name::<T>(),
-                key
-            )
-        })
+        self.scope_provider.get_keyed_owned::<T>(key)
     }
 
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
     pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
-        let tid = TypeId::of::<T>();
-        let entries = self.parent.entries_by_tid(&tid)?;
-        let entry = entries.iter().find(|e| e.key.as_deref() == Some(key))?;
-        let arc_any = self.create_owned_any_by_entry(entry)?;
-        let arc_t = ServiceProvider::extract(arc_any)?;
-        Arc::try_unwrap(arc_t).ok()
+        self.scope_provider.try_get_keyed_owned::<T>(key)
     }
 
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
-        let tid = TypeId::of::<T>();
-        if let Some(entries) = self.parent.entries_by_tid(&tid) {
-            entries
-                .iter()
-                .filter_map(|e| {
-                    let arc = self.get_any_by_entry(e)?;
-                    ServiceProvider::extract(arc)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        self.scope_provider.get_all::<T>()
     }
 
     pub fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.parent.get_named_any(name)
+        self.scope_provider.get_named_any(name)
     }
 
-    fn try_get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        let tid = TypeId::of::<T>();
-        let entry = self
-            .parent
-            .entries_by_tid(&tid)?
-            .iter()
-            .find(|e| e.key.is_none())?;
-        let arc = self.get_any_by_entry(entry)?;
-        ServiceProvider::extract(arc)
+    /// Register a named service (for `impl_service_locator!` macro).
+    pub fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
+        self.scope_provider.rdi_register_named(name, service);
     }
 
-    fn try_get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
-        let tid = TypeId::of::<T>();
-        let entries = self.parent.entries_by_tid(&tid)?;
-        let entry = entries.iter().find(|e| e.key.as_deref() == Some(key))?;
-        let arc = self.get_any_by_entry(entry)?;
-        ServiceProvider::extract(arc)
-    }
-
-    fn get_any_by_entry(&self, entry: &crate::entry::ServiceEntry) -> Option<AnyService> {
-        match entry.lifetime {
-            ServiceLifetime::Singleton => {
-                // Singleton cache lives in parent's eager cache
-                self.parent.get_any_by_entry(entry)
-            }
-            ServiceLifetime::Transient => {
-                // Transient 工厂用 `self`（Scope）解析依赖：
-                // 若 Transient 依赖 Scoped，依赖在当前子 scope 内解析（MEDI 语义），
-                // 而非错误地回退到根 root_scoped_cache。
-                Some((entry.factory)(self))
-            }
-            ServiceLifetime::Scoped => {
-                // 子 scope 独立缓存：per-key OnceLock 保证多线程下工厂只执行一次，
-                // 不回退到根 root_scoped_cache（MEDI 子 scope 隔离语义）。
-                let factory = entry.factory.clone();
-                let resolver = self as &dyn IServiceResolver;
-                Some(
-                    self.scoped_cache
-                        .get_or_init_with(entry.cache_key, move || factory(resolver)),
-                )
-            }
-        }
-    }
-
-    /// Bypass cache and invoke the factory fresh (owned resolution only).
-    ///
-    /// - Singleton → `None` (shared singleton cannot be owned).
-    /// - Scoped/Transient → invoke factory directly without touching
-    ///   `scoped_cache`. The factory uses `self` (Scope) as resolver, so
-    ///   Scoped deps resolved transitively bind to this child scope (not the
-    ///   root), consistent with the Transient-in-child-scope fix.
-    fn create_owned_any_by_entry(&self, entry: &crate::entry::ServiceEntry) -> Option<AnyService> {
-        match entry.lifetime {
-            ServiceLifetime::Singleton => None,
-            ServiceLifetime::Scoped | ServiceLifetime::Transient => {
-                Some((entry.factory)(self as &dyn IServiceResolver))
-            }
-        }
+    /// Remove a named service (for `impl_service_locator!` macro).
+    pub fn rdi_remove_named(&self, name: &str) {
+        self.scope_provider.rdi_remove_named(name);
     }
 }
 
 impl IServiceResolver for Scope {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        if let Some(entries) = self.parent.entries_by_str(key) {
-            for entry in entries {
-                if entry.key.is_none() {
-                    if let Some(r) = self.get_any_by_entry(entry) {
-                        return Some(r);
-                    }
-                }
-            }
-        }
-        None
+        self.scope_provider.get_any(key)
     }
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let entry = self.parent.entry_by_str(key, variant)?;
-        self.get_any_by_entry(entry)
+        self.scope_provider.get_keyed_any(key, variant)
+    }
+    fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        self.scope_provider.get_all_any(key)
     }
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        if let Some(entries) = self.parent.entries_by_str(key) {
-            for entry in entries {
-                if entry.key.is_none() {
-                    if let Some(r) = self.create_owned_any_by_entry(entry) {
-                        return Some(r);
-                    }
-                }
-            }
-        }
-        None
+        self.scope_provider.get_owned_any(key)
     }
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let entry = self.parent.entry_by_str(key, variant)?;
-        self.create_owned_any_by_entry(entry)
+        self.scope_provider.get_keyed_owned_any(key, variant)
     }
-}
-
-impl Scope {
-    /// Register a named service (for `impl_service_locator!` macro).
-    pub fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
-        self.parent.rdi_register_named(name, service);
-    }
-
-    /// Remove a named service (for `impl_service_locator!` macro).
-    pub fn rdi_remove_named(&self, name: &str) {
-        self.parent.rdi_remove_named(name);
+    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
+        // 返回 scope 范围的 provider（不是 root），符合 MEDI 语义：
+        // 在 scope 内解析的服务经 #[inject(provider)] 拿到此 provider，
+        // 后续 get::<ScopedX>() 命中 scope 自己的 root_scoped_cache。
+        Some(Arc::clone(&self.scope_provider))
     }
 }
 
