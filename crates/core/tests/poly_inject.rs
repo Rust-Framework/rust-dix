@@ -160,8 +160,7 @@ fn vec_inject_works_through_scope() {
         .keyed_scoped::<dyn IFoo>("b", |_| Arc::new(FooB))
         .transient(|r| __rdi_construct_ScopedFooConsumer(r))
         .build()
-        .unwrap()
-        .into_arc();
+        .unwrap();
 
     let scope = p.scope();
     let consumer: ScopedFooConsumer = scope.get_owned().unwrap();

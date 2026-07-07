@@ -1,30 +1,20 @@
 use crate::entry::IServiceResolver;
 use crate::error::RdiError;
 use crate::provider::ServiceProvider;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::sync::Arc;
 
-/// Trait for services that need explicit cleanup when a scope ends.
+/// 工厂 trait：创建独立 scope。可注入 singleton 服务按需创建 scope。
 ///
-/// Implement this on scoped services that hold resources requiring
-/// deterministic release (e.g., database connections, file handles).
-/// The `Scope::dispose()` method calls `dispose()` on all registered
-/// disposable services in the scope, and `Drop` on `Scope` calls
-/// `dispose()` automatically as a safety net.
+/// 典型场景：后台 worker singleton 需要按请求创建独立 scope，
+/// 在 scope 内解析 Scoped 服务（如 request-scoped DbContext）。
 ///
-/// # Example
-///
-/// ```ignore
-/// struct DbConnection { conn: RawConnection }
-///
-/// impl Disposable for DbConnection {
-///     fn dispose(&mut self) {
-///         self.conn.close();
-///     }
-/// }
-/// ```
-pub trait Disposable: Send + Sync {
-    fn dispose(&mut self);
+/// `ServiceProvider` 实现此 trait，通过 [`ServiceProvider::scope`] 创建 scope。
+/// 注册方式：`provider.singleton::<dyn ScopeFactory>(move |_| provider.clone() as Arc<dyn ScopeFactory>)`。
+pub trait ScopeFactory: Send + Sync {
+    /// 创建一个独立 scope，共享 root 的 store/singleton_cache/named，
+    /// 独立 scoped_cache 和 disposables。
+    fn create_scope(&self) -> Scope;
 }
 
 /// A scoped service provider — created via [`ServiceProvider::scope`].
@@ -41,8 +31,9 @@ pub trait Disposable: Send + Sync {
 /// # 资源释放
 ///
 /// 当 `Scope` 被 drop 时，其内部的 `scope_provider` 被释放，scoped 缓存中的
-/// `Arc<T>` 实例随之释放。若服务实现了 [`Disposable`] trait，可调用
-/// [`Scope::dispose`] 在 scope 结束前执行显式清理。
+/// `Arc<T>` 实例随之释放。若服务需要确定性资源释放（如关闭数据库连接），
+/// 可在工厂内通过 [`ServiceProvider::register_disposable`] 注册清理闭包，
+/// 并调用 [`Scope::dispose`] 在 scope 结束前执行显式清理。
 pub struct Scope {
     scope_provider: Arc<ServiceProvider>,
 }
@@ -63,15 +54,27 @@ impl Scope {
         &self.scope_provider
     }
 
-    /// Explicitly dispose all scoped services that implement [`Disposable`].
+    /// Explicitly dispose all scoped services registered via [`ServiceProvider::register_disposable`].
     ///
-    /// Iterates through the scope's scoped cache and calls `dispose()` on
-    /// each entry that can be downcast to a concrete type implementing
-    /// `Disposable`. After calling this method, the scope is still usable
-    /// but the disposable services may be in a released state.
+    /// Services that need deterministic cleanup (e.g., database connections,
+    /// file handles) should register a cleanup closure in their factory:
     ///
-    /// Called automatically on `Drop`. Call this explicitly when you need
-    /// deterministic cleanup before the scope variable goes out of scope.
+    /// ```ignore
+    /// .scoped(|r| {
+    ///     let conn = Arc::new(DbConnection::connect());
+    ///     let conn_clone = Arc::clone(&conn);
+    ///     r.provider_arc().unwrap().register_disposable(Box::new(move || {
+    ///         conn_clone.close();
+    ///     }));
+    ///     conn
+    /// })
+    /// ```
+    ///
+    /// Called automatically on `Drop` as a safety net. If `Drop` runs while a
+    /// concurrent resolution is in progress (factory holding the disposable
+    /// lock), disposal is skipped — some cleanups may be delayed or dropped.
+    /// For deterministic cleanup, call this explicitly before the scope goes
+    /// out of scope.
     pub fn dispose(&self) {
         self.scope_provider.dispose_scoped();
     }
@@ -82,22 +85,6 @@ impl Scope {
 
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.scope_provider.get_optional::<T>()
-    }
-
-    /// Alias for `get_optional()` with MEDI-inspired naming.
-    pub fn get_service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        self.scope_provider.get_service::<T>()
-    }
-
-    /// Alias for `get()` with MEDI-inspired naming.
-    pub fn get_required_service<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
-        self.scope_provider.get_required_service::<T>()
-    }
-
-    /// Return all registered instances of the given type.
-    /// MEDI-inspired naming.
-    pub fn get_services<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
-        self.scope_provider.get_services::<T>()
     }
 
     pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
@@ -149,12 +136,12 @@ impl Scope {
         self.scope_provider.get_named_any(name)
     }
 
-    /// Register a named service (for `impl_service_locator!` macro).
+    /// Register a named service (for [`IProvider`](crate::bridge::IProvider) trait).
     pub fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
         self.scope_provider.rdi_register_named(name, service);
     }
 
-    /// Remove a named service (for `impl_service_locator!` macro).
+    /// Remove a named service (for [`IProvider`](crate::bridge::IProvider) trait).
     pub fn rdi_remove_named(&self, name: &str) {
         self.scope_provider.rdi_remove_named(name);
     }
@@ -172,6 +159,16 @@ impl IServiceResolver for Scope {
     }
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_keyed_any(key, variant)
+    }
+    fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.scope_provider.get_by_type_id(tid)
+    }
+    fn get_keyed_by_type_id(
+        &self,
+        tid: TypeId,
+        key: &str,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.scope_provider.get_keyed_by_type_id(tid, key)
     }
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_all_any(key)
@@ -200,12 +197,10 @@ mod tests {
     #[test]
     fn scoped_cached_per_scope() {
         static NXT: AtomicU64 = AtomicU64::new(0);
-        let p = Arc::new(
-            ServiceCollection::new()
-                .scoped(|_| Arc::new(Sd(NXT.fetch_add(1, Ordering::SeqCst))))
-                .build()
-                .unwrap(),
-        );
+        let p = ServiceCollection::new()
+            .scoped(|_| Arc::new(Sd(NXT.fetch_add(1, Ordering::SeqCst))))
+            .build()
+            .unwrap();
         let s1 = p.scope();
         let a = s1.get::<Sd>().unwrap();
         let b = s1.get::<Sd>().unwrap();
@@ -233,27 +228,25 @@ mod tests {
             mid: Arc<MidTransient>,
         }
 
-        let provider = Arc::new(
-            ServiceCollection::new()
-                .scoped(|_| {
-                    let n = CORE_CALLS.fetch_add(1, Ordering::SeqCst);
-                    Arc::new(ScopedCore(n))
-                })
-                .transient(|r| {
-                    let any = r.get_any(std::any::type_name::<ScopedCore>()).unwrap();
-                    let outer = any.downcast::<Arc<ScopedCore>>().unwrap();
-                    let core: Arc<ScopedCore> = Arc::clone(&*outer);
-                    Arc::new(MidTransient { core })
-                })
-                .transient(|r| {
-                    let any = r.get_any(std::any::type_name::<MidTransient>()).unwrap();
-                    let outer = any.downcast::<Arc<MidTransient>>().unwrap();
-                    let mid: Arc<MidTransient> = Arc::clone(&*outer);
-                    Arc::new(OuterTransient { mid })
-                })
-                .build()
-                .unwrap(),
-        );
+        let provider = ServiceCollection::new()
+            .scoped(|_| {
+                let n = CORE_CALLS.fetch_add(1, Ordering::SeqCst);
+                Arc::new(ScopedCore(n))
+            })
+            .transient(|r| {
+                let any = r.get_any(std::any::type_name::<ScopedCore>()).unwrap();
+                let outer = any.downcast::<Arc<ScopedCore>>().unwrap();
+                let core: Arc<ScopedCore> = Arc::clone(&*outer);
+                Arc::new(MidTransient { core })
+            })
+            .transient(|r| {
+                let any = r.get_any(std::any::type_name::<MidTransient>()).unwrap();
+                let outer = any.downcast::<Arc<MidTransient>>().unwrap();
+                let mid: Arc<MidTransient> = Arc::clone(&*outer);
+                Arc::new(OuterTransient { mid })
+            })
+            .build()
+            .unwrap();
 
         // scope1：首次解析 OuterTransient，ScopedCore 工厂执行（序号 0）。
         let scope1 = provider.scope();

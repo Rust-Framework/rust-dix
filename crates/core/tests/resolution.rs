@@ -4,55 +4,55 @@ use rust_dicore::*;
 use std::sync::Arc;
 
 #[test]
-fn get_required_service_panics_on_missing() {
+fn get_panics_on_missing() {
     let p = ServiceCollection::new().build().unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Arc<common::MyService> = p.get_required_service::<common::MyService>();
+        let _: Arc<common::MyService> = p.get::<common::MyService>().unwrap();
     }));
     assert!(result.is_err());
 }
 
 #[test]
-fn get_service_returns_none_on_missing() {
+fn get_optional_returns_none_on_missing() {
     let p = ServiceCollection::new().build().unwrap();
-    assert!(p.get_service::<common::MyService>().is_none());
+    assert!(p.get_optional::<common::MyService>().is_none());
 }
 
 #[test]
-fn get_required_service_returns_service() {
+fn get_returns_service() {
     let p = ServiceCollection::new()
         .singleton(|_| Arc::new(common::MyService { value: 42 }))
         .build()
         .unwrap();
-    let svc: Arc<common::MyService> = p.get_required_service();
+    let svc: Arc<common::MyService> = p.get().unwrap();
     assert_eq!(svc.value, 42);
 }
 
 #[test]
-fn get_service_returns_service() {
+fn get_optional_returns_service() {
     let p = ServiceCollection::new()
         .singleton(|_| Arc::new(common::MyService { value: 99 }))
         .build()
         .unwrap();
-    let svc: Option<Arc<common::MyService>> = p.get_service();
+    let svc: Option<Arc<common::MyService>> = p.get_optional();
     assert_eq!(svc.unwrap().value, 99);
 }
 
 #[test]
-fn get_services_returns_empty_when_none() {
+fn get_all_returns_empty_when_none() {
     let p = ServiceCollection::new().build().unwrap();
-    let all: Vec<Arc<common::MyService>> = p.get_services();
+    let all: Vec<Arc<common::MyService>> = p.get_all();
     assert!(all.is_empty());
 }
 
 #[test]
-fn get_services_returns_all_keyed() {
+fn get_all_returns_all_keyed() {
     let p = ServiceCollection::new()
         .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
         .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
-    let all: Vec<Arc<common::MyService>> = p.get_services();
+    let all: Vec<Arc<common::MyService>> = p.get_all();
     assert_eq!(all.len(), 2);
 }
 

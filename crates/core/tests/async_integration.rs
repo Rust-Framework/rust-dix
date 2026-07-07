@@ -346,7 +346,7 @@ async fn async_singleton_can_depend_on_sync_singleton() {
 
 #[tokio::test]
 async fn async_multiple_scopes_independent() {
-    // Async scoped services should be independent per scope.
+    // Async scoped services should be cached within a scope and independent per scope.
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
     struct ScopedCounter(u64);
@@ -369,8 +369,10 @@ async fn async_multiple_scopes_independent() {
 
     // Different scopes get different instances
     assert!(!Arc::ptr_eq(&c1, &c2));
-    // Async scoped currently calls factory each resolution (no intra-scope caching).
-    // Each of the 3 resolutions (c1, c1b, c2) triggers a fresh factory call.
-    assert_ne!(c1.0, c1b.0);
-    assert_eq!(NEXT.load(Ordering::SeqCst), 3);
+    assert_ne!(c1.0, c2.0);
+    // Same scope: cached, factory executes once per scope
+    assert!(Arc::ptr_eq(&c1, &c1b));
+    assert_eq!(c1.0, c1b.0);
+    // 2 factory calls: scope1 + scope2
+    assert_eq!(NEXT.load(Ordering::SeqCst), 2);
 }

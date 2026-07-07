@@ -44,6 +44,22 @@ pub trait IServiceResolver: Send + Sync {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>>;
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>>;
 
+    /// TypeId 直查（默认 `None`，`ServiceProvider` 等覆盖为 O(1) 直查）。
+    ///
+    /// 外部实现者若需优化可覆盖；不覆盖则 [`Self::get`] / [`Self::try_get`]
+    /// 等默认实现 fallback 到 [`Self::get_any`] 字符串路径。
+    fn get_by_type_id(&self, _tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
+    /// TypeId 直查 keyed 版本（默认 `None`）。
+    fn get_keyed_by_type_id(
+        &self,
+        _tid: TypeId,
+        _key: &str,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
+
     /// Type-erased polymorphic resolution: return all registered instances
     /// (default + keyed) of the given type.
     ///
@@ -63,8 +79,7 @@ pub trait IServiceResolver: Send + Sync {
     /// `DbContext` in a web handler).
     ///
     /// Returns `None` if the resolver is not backed by a `ServiceProvider`
-    /// (e.g., `ValidationResolver` during build-time validation) or if the
-    /// provider was not created via [`ServiceProvider::into_arc`].
+    /// (e.g., `ValidationResolver` during build-time validation).
     ///
     /// Default `None` keeps external implementors backward-compatible.
     fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
@@ -73,14 +88,19 @@ pub trait IServiceResolver: Send + Sync {
 
     /// Resolve a service by type (concrete or `dyn Trait`).
     /// Returns `Err(RdiError::ServiceNotFound)` if not registered.
+    ///
+    /// 优先走 `get_by_type_id`（O(1) TypeId 直查），未覆盖时 fallback
+    /// 到 `get_any` 字符串路径。
     fn get<T: ?Sized + Sync + Send + 'static>(&self) -> Result<Arc<T>, RdiError>
     where
         Self: Sized,
     {
         let type_name = std::any::type_name::<T>();
-        self.get_any(type_name)
+        let tid = TypeId::of::<T>();
+        self.get_by_type_id(tid)
+            .or_else(|| self.get_any(type_name))
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
-            .ok_or(RdiError::ServiceNotFound(type_name))
+            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
     }
 
     /// Resolve a service by type, returning `None` if not registered.
@@ -88,7 +108,10 @@ pub trait IServiceResolver: Send + Sync {
     where
         Self: Sized,
     {
-        self.get_any(std::any::type_name::<T>())
+        let type_name = std::any::type_name::<T>();
+        let tid = TypeId::of::<T>();
+        self.get_by_type_id(tid)
+            .or_else(|| self.get_any(type_name))
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
     }
 
@@ -98,7 +121,9 @@ pub trait IServiceResolver: Send + Sync {
         Self: Sized,
     {
         let type_name = std::any::type_name::<T>();
-        self.get_keyed_any(type_name, variant)
+        let tid = TypeId::of::<T>();
+        self.get_keyed_by_type_id(tid, variant)
+            .or_else(|| self.get_keyed_any(type_name, variant))
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
             .ok_or(RdiError::KeyedServiceNotFound {
                 key: variant.to_string(),
@@ -111,7 +136,10 @@ pub trait IServiceResolver: Send + Sync {
     where
         Self: Sized,
     {
-        self.get_keyed_any(std::any::type_name::<T>(), variant)
+        let type_name = std::any::type_name::<T>();
+        let tid = TypeId::of::<T>();
+        self.get_keyed_by_type_id(tid, variant)
+            .or_else(|| self.get_keyed_any(type_name, variant))
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
     }
 
@@ -159,12 +187,12 @@ pub trait IServiceResolver: Send + Sync {
         let type_name = std::any::type_name::<T>();
         let arc_any = self
             .get_owned_any(type_name)
-            .ok_or(RdiError::ServiceNotFound(type_name))?;
+            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
         let arc_t: Arc<T> = arc_any
             .downcast::<Arc<T>>()
             .ok()
             .map(|d| Arc::clone(&*d))
-            .ok_or(RdiError::ServiceNotFound(type_name))?;
+            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
         Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 
@@ -216,7 +244,7 @@ pub trait IServiceResolver: Send + Sync {
 pub struct ServiceEntry {
     pub cache_key: usize,
     pub key: Option<String>,
-    pub type_name: &'static str, // kept for IServiceLocator string-based resolution
+    pub type_name: &'static str, // kept for IServiceResolver string-based resolution
     pub factory: ServiceFactory,
     pub async_factory: Option<AsyncServiceFactory>,
     pub lifetime: ServiceLifetime,

@@ -40,12 +40,10 @@ fn collection_keyed_transient() {
 
 #[test]
 fn collection_keyed_scoped() {
-    let p = Arc::new(
-        ServiceCollection::new()
-            .keyed_scoped("s", |_| Arc::new(common::MyService { value: 5 }))
-            .build()
-            .unwrap(),
-    );
+    let p = ServiceCollection::new()
+        .keyed_scoped("s", |_| Arc::new(common::MyService { value: 5 }))
+        .build()
+        .unwrap();
     let scope = p.scope();
     let a: Arc<common::MyService> = scope.get_keyed("s").unwrap();
     let b: Arc<common::MyService> = scope.get_keyed("s").unwrap();

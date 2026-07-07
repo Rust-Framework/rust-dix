@@ -164,7 +164,7 @@ let provider = ServiceCollection::new()
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
 | `#[inject]` | `Vec<Arc<T>>` | 多态注入 — 收集所有注册实现（default + keyed）；不支持 key |
-| `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入 provider 供按需解析（需 `into_arc()`） |
+| `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入 provider 供按需解析 |
 
 > 严格类型校验：`#[inject]` 接受 `Arc<T>`、`Option<Arc<T>>` 或 `Vec<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。

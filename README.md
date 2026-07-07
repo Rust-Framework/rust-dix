@@ -86,7 +86,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Cross-DLL support** | Named service registry for cdylib plugin systems |
 | **Layered containers** | Child-first resolution via `ServiceProviderWrapper` |
 | **Owned resolution** | `get_owned::<T>()` returns owned `T` for `&mut self` — no interior mutability |
-| **Scoped cleanup** | `Disposable` trait + automatic `Drop` for scoped resource release |
+| **Scoped cleanup** | Cleanup closures + automatic `Drop` for scoped resource release |
 
 ## When should you use rust-dicore?
 
@@ -178,9 +178,8 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
 
 - Prefer `try_get::<T>()` / `get_optional::<T>()` (returns `Option`) for
   optional dependencies
-- Use `get::<T>()` (returns `Result`) when the dependency is required
-- `get_required_service::<T>()` panics on missing — use only when absence is
-  a programming error
+- Use `get::<T>()` (returns `Result`) when the dependency is required —
+  absence is a recoverable error, not a panic
 
 ### Architecture patterns
 

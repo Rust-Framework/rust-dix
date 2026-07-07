@@ -85,7 +85,7 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
     let bi: syn::Item = syn::parse2(quote! {
         #[doc(hidden)]
         pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<rust_dicore::ServiceProvider>, rust_dicore::RdiError> {
-            Ok(::std::sync::Arc::new(rust_dicore::ServiceCollection::new() #(#ch)* .build()?))
+            rust_dicore::ServiceCollection::new() #(#ch)* .build()
         }
     })
     .unwrap();

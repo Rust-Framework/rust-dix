@@ -32,7 +32,7 @@ fn inject_full_featured() {
         })
         .build()
         .unwrap();
-    let obj = __rdi_construct_FullFeatured(&p);
+    let obj = __rdi_construct_FullFeatured(&*p);
     assert_eq!(obj.log.prefix, "main");
     assert!(obj.maybe.is_none());
     assert_eq!(obj.special.prefix, "special");

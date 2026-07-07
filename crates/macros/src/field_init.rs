@@ -43,13 +43,11 @@ pub(crate) fn classify_field(ty: &Type) -> (TokenStream, FieldKind) {
                     }
                 }
                 "Vec" => {
-                    if let Some(inner) = single_generic_type(last) {
-                        if let Type::Path(ip) = inner {
-                            if let Some(ilast) = ip.path.segments.last() {
-                                if ilast.ident == "Arc" {
-                                    if let Some(t) = single_generic_type(ilast) {
-                                        return (quote! {#t}, FieldKind::VecArc);
-                                    }
+                    if let Some(Type::Path(ip)) = single_generic_type(last) {
+                        if let Some(ilast) = ip.path.segments.last() {
+                            if ilast.ident == "Arc" {
+                                if let Some(t) = single_generic_type(ilast) {
+                                    return (quote! {#t}, FieldKind::VecArc);
                                 }
                             }
                         }
@@ -86,7 +84,7 @@ pub(crate) fn gen_field_init(field: &Field) -> syn::Result<TokenStream> {
     if attrs.provider {
         return Ok(quote! {
             #fnm: resolver.provider_arc().expect(
-                "ServiceProvider not available; use ServiceProvider::into_arc() to enable #[inject(provider)]"
+                "ServiceProvider not available; build() returns Arc<ServiceProvider> which enables #[inject(provider)]"
             )
         });
     }

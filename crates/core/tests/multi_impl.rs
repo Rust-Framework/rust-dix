@@ -156,9 +156,8 @@ fn keyed_transient_creates_new_instance() {
     c1.pay(1.0);
     c2.pay(2.0);
 
-    // Transient 每次创建新实例，但这里 Arc 包装后实际行为
-    // 验证：工厂每次执行
-    assert!(CNT.load(Ordering::SeqCst) >= 0);
+    // 验证：pay 被调用 2 次（c1 和 c2 各一次）
+    assert_eq!(CNT.load(Ordering::SeqCst), 2);
 }
 
 #[test]

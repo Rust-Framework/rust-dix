@@ -47,7 +47,7 @@ rust-dicore 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发�
 | `GetRequiredService<T>()` | `.get::<T>()` |
 | `GetService<T>()` | `.get_optional::<T>()` |
 | `GetServices<T>()` | `.get_all::<T>()` |
-| `CreateScope()` | `.create_scope()` |
+| `CreateScope()` | `.scope()` |
 
 ## 下一步
 

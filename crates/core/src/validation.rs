@@ -2,7 +2,7 @@ use crate::cache::LazyCache;
 use crate::entry::{IServiceResolver, ServiceEntry, ServiceLifetime, ServiceStore};
 use crate::error::RdiError;
 use std::any::{Any, TypeId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Validation resolver that tracks resolution chains for cycle detection
@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex, RwLock};
 /// panics (triggered by `None` returns from this resolver), not framework errors.
 pub(crate) struct ValidationResolver<'a> {
     store: &'a ServiceStore,
-    /// Cache keys currently being resolved (for cycle detection).
-    resolving: RwLock<HashSet<usize>>,
+    /// 解析栈：按解析顺序记录 cache_key，用于循环依赖检测与有序路径输出。
+    resolving: RwLock<Vec<usize>>,
     /// 解析栈：记录当前解析链中每个节点的 (cache_key, lifetime)，
     /// 用于 captive dependency 检测（Singleton 依赖 Scoped）。
     stack: RwLock<Vec<(usize, ServiceLifetime)>>,
@@ -40,7 +40,7 @@ impl<'a> ValidationResolver<'a> {
     ) -> Self {
         Self {
             store,
-            resolving: RwLock::new(HashSet::new()),
+            resolving: RwLock::new(Vec::new()),
             stack: RwLock::new(Vec::new()),
             type_names,
             cache,
@@ -96,20 +96,18 @@ impl<'a> ValidationResolver<'a> {
     }
 
     /// Check for circular dependency. Stores error in `last_error` and returns
-    /// `true` if a cycle is detected.
+    /// `true` if a cycle is detected. Outputs the resolution path in order.
     fn check_cycle(&self, entry: &ServiceEntry) -> bool {
-        if self.resolving.read().unwrap().contains(&entry.cache_key) {
+        let resolving = self.resolving.read().unwrap();
+        if resolving.contains(&entry.cache_key) {
             let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self
-                .resolving
-                .read()
-                .unwrap()
-                .iter()
-                .map(|&ck| self.get_type_name(ck))
-                .collect();
-            let cycle_desc = if chain.is_empty() {
-                type_name.clone()
+            let cycle_desc = if resolving.is_empty() {
+                type_name
             } else {
+                let chain: Vec<String> = resolving
+                    .iter()
+                    .map(|&ck| self.get_type_name(ck))
+                    .collect();
                 format!("{} -> {}", chain.join(" -> "), type_name)
             };
             *self.last_error.lock().unwrap() = Some(RdiError::CircularDependency(cycle_desc));
@@ -133,7 +131,7 @@ impl<'a> ValidationResolver<'a> {
             return None;
         }
 
-        self.resolving.write().unwrap().insert(entry.cache_key);
+        self.resolving.write().unwrap().push(entry.cache_key);
         self.stack
             .write()
             .unwrap()
@@ -142,7 +140,7 @@ impl<'a> ValidationResolver<'a> {
         let result = (entry.factory)(self as &dyn IServiceResolver);
 
         self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
+        self.resolving.write().unwrap().pop();
 
         // Only cache Singleton results.
         if entry.lifetime == ServiceLifetime::Singleton {
@@ -193,14 +191,14 @@ impl IServiceResolver for ValidationResolver<'_> {
             return None;
         }
 
-        self.resolving.write().unwrap().insert(entry.cache_key);
+        self.resolving.write().unwrap().push(entry.cache_key);
         self.stack
             .write()
             .unwrap()
             .push((entry.cache_key, entry.lifetime));
         let result = (entry.factory)(self as &dyn IServiceResolver);
         self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
+        self.resolving.write().unwrap().pop();
 
         Some(result)
     }
@@ -220,14 +218,14 @@ impl IServiceResolver for ValidationResolver<'_> {
             return None;
         }
 
-        self.resolving.write().unwrap().insert(entry.cache_key);
+        self.resolving.write().unwrap().push(entry.cache_key);
         self.stack
             .write()
             .unwrap()
             .push((entry.cache_key, entry.lifetime));
         let result = (entry.factory)(self as &dyn IServiceResolver);
         self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
+        self.resolving.write().unwrap().pop();
 
         Some(result)
     }

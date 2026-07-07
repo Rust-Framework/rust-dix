@@ -388,12 +388,10 @@ let bus = host.get_named::<EventBus>("event_bus");
 
 跨编译单元时 `TypeId` 不同，不能用类型解析，命名服务是解决方案。
 
-#### 🔹 通过 IServiceLocator 集成外部系统
+#### 🔹 通过 IProvider 集成外部系统
 
 ```rust
-let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
-    Arc::new(RdiProvider::Root(provider)),
-));
+let provider: Arc<dyn IProvider> = provider as Arc<dyn IProvider>;
 // 传递给第三方代码或 FFI 边界
 ```
 

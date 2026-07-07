@@ -187,7 +187,7 @@ impl IThingE for ScopedTraitImpl {
 
 #[test]
 fn inject_on_impl_scoped() {
-    let p = Arc::new(ServiceCollection::from_injected().build().unwrap());
+    let p = ServiceCollection::from_injected().build().unwrap();
     let scope1 = p.scope();
     let scope2 = p.scope();
     let a: Arc<dyn IThingE> = scope1.get().unwrap();

@@ -35,7 +35,7 @@ fn get_named_any_returns_none_on_missing() {
 
 #[test]
 fn named_survives_scope_drop() {
-    let p = Arc::new(ServiceCollection::new().build().unwrap());
+    let p = ServiceCollection::new().build().unwrap();
     p.register_named("persist", Arc::new(common::MyService { value: 999 }));
     {
         let scope = p.scope();

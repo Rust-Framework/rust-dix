@@ -123,16 +123,14 @@ struct OwnedHandler {
 fn scope_owned_transient_arc_scoped_dep_binds_to_child() {
     static CORE_CALLS: AtomicU64 = AtomicU64::new(0);
 
-    let provider = Arc::new(
-        ServiceCollection::new()
-            .scoped(|_| {
-                let n = CORE_CALLS.fetch_add(1, Ordering::SeqCst);
-                Arc::new(ScopedCore(n))
-            })
-            .transient(|r| __rdi_construct_OwnedHandler(r))
-            .build()
-            .unwrap(),
-    );
+    let provider = ServiceCollection::new()
+        .scoped(|_| {
+            let n = CORE_CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(ScopedCore(n))
+        })
+        .transient(|r| __rdi_construct_OwnedHandler(r))
+        .build()
+        .unwrap();
 
     let scope1 = provider.scope();
     let h1 = scope1.get_owned::<OwnedHandler>().unwrap();

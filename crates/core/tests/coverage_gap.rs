@@ -16,12 +16,10 @@ fn get_all_returns_all_entries() {
 
 #[test]
 fn scope_get_keyed_found() {
-    let p = Arc::new(
-        ServiceCollection::new()
-            .keyed_scoped("k", |_| Arc::new(common::MyService { value: 10 }))
-            .build()
-            .unwrap(),
-    );
+    let p = ServiceCollection::new()
+        .keyed_scoped("k", |_| Arc::new(common::MyService { value: 10 }))
+        .build()
+        .unwrap();
     let scope = p.scope();
     let svc: Arc<common::MyService> = scope.get_keyed("k").unwrap();
     assert_eq!(svc.value, 10);
@@ -29,20 +27,18 @@ fn scope_get_keyed_found() {
 
 #[test]
 fn scope_get_none_on_missing() {
-    let p = Arc::new(ServiceCollection::new().build().unwrap());
+    let p = ServiceCollection::new().build().unwrap();
     let scope = p.scope();
     assert!(scope.get_optional::<common::MyService>().is_none());
 }
 
 #[test]
 fn scope_get_all_from_parent() {
-    let p = Arc::new(
-        ServiceCollection::new()
-            .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
-            .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
-            .build()
-            .unwrap(),
-    );
+    let p = ServiceCollection::new()
+        .keyed_singleton("a", |_| Arc::new(common::MyService { value: 1 }))
+        .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
+        .build()
+        .unwrap();
     let scope = p.scope();
     let all: Vec<Arc<common::MyService>> = scope.get_all();
     assert_eq!(all.len(), 2);
@@ -103,18 +99,14 @@ fn try_add_skips_existing() {
 
 #[test]
 fn wrapper_get_optional_child_first() {
-    let root = Arc::new(
-        ServiceCollection::new()
-            .singleton(|_| Arc::new(common::MyService { value: 1 }))
-            .build()
-            .unwrap(),
-    );
-    let child = Arc::new(
-        ServiceCollection::new()
-            .singleton(|_| Arc::new(common::MyService { value: 2 }))
-            .build()
-            .unwrap(),
-    );
+    let root = ServiceCollection::new()
+        .singleton(|_| Arc::new(common::MyService { value: 1 }))
+        .build()
+        .unwrap();
+    let child = ServiceCollection::new()
+        .singleton(|_| Arc::new(common::MyService { value: 2 }))
+        .build()
+        .unwrap();
     let w = ServiceProviderWrapper::new(child, root);
     assert_eq!(w.get::<common::MyService>().unwrap().value, 2);
     assert_eq!(w.get_optional::<common::MyService>().unwrap().value, 2);
@@ -122,42 +114,38 @@ fn wrapper_get_optional_child_first() {
 
 #[test]
 fn wrapper_get_optional_none() {
-    let root = Arc::new(ServiceCollection::new().build().unwrap());
-    let child = Arc::new(ServiceCollection::new().build().unwrap());
+    let root = ServiceCollection::new().build().unwrap();
+    let child = ServiceCollection::new().build().unwrap();
     let w = ServiceProviderWrapper::new(child, root);
     assert!(w.get_optional::<common::MyService>().is_none());
 }
 
 #[test]
 fn wrapper_get_keyed_child_priority() {
-    let root = Arc::new(
-        ServiceCollection::new()
-            .keyed_singleton("k", |_| Arc::new(common::MyService { value: 10 }))
-            .build()
-            .unwrap(),
-    );
-    let child = Arc::new(
-        ServiceCollection::new()
-            .keyed_singleton("k", |_| Arc::new(common::MyService { value: 20 }))
-            .build()
-            .unwrap(),
-    );
+    let root = ServiceCollection::new()
+        .keyed_singleton("k", |_| Arc::new(common::MyService { value: 10 }))
+        .build()
+        .unwrap();
+    let child = ServiceCollection::new()
+        .keyed_singleton("k", |_| Arc::new(common::MyService { value: 20 }))
+        .build()
+        .unwrap();
     let w = ServiceProviderWrapper::new(child, root);
     assert_eq!(w.get_keyed::<common::MyService>("k").unwrap().value, 20);
 }
 
 #[test]
 fn wrapper_get_named_not_found() {
-    let root = Arc::new(ServiceCollection::new().build().unwrap());
-    let child = Arc::new(ServiceCollection::new().build().unwrap());
+    let root = ServiceCollection::new().build().unwrap();
+    let child = ServiceCollection::new().build().unwrap();
     let w = ServiceProviderWrapper::new(child, root);
     assert!(w.get_named::<common::MyService>("nothing").is_none());
 }
 
 #[test]
 fn wrapper_get_named_any_not_found() {
-    let root = Arc::new(ServiceCollection::new().build().unwrap());
-    let child = Arc::new(ServiceCollection::new().build().unwrap());
+    let root = ServiceCollection::new().build().unwrap();
+    let child = ServiceCollection::new().build().unwrap();
     let w = ServiceProviderWrapper::new(child, root);
     assert!(w.get_named_any("nothing").is_none());
 }
@@ -190,7 +178,7 @@ fn get_keyed_panics_on_missing() {
 
 #[test]
 fn rdi_register_named_and_remove_via_provider() {
-    let p = Arc::new(ServiceCollection::new().build().unwrap());
+    let p = ServiceCollection::new().build().unwrap();
     let svc: Arc<dyn std::any::Any + Send + Sync> =
         Arc::new(Arc::new(common::MyService { value: 5 }));
     p.rdi_register_named("test", svc.clone());
@@ -201,7 +189,7 @@ fn rdi_register_named_and_remove_via_provider() {
 
 #[test]
 fn scope_get_panics_on_missing() {
-    let p = Arc::new(ServiceCollection::new().build().unwrap());
+    let p = ServiceCollection::new().build().unwrap();
     let scope = p.scope();
     let result: Result<Arc<common::MyService>, RdiError> = scope.get();
     assert!(result.is_err());
@@ -209,7 +197,7 @@ fn scope_get_panics_on_missing() {
 
 #[test]
 fn scope_get_keyed_panics_on_missing() {
-    let p = Arc::new(ServiceCollection::new().build().unwrap());
+    let p = ServiceCollection::new().build().unwrap();
     let scope = p.scope();
     let result: Result<Arc<common::MyService>, RdiError> = scope.get_keyed("nonexistent");
     assert!(result.is_err());

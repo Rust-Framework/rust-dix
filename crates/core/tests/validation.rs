@@ -68,12 +68,10 @@ fn scoped_cached_at_root_scope() {
 #[test]
 fn scoped_isolated_between_root_and_child_scope() {
     // 根 root scope 与子 scope 的 Scoped 实例相互独立（MEDI 语义）。
-    let provider = Arc::new(
-        ServiceCollection::new()
-            .scoped(|_| Arc::new(ServiceA))
-            .build()
-            .unwrap(),
-    );
+    let provider = ServiceCollection::new()
+        .scoped(|_| Arc::new(ServiceA))
+        .build()
+        .unwrap();
 
     let root_a: Arc<ServiceA> = provider.get().unwrap();
     let scope = provider.scope();
@@ -219,12 +217,10 @@ fn singleton_indirect_depends_on_scoped_rejected() {
 
 #[test]
 fn scoped_correct_usage() {
-    let provider = Arc::new(
-        ServiceCollection::new()
-            .scoped(|_| Arc::new(ServiceA))
-            .build()
-            .unwrap(),
-    );
+    let provider = ServiceCollection::new()
+        .scoped(|_| Arc::new(ServiceA))
+        .build()
+        .unwrap();
 
     let scope = provider.scope();
     let a1: Arc<ServiceA> = scope.get().unwrap();
@@ -314,15 +310,13 @@ fn root_scope_scoped_factory_executed_once_under_concurrency() {
     static SCOPED_CALLS: AtomicU64 = AtomicU64::new(0);
     struct ScopedService(u64);
 
-    let provider = Arc::new(
-        ServiceCollection::new()
-            .scoped(|_| {
-                let n = SCOPED_CALLS.fetch_add(1, Ordering::SeqCst);
-                Arc::new(ScopedService(n))
-            })
-            .build()
-            .unwrap(),
-    );
+    let provider = ServiceCollection::new()
+        .scoped(|_| {
+            let n = SCOPED_CALLS.fetch_add(1, Ordering::SeqCst);
+            Arc::new(ScopedService(n))
+        })
+        .build()
+        .unwrap();
 
     let mut handles = Vec::new();
     for _ in 0..8 {

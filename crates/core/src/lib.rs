@@ -139,7 +139,7 @@
 //! | [`IServiceResolver`] | Resolution trait (implemented by `ServiceProvider` & `Scope`) |
 //! | [`ServiceProviderWrapper`] | Child-first layered container |
 //! | [`ServiceLifetime`] | Enum: Singleton, Scoped, Transient |
-//! | [`IServiceLocator`] / [`ServiceLocatorBridge`] | Cross-DLL / plugin integration |
+//! | [`IProvider`] | Unified trait for resolution + named registry |
 //! | [`RdiError`] | Error types (includes `CircularDependency`) |
 //!
 //! # Proc-macros
@@ -157,7 +157,6 @@ pub mod error;
 pub mod provider;
 pub mod registration;
 pub mod scope;
-pub mod service_locator;
 mod validation;
 pub mod wrapper;
 
@@ -173,7 +172,7 @@ pub use collection::ServiceCollection;
 /// 兼具 MEDI 中 `IServiceProvider` 与 root scope 双重身份：
 /// - 作为 `IServiceProvider`：提供类型/键控/命名解析入口。
 /// - 作为 root scope：从根直接解析 Scoped 服务时，实例在根内缓存复用，
-///   语义等同于在根 scope 内单例化。通过 `create_scope()` 创建的子 Scope
+///   语义等同于在根 scope 内单例化。通过 [`ServiceProvider::scope`] 创建的子 Scope
 ///   拥有独立的 scoped 缓存，不回退到根。
 ///
 /// Analogous to `IServiceProvider` in MEDI.
@@ -189,16 +188,17 @@ pub use entry::ServiceLifetime;
 /// Core resolution trait. Both [`ServiceProvider`] and [`Scope`] implement this.
 pub use entry::IServiceResolver;
 
-/// A scoped service provider — created via [`ServiceProvider::create_scope`].
+/// A scoped service provider — created via [`ServiceProvider::scope`].
 ///
 /// Analogous to `IServiceScope` in MEDI.
 pub use scope::Scope;
 
-/// Trait for services requiring explicit cleanup when a scope ends.
-pub use scope::Disposable;
-
 /// Alias for [`Scope`] with MEDI-inspired naming (`IServiceScope`).
 pub use scope::Scope as ServiceScope;
+
+/// Factory trait for creating independent scopes. Injectable into singleton
+/// services that need on-demand scope creation (e.g., background workers).
+pub use scope::ScopeFactory;
 
 /// Internal types used by the container.
 pub use entry::{ServiceEntry, ServiceFactory};
@@ -208,14 +208,8 @@ pub use wrapper::ServiceProviderWrapper;
 
 // ── Plugin / cross-DLL support ──
 
-/// Trait for service location (type-based + named) — used for external integration.
-pub use service_locator::IServiceLocator;
-
-/// Trait for named service registration.
-pub use service_locator::INamedRegistrar;
-
-/// Adapts RDI types to [`IServiceLocator`].
-pub use bridge::{IProvider, ServiceLocatorBridge};
+/// Unified trait for service resolution and named registry access.
+pub use bridge::IProvider;
 
 // ── Error types ──
 

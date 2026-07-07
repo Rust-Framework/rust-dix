@@ -190,7 +190,7 @@ impl ServiceCollection {
         self.instance(Arc::new(v))
     }
 
-    pub fn build(self) -> Result<crate::provider::ServiceProvider, crate::error::RdiError> {
+    pub fn build(self) -> Result<Arc<crate::provider::ServiceProvider>, crate::error::RdiError> {
         let mut s = crate::entry::ServiceStore::new();
         for (n, d) in self.descriptors.into_iter().enumerate() {
             let e = crate::entry::ServiceEntry {

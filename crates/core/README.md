@@ -369,12 +369,10 @@ provider.register_named("event_bus", provider.get::<EventBus>());
 let bus = host.get_named::<EventBus>("event_bus");
 ```
 
-#### 🔹 External system integration via IServiceLocator
+#### 🔹 External system integration via IProvider
 
 ```rust
-let locator: Arc<dyn IServiceLocator> = Arc::new(ServiceLocatorBridge::new(
-    Arc::new(RdiProvider::Root(provider)),
-));
+let provider: Arc<dyn IProvider> = provider as Arc<dyn IProvider>;
 // Pass to third-party code or FFI boundary
 ```
 

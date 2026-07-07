@@ -1,8 +1,11 @@
 use thiserror::Error;
 #[derive(Error, Debug, Clone)]
 pub enum RdiError {
-    #[error("service not registered: {0}")]
-    ServiceNotFound(&'static str),
+    #[error("service not registered: {ty}{}", context.as_ref().map(|c| format!(" (while resolving {c})")).unwrap_or_default())]
+    ServiceNotFound {
+        ty: &'static str,
+        context: Option<String>,
+    },
     #[error("keyed service not registered: key={key}, type={ty}")]
     KeyedServiceNotFound { key: String, ty: &'static str },
     #[error("circular dependency detected: {0}")]

@@ -3,7 +3,7 @@
 //! Verifies:
 //! - A service with `#[inject(provider)]` receives a usable `Arc<ServiceProvider>`.
 //! - The injected provider can resolve other services via `get_owned::<T>()`.
-//! - Works when the provider is created via `into_arc()`.
+//! - Works when the provider is created via `build()` (returns `Arc<ServiceProvider>`).
 //! - Works through a `Scope` (delegates to parent provider).
 
 #![allow(non_snake_case)]
@@ -29,13 +29,12 @@ impl HandlerWithProvider {
 }
 
 #[test]
-fn provider_inject_resolves_via_into_arc() {
+fn provider_inject_resolves_via_build() {
     let p = ServiceCollection::new()
         .transient(|_| Arc::new(common::MyService { value: 42 }))
         .transient(|r| __rdi_construct_HandlerWithProvider(r))
         .build()
-        .unwrap()
-        .into_arc();
+        .unwrap();
 
     let h = p.get_owned::<HandlerWithProvider>().unwrap();
     assert_eq!(h.resolve_dep().value, 42);
@@ -47,11 +46,10 @@ fn provider_inject_field_is_some() {
         .transient(|_| Arc::new(common::MyService { value: 0 }))
         .transient(|r| __rdi_construct_HandlerWithProvider(r))
         .build()
-        .unwrap()
-        .into_arc();
+        .unwrap();
 
     let h = p.get_owned::<HandlerWithProvider>().unwrap();
-    // provider_arc should return Some because into_arc was used
+    // provider_arc should return Some because build() returns Arc<ServiceProvider>
     assert!(IServiceResolver::provider_arc(&*p).is_some());
     // The field should be a valid Arc<ServiceProvider> — can resolve without panic
     assert_eq!(h.provider.get_owned::<common::MyService>().unwrap().value, 0);
@@ -63,8 +61,7 @@ fn provider_inject_works_through_scope() {
         .scoped(|_| Arc::new(common::MyService { value: 99 }))
         .transient(|r| __rdi_construct_HandlerWithProvider(r))
         .build()
-        .unwrap()
-        .into_arc();
+        .unwrap();
 
     let scope = p.scope();
     let h: HandlerWithProvider = scope.get_owned().unwrap();
@@ -102,8 +99,7 @@ fn scope_provider_resolves_scoped_within_scope() {
         })
         .transient(|r| __rdi_construct_HandlerWithProvider(r))
         .build()
-        .unwrap()
-        .into_arc();
+        .unwrap();
 
     // scope1：注入字段拿到 scope-local provider，解析 ScopedSvc 命中 scope1 缓存。
     let scope1 = p.scope();
@@ -133,42 +129,6 @@ fn scope_provider_resolves_scoped_within_scope() {
     );
 }
 
-#[test]
-fn provider_inject_panics_without_into_arc() {
-    // Using Arc::new(build()) instead of into_arc() — self_weak is never initialized.
-    // provider_arc() returns None → .expect() panics with &'static str →
-    // run_factory_safely 包装为 RdiError::FactoryPanic（类型安全，避免锁中毒）。
-    let p = Arc::new(
-        ServiceCollection::new()
-            .transient(|r| __rdi_construct_HandlerWithProvider(r))
-            .build()
-            .unwrap(),
-    );
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _h = p.get_owned::<HandlerWithProvider>().unwrap();
-    }));
-    assert!(result.is_err(), "应 panic：self_weak 未初始化");
-
-    let payload = result.unwrap_err();
-    let err = payload
-        .downcast_ref::<RdiError>()
-        .expect("run_factory_safely 应将 panic 包装为 RdiError");
-    match err {
-        RdiError::FactoryPanic { service, payload } => {
-            assert!(
-                service.contains("HandlerWithProvider"),
-                "service 应为 HandlerWithProvider，实际: {service}"
-            );
-            assert!(
-                payload.contains("ServiceProvider not available"),
-                "payload 应保留原始 panic 消息，实际: {payload}"
-            );
-        }
-        other => panic!("期望 FactoryPanic，实际: {other:?}"),
-    }
-}
-
 /// Service with provider + regular injected dependency side by side.
 #[derive(Inject)]
 struct MixedProviderHandler {
@@ -185,8 +145,7 @@ fn provider_inject_mixed_with_regular_inject() {
         .transient(|_| Arc::new(common::MyService { value: 7 }))
         .transient(|r| __rdi_construct_MixedProviderHandler(r))
         .build()
-        .unwrap()
-        .into_arc();
+        .unwrap();
 
     let h = p.get_owned::<MixedProviderHandler>().unwrap();
     assert_eq!(h.logger.prefix, "log");
