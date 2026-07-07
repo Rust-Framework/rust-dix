@@ -11,4 +11,6 @@ pub enum RdiError {
     SingletonDependsOnScoped { singleton: String, scoped: String },
     #[error("factory panicked while resolving service '{service}': {payload}")]
     FactoryPanic { service: String, payload: String },
+    #[error("cannot resolve owned instance of '{0}': Singleton services cannot be owned")]
+    OwnedNotSupported(&'static str),
 }

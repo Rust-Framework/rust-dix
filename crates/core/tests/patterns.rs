@@ -31,9 +31,9 @@ fn strategy_pattern() {
         .keyed_singleton::<dyn Strategy>("slow", |_| Arc::new(SlowStrategy))
         .build()
         .unwrap();
-    let fast: Arc<dyn Strategy> = p.get();
+    let fast: Arc<dyn Strategy> = p.get().unwrap();
     assert_eq!(fast.execute(), "fast");
-    let slow: Arc<dyn Strategy> = p.get_keyed("slow");
+    let slow: Arc<dyn Strategy> = p.get_keyed("slow").unwrap();
     assert_eq!(slow.execute(), "slow");
 }
 
@@ -64,8 +64,8 @@ fn factory_pattern() {
         .keyed_singleton::<dyn Product>("b", |_| Arc::new(ProductB))
         .build()
         .unwrap();
-    let a: Arc<dyn Product> = p.get_keyed("a");
-    let b: Arc<dyn Product> = p.get_keyed("b");
+    let a: Arc<dyn Product> = p.get_keyed("a").unwrap();
+    let b: Arc<dyn Product> = p.get_keyed("b").unwrap();
     assert_eq!(a.kind(), "A");
     assert_eq!(b.kind(), "B");
 }
@@ -100,7 +100,7 @@ fn decorator_pattern() {
         .singleton::<dyn Notifier>(|_| Arc::new(BaseNotifier))
         .build()
         .unwrap();
-    let inner: Arc<dyn Notifier> = p.get();
+    let inner: Arc<dyn Notifier> = p.get().unwrap();
     let decorator = LoggingDecorator { inner };
     assert_eq!(decorator.send(), "log:base");
 }
@@ -136,8 +136,8 @@ fn chain_of_responsibility() {
         .keyed_singleton::<dyn Handler>("log", |_| Arc::new(LogHandler))
         .build()
         .unwrap();
-    let auth: Arc<dyn Handler> = p.get_keyed("auth");
-    let log: Arc<dyn Handler> = p.get_keyed("log");
+    let auth: Arc<dyn Handler> = p.get_keyed("auth").unwrap();
+    let log: Arc<dyn Handler> = p.get_keyed("log").unwrap();
     assert_eq!(auth.handle("auth_ok"), Some("authenticated".into()));
     assert!(auth.handle("other").is_none());
     assert_eq!(log.handle("test"), Some("logged:test".into()));
@@ -174,8 +174,8 @@ fn observer_pattern() {
         .keyed_singleton::<dyn Observer>("sms", |_| Arc::new(SmsObserver { phone: "555" }))
         .build()
         .unwrap();
-    let email: Arc<dyn Observer> = p.get_keyed("email");
-    let sms: Arc<dyn Observer> = p.get_keyed("sms");
+    let email: Arc<dyn Observer> = p.get_keyed("email").unwrap();
+    let sms: Arc<dyn Observer> = p.get_keyed("sms").unwrap();
     assert_eq!(email.notify("hi"), "email(a@b):hi");
     assert_eq!(sms.notify("alert"), "sms(555):alert");
 }
@@ -211,8 +211,8 @@ fn composite_pattern() {
         .keyed_singleton::<dyn Component>("leaf_b", |_| Arc::new(LeafNode { name: "B" }))
         .build()
         .unwrap();
-    let a: Arc<dyn Component> = p.get_keyed("leaf_a");
-    let b: Arc<dyn Component> = p.get_keyed("leaf_b");
+    let a: Arc<dyn Component> = p.get_keyed("leaf_a").unwrap();
+    let b: Arc<dyn Component> = p.get_keyed("leaf_b").unwrap();
     assert_eq!(a.render(), vec!["A"]);
     assert_eq!(b.render(), vec!["B"]);
     let group = GroupNode {
@@ -243,7 +243,7 @@ fn proxy_pattern() {
         .singleton::<dyn Image>(|_| Arc::new(RealImage { name: "photo" }))
         .build()
         .unwrap();
-    let img: Arc<dyn Image> = p.get();
+    let img: Arc<dyn Image> = p.get().unwrap();
     assert_eq!(img.display(), "real_image");
 }
 
@@ -281,8 +281,8 @@ fn plugin_architecture() {
         .keyed_singleton::<dyn Plugin>("io", |_| Arc::new(IoPlugin))
         .build()
         .unwrap();
-    let math: Arc<dyn Plugin> = p.get_keyed("math");
-    let io: Arc<dyn Plugin> = p.get_keyed("io");
+    let math: Arc<dyn Plugin> = p.get_keyed("math").unwrap();
+    let io: Arc<dyn Plugin> = p.get_keyed("io").unwrap();
     assert_eq!(math.plugin_name(), "math");
     assert_eq!(math.execute(), 42);
     assert_eq!(io.plugin_name(), "io");
@@ -316,8 +316,8 @@ fn feature_toggle() {
         .keyed_singleton::<dyn Feature>("old_checkout", |_| Arc::new(OldCheckout))
         .build()
         .unwrap();
-    let new: Arc<dyn Feature> = p.get_keyed("new_checkout");
-    let old: Arc<dyn Feature> = p.get_keyed("old_checkout");
+    let new: Arc<dyn Feature> = p.get_keyed("new_checkout").unwrap();
+    let old: Arc<dyn Feature> = p.get_keyed("old_checkout").unwrap();
     assert!(new.is_enabled());
     assert!(!old.is_enabled());
 }
@@ -349,8 +349,8 @@ fn pipeline_pattern() {
         .keyed_singleton::<dyn Stage>("trim", |_| Arc::new(TrimStage))
         .build()
         .unwrap();
-    let upper: Arc<dyn Stage> = p.get_keyed("upper");
-    let trim: Arc<dyn Stage> = p.get_keyed("trim");
+    let upper: Arc<dyn Stage> = p.get_keyed("upper").unwrap();
+    let trim: Arc<dyn Stage> = p.get_keyed("trim").unwrap();
     assert_eq!(upper.process("hello"), "HELLO");
     assert_eq!(trim.process("  spaced  "), "spaced");
 }

@@ -1,7 +1,31 @@
 use crate::entry::IServiceResolver;
+use crate::error::RdiError;
 use crate::provider::ServiceProvider;
 use std::any::Any;
 use std::sync::Arc;
+
+/// Trait for services that need explicit cleanup when a scope ends.
+///
+/// Implement this on scoped services that hold resources requiring
+/// deterministic release (e.g., database connections, file handles).
+/// The `Scope::dispose()` method calls `dispose()` on all registered
+/// disposable services in the scope, and `Drop` on `Scope` calls
+/// `dispose()` automatically as a safety net.
+///
+/// # Example
+///
+/// ```ignore
+/// struct DbConnection { conn: RawConnection }
+///
+/// impl Disposable for DbConnection {
+///     fn dispose(&mut self) {
+///         self.conn.close();
+///     }
+/// }
+/// ```
+pub trait Disposable: Send + Sync {
+    fn dispose(&mut self);
+}
 
 /// A scoped service provider — created via [`ServiceProvider::scope`].
 ///
@@ -13,6 +37,12 @@ use std::sync::Arc;
 /// - Transient 依赖通过 `scope_provider` 解析，正确绑定到当前 scope（MEDI 语义）。
 /// - `#[inject(provider)]` 字段拿到的是 scope 范围的 provider，经该字段解析 Scoped
 ///   服务命中 scope 缓存——不泄漏到 root。
+///
+/// # 资源释放
+///
+/// 当 `Scope` 被 drop 时，其内部的 `scope_provider` 被释放，scoped 缓存中的
+/// `Arc<T>` 实例随之释放。若服务实现了 [`Disposable`] trait，可调用
+/// [`Scope::dispose`] 在 scope 结束前执行显式清理。
 pub struct Scope {
     scope_provider: Arc<ServiceProvider>,
 }
@@ -33,7 +63,20 @@ impl Scope {
         &self.scope_provider
     }
 
-    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
+    /// Explicitly dispose all scoped services that implement [`Disposable`].
+    ///
+    /// Iterates through the scope's scoped cache and calls `dispose()` on
+    /// each entry that can be downcast to a concrete type implementing
+    /// `Disposable`. After calling this method, the scope is still usable
+    /// but the disposable services may be in a released state.
+    ///
+    /// Called automatically on `Drop`. Call this explicitly when you need
+    /// deterministic cleanup before the scope variable goes out of scope.
+    pub fn dispose(&self) {
+        self.scope_provider.dispose_scoped();
+    }
+
+    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
         self.scope_provider.get::<T>()
     }
 
@@ -57,13 +100,28 @@ impl Scope {
         self.scope_provider.get_services::<T>()
     }
 
-    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Arc<T> {
+    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
         self.scope_provider.get_keyed::<T>(key)
     }
 
+    /// Resolve an async service (transient or scoped) within this scope.
+    pub async fn get_async<T: ?Sized + Send + Sync + 'static>(
+        &self,
+    ) -> Result<Arc<T>, RdiError> {
+        self.scope_provider.get_async::<T>().await
+    }
+
+    /// Resolve an async keyed service within this scope.
+    pub async fn get_keyed_async<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Arc<T>, RdiError> {
+        self.scope_provider.get_keyed_async::<T>(key).await
+    }
+
     /// Resolve owned `T` within this scope (bypass cache, fresh each call).
-    /// Panics if not registered or the service is Singleton.
-    pub fn get_owned<T: Send + Sync + 'static>(&self) -> T {
+    /// Returns `Err` if not registered or the service is Singleton.
+    pub fn get_owned<T: Send + Sync + 'static>(&self) -> Result<T, RdiError> {
         self.scope_provider.get_owned::<T>()
     }
 
@@ -72,8 +130,9 @@ impl Scope {
         self.scope_provider.try_get_owned::<T>()
     }
 
-    /// Resolve owned keyed `T`. Panics if not found or Singleton.
-    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> T {
+    /// Resolve owned keyed `T`.
+    /// Returns `Err` if not found or Singleton.
+    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Result<T, RdiError> {
         self.scope_provider.get_keyed_owned::<T>(key)
     }
 
@@ -98,6 +157,12 @@ impl Scope {
     /// Remove a named service (for `impl_service_locator!` macro).
     pub fn rdi_remove_named(&self, name: &str) {
         self.scope_provider.rdi_remove_named(name);
+    }
+}
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        self.dispose();
     }
 }
 
@@ -142,11 +207,11 @@ mod tests {
                 .unwrap(),
         );
         let s1 = p.scope();
-        let a = s1.get::<Sd>();
-        let b = s1.get::<Sd>();
+        let a = s1.get::<Sd>().unwrap();
+        let b = s1.get::<Sd>().unwrap();
         assert_eq!(a.0, b.0);
         let s2 = p.scope();
-        let c = s2.get::<Sd>();
+        let c = s2.get::<Sd>().unwrap();
         assert_ne!(a.0, c.0);
     }
 
@@ -192,12 +257,12 @@ mod tests {
 
         // scope1：首次解析 OuterTransient，ScopedCore 工厂执行（序号 0）。
         let scope1 = provider.scope();
-        let o1: Arc<OuterTransient> = scope1.get();
+        let o1: Arc<OuterTransient> = scope1.get().unwrap();
         assert_eq!(o1.mid.core.0, 0, "scope1 的 ScopedCore 应为序号 0");
 
         // scope1 内再次解析：OuterTransient/MidTransient 每次新建（Transient），
         // 但 ScopedCore 应复用 scope1.scoped_cache（序号仍 0）。
-        let o1b: Arc<OuterTransient> = scope1.get();
+        let o1b: Arc<OuterTransient> = scope1.get().unwrap();
         assert_eq!(o1b.mid.core.0, 0, "scope1 应复用同一 ScopedCore");
         assert!(
             Arc::ptr_eq(&o1.mid.core, &o1b.mid.core),
@@ -206,7 +271,7 @@ mod tests {
 
         // scope2：独立子 scope，ScopedCore 工厂再次执行（序号 1）。
         let scope2 = provider.scope();
-        let o2: Arc<OuterTransient> = scope2.get();
+        let o2: Arc<OuterTransient> = scope2.get().unwrap();
         assert_eq!(o2.mid.core.0, 1, "scope2 的 ScopedCore 应为序号 1");
         assert!(
             !Arc::ptr_eq(&o1.mid.core, &o2.mid.core),
@@ -214,7 +279,7 @@ mod tests {
         );
 
         // 根 scope：第三个独立实例（序号 2），证明子 scope 未泄漏到根。
-        let root_c: Arc<ScopedCore> = provider.get();
+        let root_c: Arc<ScopedCore> = provider.get().unwrap();
         assert_eq!(root_c.0, 2, "根 scope 的 ScopedCore 应为序号 2");
         assert!(!Arc::ptr_eq(&o1.mid.core, &root_c));
         assert!(!Arc::ptr_eq(&o2.mid.core, &root_c));

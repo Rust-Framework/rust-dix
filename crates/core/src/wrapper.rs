@@ -1,4 +1,5 @@
 use crate::entry::IServiceResolver;
+use crate::error::RdiError;
 use crate::provider::ServiceProvider;
 use std::any::Any;
 use std::sync::Arc;
@@ -19,20 +20,19 @@ impl ServiceProviderWrapper {
         &self.root
     }
 
-    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
+    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
+        let type_name = std::any::type_name::<T>();
         self.try_get::<T>()
-            .unwrap_or_else(|| panic!("service not registered: {}", std::any::type_name::<T>()))
+            .ok_or(RdiError::ServiceNotFound(type_name))
     }
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.try_get::<T>()
     }
-    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Arc<T> {
-        self.try_get_keyed::<T>(key).unwrap_or_else(|| {
-            panic!(
-                "keyed service not found: {}:{}",
-                std::any::type_name::<T>(),
-                key
-            )
+    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
+        let type_name = std::any::type_name::<T>();
+        self.try_get_keyed::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
+            key: key.to_string(),
+            ty: type_name,
         })
     }
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
@@ -126,7 +126,7 @@ mod tests {
             .build()
             .unwrap();
         let w = ServiceProviderWrapper::new(Arc::new(c), r);
-        assert_eq!(w.get::<B>().s, "child");
+        assert_eq!(w.get::<B>().unwrap().s, "child");
     }
     #[test]
     fn root_fallback() {
@@ -138,7 +138,7 @@ mod tests {
         );
         let c = ServiceCollection::new().build().unwrap();
         let w = ServiceProviderWrapper::new(Arc::new(c), r);
-        assert_eq!(w.get::<RO>().v, 42);
+        assert_eq!(w.get::<RO>().unwrap().v, 42);
     }
     #[test]
     fn child_invisible() {

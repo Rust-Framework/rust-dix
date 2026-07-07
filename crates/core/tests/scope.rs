@@ -12,7 +12,7 @@ fn create_scope_medinaming() {
             .unwrap(),
     );
     let scope = p.create_scope();
-    let svc: Arc<common::MyService> = scope.get();
+    let svc: Arc<common::MyService> = scope.get().unwrap();
     assert_eq!(svc.value, 10);
 }
 
@@ -64,8 +64,8 @@ fn scoped_cached_within_same_scope() {
             .unwrap(),
     );
     let scope = p.scope();
-    let _a = scope.get::<common::MyService>();
-    let _b = scope.get::<common::MyService>();
+    let _a = scope.get::<common::MyService>().unwrap();
+    let _b = scope.get::<common::MyService>().unwrap();
     assert_eq!(COUNTER.load(Ordering::SeqCst), 1);
 }
 
@@ -104,17 +104,17 @@ fn scope_transient_scoped_dependency_binds_to_child_scope() {
     );
 
     let scope1 = provider.scope();
-    let t1: Arc<TransientSvc> = scope1.get();
+    let t1: Arc<TransientSvc> = scope1.get().unwrap();
     // 同一子 scope 内两次解析 Transient，其 Scoped 依赖应复用同一实例
     // （Transient 每次新建，但其内部 Scoped 在 scope1 缓存中复用）。
-    let t1_again: Arc<TransientSvc> = scope1.get();
+    let t1_again: Arc<TransientSvc> = scope1.get().unwrap();
     assert!(
         Arc::ptr_eq(&t1.scoped, &t1_again.scoped),
         "同一子 scope 内 Transient 的 Scoped 依赖应复用同一实例"
     );
 
     let scope2 = provider.scope();
-    let t2: Arc<TransientSvc> = scope2.get();
+    let t2: Arc<TransientSvc> = scope2.get().unwrap();
     assert!(
         !Arc::ptr_eq(&t1.scoped, &t2.scoped),
         "不同子 scope 的 Transient 的 Scoped 依赖应独立（绑定子 scope 而非根）"
@@ -124,7 +124,7 @@ fn scope_transient_scoped_dependency_binds_to_child_scope() {
     assert_eq!(t2.scoped.0, 1, "scope2 的 Scoped 应为序号 1");
 
     // 根 scope 解析 Scoped 应得到第三个独立实例，与两个子 scope 都不同。
-    let root_s: Arc<ScopedDep> = provider.get();
+    let root_s: Arc<ScopedDep> = provider.get().unwrap();
     assert!(
         !Arc::ptr_eq(&t1.scoped, &root_s),
         "子 scope 的 Scoped 不应泄漏到根 root_scoped_cache"

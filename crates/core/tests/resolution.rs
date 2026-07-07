@@ -74,7 +74,7 @@ fn resolver_default_try_get_keyed_returns_none() {
 fn resolver_default_get_keyed_panics_on_missing() {
     let p = ServiceCollection::new().build().unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Arc<common::MyService> = p.get_keyed("nonexistent");
+        let _: Arc<common::MyService> = p.get_keyed("nonexistent").unwrap();
     }));
     assert!(result.is_err());
 }
@@ -83,7 +83,7 @@ fn resolver_default_get_keyed_panics_on_missing() {
 fn resolver_default_get_panics_on_missing() {
     let p = ServiceCollection::new().build().unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Arc<common::MyService> = p.get();
+        let _: Arc<common::MyService> = p.get().unwrap();
     }));
     assert!(result.is_err());
 }
@@ -103,9 +103,9 @@ fn provider_has_correct_keyed_count() {
         .keyed_singleton("c", |_| Arc::new(common::MyService { value: 3 }))
         .build()
         .unwrap();
-    assert_eq!(p.get_keyed::<common::MyService>("a").value, 1);
-    assert_eq!(p.get_keyed::<common::MyService>("b").value, 2);
-    assert_eq!(p.get_keyed::<common::MyService>("c").value, 3);
+    assert_eq!(p.get_keyed::<common::MyService>("a").unwrap().value, 1);
+    assert_eq!(p.get_keyed::<common::MyService>("b").unwrap().value, 2);
+    assert_eq!(p.get_keyed::<common::MyService>("c").unwrap().value, 3);
     assert_eq!(p.get_all::<common::MyService>().len(), 3);
 }
 
@@ -120,8 +120,8 @@ fn multiple_singletons_independent() {
         })
         .build()
         .unwrap();
-    assert_eq!(p.get::<common::MyService>().value, 10);
-    assert_eq!(p.get::<common::Logger>().prefix, "log");
+    assert_eq!(p.get::<common::MyService>().unwrap().value, 10);
+    assert_eq!(p.get::<common::Logger>().unwrap().prefix, "log");
 }
 
 #[test]
@@ -132,9 +132,9 @@ fn trait_object_multiple_impls() {
         .keyed_singleton::<dyn IPlugin>("alt", |_| Arc::new(AltPlugin))
         .build()
         .unwrap();
-    let default: Arc<dyn IPlugin> = p.get();
+    let default: Arc<dyn IPlugin> = p.get().unwrap();
     assert_eq!(default.name(), "test_plugin");
-    let alt: Arc<dyn IPlugin> = p.get_keyed("alt");
+    let alt: Arc<dyn IPlugin> = p.get_keyed("alt").unwrap();
     assert_eq!(alt.name(), "alt_plugin");
 }
 

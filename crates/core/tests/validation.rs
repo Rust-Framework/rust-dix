@@ -60,8 +60,8 @@ fn scoped_cached_at_root_scope() {
         .build()
         .unwrap();
 
-    let a1: Arc<ServiceA> = provider.get();
-    let a2: Arc<ServiceA> = provider.get();
+    let a1: Arc<ServiceA> = provider.get().unwrap();
+    let a2: Arc<ServiceA> = provider.get().unwrap();
     assert!(Arc::ptr_eq(&a1, &a2), "root scope 内 Scoped 应复用同一实例");
 }
 
@@ -75,9 +75,9 @@ fn scoped_isolated_between_root_and_child_scope() {
             .unwrap(),
     );
 
-    let root_a: Arc<ServiceA> = provider.get();
+    let root_a: Arc<ServiceA> = provider.get().unwrap();
     let scope = provider.scope();
-    let child_a: Arc<ServiceA> = scope.get();
+    let child_a: Arc<ServiceA> = scope.get().unwrap();
     assert!(
         !Arc::ptr_eq(&root_a, &child_a),
         "根与子 scope 的 Scoped 应相互独立"
@@ -101,13 +101,13 @@ fn root_scope_scoped_factory_executed_once() {
         .unwrap();
 
     // 首次解析：工厂执行，计数 0 → 1，实例携带序号 0。
-    let a1: Arc<ScopedService> = provider.get();
+    let a1: Arc<ScopedService> = provider.get().unwrap();
     assert_eq!(SCOPED_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(a1.0, 0);
 
     // 第二、三次解析：应命中 root_scoped_cache，工厂不再执行。
-    let a2: Arc<ScopedService> = provider.get();
-    let a3: Arc<ScopedService> = provider.get();
+    let a2: Arc<ScopedService> = provider.get().unwrap();
+    let a3: Arc<ScopedService> = provider.get().unwrap();
     assert_eq!(
         SCOPED_CALLS.load(Ordering::SeqCst),
         1,
@@ -136,9 +136,9 @@ fn root_scope_transient_factory_executed_each_time() {
         .build()
         .unwrap();
 
-    let t1: Arc<TransientService> = provider.get();
-    let t2: Arc<TransientService> = provider.get();
-    let t3: Arc<TransientService> = provider.get();
+    let t1: Arc<TransientService> = provider.get().unwrap();
+    let t2: Arc<TransientService> = provider.get().unwrap();
+    let t3: Arc<TransientService> = provider.get().unwrap();
     assert_eq!(TRANSIENT_CALLS.load(Ordering::SeqCst), 3);
     assert_eq!(t1.0, 0);
     assert_eq!(t2.0, 1);
@@ -168,11 +168,11 @@ fn scoped_factory_not_triggered_at_build() {
     );
 
     // 首次解析才触发工厂。
-    let _s1: Arc<S> = provider.get();
+    let _s1: Arc<S> = provider.get().unwrap();
     assert_eq!(BUILD_CALLS.load(Ordering::SeqCst), 1);
 
     // 再次解析命中缓存，工厂不再执行。
-    let _s2: Arc<S> = provider.get();
+    let _s2: Arc<S> = provider.get().unwrap();
     assert_eq!(BUILD_CALLS.load(Ordering::SeqCst), 1);
 }
 
@@ -227,12 +227,12 @@ fn scoped_correct_usage() {
     );
 
     let scope = provider.scope();
-    let a1: Arc<ServiceA> = scope.get();
-    let a2: Arc<ServiceA> = scope.get();
+    let a1: Arc<ServiceA> = scope.get().unwrap();
+    let a2: Arc<ServiceA> = scope.get().unwrap();
     assert!(Arc::ptr_eq(&a1, &a2));
 
     let scope2 = provider.scope();
-    let a3: Arc<ServiceA> = scope2.get();
+    let a3: Arc<ServiceA> = scope2.get().unwrap();
     assert!(!Arc::ptr_eq(&a1, &a3));
 }
 
@@ -243,8 +243,8 @@ fn transient_creates_new_instances() {
         .build()
         .unwrap();
 
-    let a1: Arc<ServiceA> = p.get();
-    let a2: Arc<ServiceA> = p.get();
+    let a1: Arc<ServiceA> = p.get().unwrap();
+    let a2: Arc<ServiceA> = p.get().unwrap();
     assert!(!Arc::ptr_eq(&a1, &a2));
 }
 
@@ -255,8 +255,8 @@ fn singleton_shared_globally() {
         .build()
         .unwrap();
 
-    let a1: Arc<ServiceA> = p.get();
-    let a2: Arc<ServiceA> = p.get();
+    let a1: Arc<ServiceA> = p.get().unwrap();
+    let a2: Arc<ServiceA> = p.get().unwrap();
     assert!(Arc::ptr_eq(&a1, &a2));
 }
 
@@ -328,7 +328,7 @@ fn root_scope_scoped_factory_executed_once_under_concurrency() {
     for _ in 0..8 {
         let p = provider.clone();
         handles.push(std::thread::spawn(move || {
-            let s: Arc<ScopedService> = p.get();
+            let s: Arc<ScopedService> = p.get().unwrap();
             s
         }));
     }
@@ -377,7 +377,7 @@ fn validation_does_not_leak_transient_to_runtime_cache() {
 
     // 运行时解析 Transient：应得到新实例（计数递增到 2、3），
     // 而非返回 validation 缓存的实例（那会让计数停留在 1，序号停在 0）。
-    let t1: Arc<TransientService> = provider.get();
+    let t1: Arc<TransientService> = provider.get().unwrap();
     assert_eq!(
         TRANSIENT_CALLS.load(Ordering::SeqCst),
         2,
@@ -385,7 +385,7 @@ fn validation_does_not_leak_transient_to_runtime_cache() {
     );
     assert_eq!(t1.0, 1, "运行时首次解析应得到序号 1（validation 是 0）");
 
-    let t2: Arc<TransientService> = provider.get();
+    let t2: Arc<TransientService> = provider.get().unwrap();
     assert_eq!(TRANSIENT_CALLS.load(Ordering::SeqCst), 3);
     assert_eq!(t2.0, 2);
     assert!(

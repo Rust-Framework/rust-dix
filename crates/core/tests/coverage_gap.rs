@@ -23,7 +23,7 @@ fn scope_get_keyed_found() {
             .unwrap(),
     );
     let scope = p.scope();
-    let svc: Arc<common::MyService> = scope.get_keyed("k");
+    let svc: Arc<common::MyService> = scope.get_keyed("k").unwrap();
     assert_eq!(svc.value, 10);
 }
 
@@ -55,7 +55,7 @@ fn instance_preserves_arc() {
         .instance(svc.clone())
         .build()
         .unwrap();
-    let retrieved: Arc<common::MyService> = p.get();
+    let retrieved: Arc<common::MyService> = p.get().unwrap();
     assert!(Arc::ptr_eq(&svc, &retrieved));
 }
 
@@ -70,8 +70,8 @@ fn singleton_caches() {
         })
         .build()
         .unwrap();
-    let _a: Arc<common::MyService> = p.get();
-    let _b: Arc<common::MyService> = p.get();
+    let _a: Arc<common::MyService> = p.get().unwrap();
+    let _b: Arc<common::MyService> = p.get().unwrap();
     assert_eq!(COUNT.load(Ordering::SeqCst), 1);
 }
 
@@ -86,8 +86,8 @@ fn transient_creates_new_each_time() {
         })
         .build()
         .unwrap();
-    let _a: Arc<common::MyService> = p.get();
-    let _b: Arc<common::MyService> = p.get();
+    let _a: Arc<common::MyService> = p.get().unwrap();
+    let _b: Arc<common::MyService> = p.get().unwrap();
     assert_eq!(COUNT.load(Ordering::SeqCst), 2);
 }
 
@@ -98,7 +98,7 @@ fn try_add_skips_existing() {
         .try_add(|_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
-    assert_eq!(p.get::<common::MyService>().value, 1);
+    assert_eq!(p.get::<common::MyService>().unwrap().value, 1);
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn wrapper_get_optional_child_first() {
             .unwrap(),
     );
     let w = ServiceProviderWrapper::new(child, root);
-    assert_eq!(w.get::<common::MyService>().value, 2);
+    assert_eq!(w.get::<common::MyService>().unwrap().value, 2);
     assert_eq!(w.get_optional::<common::MyService>().unwrap().value, 2);
 }
 
@@ -143,7 +143,7 @@ fn wrapper_get_keyed_child_priority() {
             .unwrap(),
     );
     let w = ServiceProviderWrapper::new(child, root);
-    assert_eq!(w.get_keyed::<common::MyService>("k").value, 20);
+    assert_eq!(w.get_keyed::<common::MyService>("k").unwrap().value, 20);
 }
 
 #[test]
@@ -171,21 +171,21 @@ fn singleton_keyed_via_get_resolves_default() {
         .build()
         .unwrap();
     // get_keyed should work for the registered key
-    assert_eq!(p.get_keyed::<common::MyService>("a").value, 1);
+    assert_eq!(p.get_keyed::<common::MyService>("a").unwrap().value, 1);
 }
 
 #[test]
-#[should_panic(expected = "service not registered")]
 fn get_panics_on_missing() {
     let p = ServiceCollection::new().build().unwrap();
-    let _: Arc<common::MyService> = p.get();
+    let result: Result<Arc<common::MyService>, RdiError> = p.get();
+    assert!(result.is_err());
 }
 
 #[test]
-#[should_panic(expected = "keyed service not registered")]
 fn get_keyed_panics_on_missing() {
     let p = ServiceCollection::new().build().unwrap();
-    let _: Arc<common::MyService> = p.get_keyed("missing");
+    let result: Result<Arc<common::MyService>, RdiError> = p.get_keyed("missing");
+    assert!(result.is_err());
 }
 
 #[test]
@@ -203,9 +203,7 @@ fn rdi_register_named_and_remove_via_provider() {
 fn scope_get_panics_on_missing() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
     let scope = p.scope();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Arc<common::MyService> = scope.get();
-    }));
+    let result: Result<Arc<common::MyService>, RdiError> = scope.get();
     assert!(result.is_err());
 }
 
@@ -213,9 +211,7 @@ fn scope_get_panics_on_missing() {
 fn scope_get_keyed_panics_on_missing() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
     let scope = p.scope();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Arc<common::MyService> = scope.get_keyed("nonexistent");
-    }));
+    let result: Result<Arc<common::MyService>, RdiError> = scope.get_keyed("nonexistent");
     assert!(result.is_err());
 }
 
@@ -226,7 +222,7 @@ fn module_singleton_with_trait() {
         rust_dicore::register!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
     }
     let p = svc::__rdi_build_provider_svc().unwrap();
-    let plugin: Arc<dyn common::IPlugin> = p.get::<dyn common::IPlugin>();
+    let plugin: Arc<dyn common::IPlugin> = p.get::<dyn common::IPlugin>().unwrap();
     assert_eq!(plugin.name(), "test_plugin");
 }
 
@@ -238,7 +234,7 @@ fn module_scoped_lifetime() {
     }
     let p = Arc::new(scoped_mod::__rdi_build_provider_scoped_mod().unwrap());
     let scope = p.scope();
-    let _svc: Arc<common::MyService> = scope.get();
+    let _svc: Arc<common::MyService> = scope.get().unwrap();
 }
 
 #[test]
@@ -248,7 +244,7 @@ fn module_transient_lifetime() {
         rust_dicore::register!(transient: super::common::MyService);
     }
     let p = trans_mod::__rdi_build_provider_trans_mod().unwrap();
-    let _svc: Arc<common::MyService> = p.get();
+    let _svc: Arc<common::MyService> = p.get().unwrap();
 }
 
 #[test]
@@ -259,8 +255,8 @@ fn module_multiple_registrations() {
         rust_dicore::register!(singleton: super::common::MyService);
     }
     let p = multi::__rdi_build_provider_multi().unwrap();
-    let _log: Arc<common::Logger> = p.get();
-    let _svc: Arc<common::MyService> = p.get();
+    let _log: Arc<common::Logger> = p.get().unwrap();
+    let _svc: Arc<common::MyService> = p.get().unwrap();
 }
 
 #[test]
@@ -270,7 +266,7 @@ fn module_keyed_singleton() {
         rust_dicore::register!(keyed "x": singleton: super::common::MyService);
     }
     let p = keyed_mod::__rdi_build_provider_keyed_mod().unwrap();
-    let svc: Arc<common::MyService> = p.get_keyed("x");
+    let svc: Arc<common::MyService> = p.get_keyed("x").unwrap();
     assert_eq!(svc.value, 0);
 }
 

@@ -12,8 +12,9 @@ fn rdiprovider_root_resolves() {
             .build()
             .unwrap(),
     );
-    let rp = RdiProvider::Root(p);
-    let svc: Arc<common::MyService> = rp.get();
+    let rp: Arc<dyn IProvider> = p;
+    let any = rp.get_any(std::any::type_name::<common::MyService>()).unwrap();
+    let svc: Arc<common::MyService> = Arc::clone(&*any.downcast::<Arc<common::MyService>>().unwrap());
     assert_eq!(svc.value, 100);
 }
 
@@ -27,8 +28,9 @@ fn rdiprovider_wrapped_resolves() {
     );
     let child = Arc::new(ServiceCollection::new().build().unwrap());
     let wrapper = ServiceProviderWrapper::new(child, root);
-    let rp = RdiProvider::Wrapped(wrapper);
-    let svc: Arc<common::MyService> = rp.get();
+    let rp: Arc<dyn IProvider> = wrapper;
+    let any = rp.get_any(std::any::type_name::<common::MyService>()).unwrap();
+    let svc: Arc<common::MyService> = Arc::clone(&*any.downcast::<Arc<common::MyService>>().unwrap());
     assert_eq!(svc.value, 200);
 }
 
@@ -36,7 +38,7 @@ fn rdiprovider_wrapped_resolves() {
 fn rdiprovider_get_named_any() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
     p.register_named("rdi_key", Arc::new(common::MyService { value: 5 }));
-    let rp = RdiProvider::Root(p);
+    let rp: Arc<dyn IProvider> = p;
     let retrieved = rp.get_named_any("rdi_key");
     assert!(retrieved.is_some());
 }
@@ -44,14 +46,14 @@ fn rdiprovider_get_named_any() {
 #[test]
 fn rdiprovider_register_and_remove_named() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
-    let rp = RdiProvider::Root(p);
+    let rp: Arc<dyn IProvider> = p;
     let svc = Arc::new(common::MyService { value: 3 });
-    rp.register_named_any("test", svc);
+    rp.rdi_register_named("test", svc);
     let retrieved = rp.get_named_any("test");
     assert!(retrieved.is_some());
     let down: Arc<common::MyService> = retrieved.unwrap().downcast::<common::MyService>().unwrap();
     assert_eq!(down.value, 3);
-    rp.remove_named("test");
+    rp.rdi_remove_named("test");
     assert!(rp.get_named_any("test").is_none());
 }
 
@@ -63,7 +65,7 @@ fn servicelocatorbridge_roundtrip() {
             .build()
             .unwrap(),
     );
-    let rp = Arc::new(RdiProvider::Root(p));
+    let rp: Arc<dyn IProvider> = p;
     let bridge = ServiceLocatorBridge::new(rp);
     let result = bridge.get_any(std::any::type_name::<common::MyService>());
     assert!(result.is_some());
@@ -78,7 +80,7 @@ fn servicelocatorbridge_roundtrip() {
 #[test]
 fn servicelocatorbridge_provider_accessor() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
-    let rp = Arc::new(RdiProvider::Root(p.clone()));
+    let rp: Arc<dyn IProvider> = p.clone();
     let bridge = ServiceLocatorBridge::new(rp.clone());
     assert!(Arc::ptr_eq(&rp, bridge.provider()));
 }
@@ -119,7 +121,7 @@ fn serviceprovider_as_servicelocator_register_remove() {
 #[test]
 fn named_registrar_via_bridge() {
     let p = Arc::new(ServiceCollection::new().build().unwrap());
-    let rp = Arc::new(RdiProvider::Root(p));
+    let rp: Arc<dyn IProvider> = p;
     let bridge = ServiceLocatorBridge::new(rp);
     let registrar: &dyn INamedRegistrar = &bridge;
     let svc: Arc<dyn Any + Send + Sync> = Arc::new(Arc::new(common::MyService { value: 10 }));

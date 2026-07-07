@@ -24,7 +24,7 @@ struct HandlerWithProvider {
 
 impl HandlerWithProvider {
     fn resolve_dep(&self) -> common::MyService {
-        self.provider.get_owned::<common::MyService>()
+        self.provider.get_owned::<common::MyService>().unwrap()
     }
 }
 
@@ -37,7 +37,7 @@ fn provider_inject_resolves_via_into_arc() {
         .unwrap()
         .into_arc();
 
-    let h = p.get_owned::<HandlerWithProvider>();
+    let h = p.get_owned::<HandlerWithProvider>().unwrap();
     assert_eq!(h.resolve_dep().value, 42);
 }
 
@@ -50,11 +50,11 @@ fn provider_inject_field_is_some() {
         .unwrap()
         .into_arc();
 
-    let h = p.get_owned::<HandlerWithProvider>();
+    let h = p.get_owned::<HandlerWithProvider>().unwrap();
     // provider_arc should return Some because into_arc was used
     assert!(IServiceResolver::provider_arc(&*p).is_some());
     // The field should be a valid Arc<ServiceProvider> — can resolve without panic
-    assert_eq!(h.provider.get_owned::<common::MyService>().value, 0);
+    assert_eq!(h.provider.get_owned::<common::MyService>().unwrap().value, 0);
 }
 
 #[test]
@@ -67,21 +67,21 @@ fn provider_inject_works_through_scope() {
         .into_arc();
 
     let scope = p.scope();
-    let h: HandlerWithProvider = scope.get_owned();
+    let h: HandlerWithProvider = scope.get_owned().unwrap();
     // Scope 现持有 scope_provider；注入的字段是 scope 范围 provider，
     // 解析 Scoped 命中 scope 自己的 root_scoped_cache（不泄漏到 root）。
     assert_eq!(h.resolve_dep().value, 99);
 
     // 验证注入的 provider 是 scope 范围（非 root）：
     // 同一 scope 内多次 get Scoped 返回同一 Arc（scope 缓存命中）。
-    let s1: Arc<common::MyService> = h.provider.get();
-    let s2: Arc<common::MyService> = h.provider.get();
+    let s1: Arc<common::MyService> = h.provider.get().unwrap();
+    let s2: Arc<common::MyService> = h.provider.get().unwrap();
     assert!(
         Arc::ptr_eq(&s1, &s2),
         "scope 内 Scoped 应缓存复用（同一 Arc）"
     );
     // scope 与 root 应有独立 Scoped 实例（不同 Arc），证明未泄漏到 root。
-    let root_svc: Arc<common::MyService> = p.get();
+    let root_svc: Arc<common::MyService> = p.get().unwrap();
     assert!(
         !Arc::ptr_eq(&s1, &root_svc),
         "scope 与 root 的 Scoped 实例应独立"
@@ -107,21 +107,21 @@ fn scope_provider_resolves_scoped_within_scope() {
 
     // scope1：注入字段拿到 scope-local provider，解析 ScopedSvc 命中 scope1 缓存。
     let scope1 = p.scope();
-    let h1: HandlerWithProvider = scope1.get_owned();
-    let a: Arc<ScopedSvc> = h1.provider.get();
-    let b: Arc<ScopedSvc> = h1.provider.get();
+    let h1: HandlerWithProvider = scope1.get_owned().unwrap();
+    let a: Arc<ScopedSvc> = h1.provider.get().unwrap();
+    let b: Arc<ScopedSvc> = h1.provider.get().unwrap();
     assert_eq!(a.0, b.0, "scope1 内 ScopedSvc 复用同一序号");
     assert!(Arc::ptr_eq(&a, &b), "scope1 缓存命中（同一 Arc）");
 
     // scope2：独立子 scope，ScopedSvc 工厂再次执行（新序号）。
     let scope2 = p.scope();
-    let h2: HandlerWithProvider = scope2.get_owned();
-    let c: Arc<ScopedSvc> = h2.provider.get();
+    let h2: HandlerWithProvider = scope2.get_owned().unwrap();
+    let c: Arc<ScopedSvc> = h2.provider.get().unwrap();
     assert_ne!(a.0, c.0, "scope2 应有独立 ScopedSvc 实例");
     assert!(!Arc::ptr_eq(&a, &c), "不同 scope 的 ScopedSvc 必须独立");
 
     // 根 scope：第三个独立实例，证明子 scope 未泄漏到根。
-    let root_svc: Arc<ScopedSvc> = p.get();
+    let root_svc: Arc<ScopedSvc> = p.get().unwrap();
     assert_ne!(a.0, root_svc.0);
     assert_ne!(c.0, root_svc.0);
 
@@ -146,7 +146,7 @@ fn provider_inject_panics_without_into_arc() {
     );
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _h = p.get_owned::<HandlerWithProvider>();
+        let _h = p.get_owned::<HandlerWithProvider>().unwrap();
     }));
     assert!(result.is_err(), "应 panic：self_weak 未初始化");
 
@@ -188,7 +188,7 @@ fn provider_inject_mixed_with_regular_inject() {
         .unwrap()
         .into_arc();
 
-    let h = p.get_owned::<MixedProviderHandler>();
+    let h = p.get_owned::<MixedProviderHandler>().unwrap();
     assert_eq!(h.logger.prefix, "log");
-    assert_eq!(h.provider.get_owned::<common::MyService>().value, 7);
+    assert_eq!(h.provider.get_owned::<common::MyService>().unwrap().value, 7);
 }

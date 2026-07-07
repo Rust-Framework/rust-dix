@@ -26,7 +26,7 @@
 //!     .unwrap();
 //!
 //! // Resolve as trait
-//! let logger: Arc<dyn ILogger> = provider.get();
+//! let logger: Arc<dyn ILogger> = provider.get().unwrap();
 //! logger.log("Hello");
 //! ```
 //!
@@ -50,7 +50,7 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
+//! let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 //! assert_eq!(fast.execute(), "fast");
 //! ```
 //!
@@ -81,6 +81,38 @@
 //! if let Err(RdiError::CircularDependency(cycle)) = result {
 //!     println!("Circular dependency detected: {}", cycle);
 //! }
+//! ```
+//!
+//! # Async support
+//!
+//! For services that require async initialization (e.g., database
+//! connections, remote config loading), use `build_async()` and
+//! the `async_*` registration methods. `build_async()` returns
+//! `Arc<ServiceProvider>` so that `provider_arc()` is available for
+//! async resolution:
+//!
+//! ```rust,ignore
+//! use rust_dicore::*;
+//! use std::sync::Arc;
+//!
+//! struct DbPool { conn: String }
+//!
+//! async fn connect_to_db() -> DbPool {
+//!     // async connection setup...
+//!     DbPool { conn: "connected".into() }
+//! }
+//!
+//! # async fn run() {
+//! let provider = ServiceCollection::new()
+//!     .async_singleton(|_| Box::pin(async {
+//!         Arc::new(connect_to_db().await)
+//!     }))
+//!     .build_async()
+//!     .await
+//!     .unwrap();
+//!
+//! let pool: Arc<DbPool> = provider.get_async().await.unwrap();
+//! # }
 //! ```
 //!
 //! # Features
@@ -120,15 +152,13 @@
 pub mod bridge;
 mod cache;
 pub mod collection;
-pub mod descriptor;
 pub mod entry;
 pub mod error;
-pub mod lifetime;
 pub mod provider;
 pub mod registration;
 pub mod scope;
 pub mod service_locator;
-pub mod store;
+mod validation;
 pub mod wrapper;
 
 // ── Core types (MEDI-inspired naming) ──
@@ -150,11 +180,11 @@ pub use collection::ServiceCollection;
 pub use provider::ServiceProvider;
 
 /// Service descriptor containing registration metadata.
-pub use descriptor::ServiceDescriptor;
+pub use entry::ServiceDescriptor;
 
 /// Service lifetime enum: [`Singleton`](ServiceLifetime::Singleton),
 /// [`Scoped`](ServiceLifetime::Scoped), [`Transient`](ServiceLifetime::Transient).
-pub use lifetime::ServiceLifetime;
+pub use entry::ServiceLifetime;
 
 /// Core resolution trait. Both [`ServiceProvider`] and [`Scope`] implement this.
 pub use entry::IServiceResolver;
@@ -163,6 +193,9 @@ pub use entry::IServiceResolver;
 ///
 /// Analogous to `IServiceScope` in MEDI.
 pub use scope::Scope;
+
+/// Trait for services requiring explicit cleanup when a scope ends.
+pub use scope::Disposable;
 
 /// Alias for [`Scope`] with MEDI-inspired naming (`IServiceScope`).
 pub use scope::Scope as ServiceScope;
@@ -182,7 +215,7 @@ pub use service_locator::IServiceLocator;
 pub use service_locator::INamedRegistrar;
 
 /// Adapts RDI types to [`IServiceLocator`].
-pub use bridge::{RdiProvider, ServiceLocatorBridge};
+pub use bridge::{IProvider, ServiceLocatorBridge};
 
 // ── Error types ──
 

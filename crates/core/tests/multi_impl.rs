@@ -74,14 +74,14 @@ fn default_plus_keyed() {
         .unwrap();
 
     // 默认解析
-    let default: Arc<dyn IPayGateway> = p.get();
+    let default: Arc<dyn IPayGateway> = p.get().unwrap();
     assert_eq!(default.name(), "wechat");
 
     // keyed 解析
-    let alipay: Arc<dyn IPayGateway> = p.get_keyed("alipay");
+    let alipay: Arc<dyn IPayGateway> = p.get_keyed("alipay").unwrap();
     assert_eq!(alipay.name(), "alipay");
 
-    let credit: Arc<dyn IPayGateway> = p.get_keyed("credit");
+    let credit: Arc<dyn IPayGateway> = p.get_keyed("credit").unwrap();
     assert_eq!(credit.name(), "credit");
 
     // 批量获取
@@ -100,12 +100,12 @@ fn all_keyed_no_default() {
 
     // 无默认，get() panic
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Arc<dyn IPayGateway> = p.get();
+        let _: Arc<dyn IPayGateway> = p.get().unwrap();
     }));
     assert!(result.is_err());
 
     // 只能通过 keyed 获取
-    let wechat: Arc<dyn IPayGateway> = p.get_keyed("wechat");
+    let wechat: Arc<dyn IPayGateway> = p.get_keyed("wechat").unwrap();
     assert_eq!(wechat.name(), "wechat");
 
     // get_all 获取所有
@@ -151,8 +151,8 @@ fn keyed_transient_creates_new_instance() {
         .build()
         .unwrap();
 
-    let c1: Arc<dyn IPayGateway> = p.get_keyed("counter");
-    let c2: Arc<dyn IPayGateway> = p.get_keyed("counter");
+    let c1: Arc<dyn IPayGateway> = p.get_keyed("counter").unwrap();
+    let c2: Arc<dyn IPayGateway> = p.get_keyed("counter").unwrap();
     c1.pay(1.0);
     c2.pay(2.0);
 
@@ -173,7 +173,7 @@ fn strategy_pattern_runtime_switch() {
 
     fn pay_by_method(p: &ServiceProvider, method: &str, amount: f64) -> String {
         p.try_get_keyed::<dyn IPayGateway>(method)
-            .unwrap_or_else(|| p.get())
+            .unwrap_or_else(|| p.get().unwrap())
             .pay(amount)
     }
 

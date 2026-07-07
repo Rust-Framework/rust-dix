@@ -17,7 +17,7 @@ fn wrapper_get_keyed_fallback_to_root() {
     );
     let child = Arc::new(ServiceCollection::new().build().unwrap());
     let w = ServiceProviderWrapper::new(child, root);
-    let svc: Arc<common::Logger> = w.get_keyed("a");
+    let svc: Arc<common::Logger> = w.get_keyed("a").unwrap();
     assert_eq!(svc.prefix, "root");
 }
 

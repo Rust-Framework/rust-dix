@@ -1,7 +1,41 @@
-use crate::lifetime::ServiceLifetime;
+use crate::error::RdiError;
 use crate::provider::ServiceProvider;
-use std::any::Any;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+/// Service lifetime enum — defines how instances are cached.
+///
+/// - `Transient`: new instance every resolution (never cached)
+/// - `Scoped`: one instance per scope (cached within the scope)
+/// - `Singleton`: one instance shared across all scopes (cached globally)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ServiceLifetime {
+    Transient,
+    Scoped,
+    Singleton,
+}
+
+/// Service descriptor holds registration metadata for a service.
+///
+/// Created during `ServiceCollection` building and passed to `ServiceStore`
+/// to create `ServiceEntry`.
+#[derive(Clone)]
+pub struct ServiceDescriptor {
+    pub type_id: TypeId,
+    pub type_name: &'static str,
+    pub key: Option<String>,
+    pub factory: ServiceFactory,
+    pub async_factory: Option<AsyncServiceFactory>,
+    pub lifetime: ServiceLifetime,
+}
+
+/// ServiceStore is the root registry — maps `TypeId` to all `ServiceEntry` entries.
+///
+/// Multiple entries per type exist when keyed variants are registered.
+pub type ServiceStore = HashMap<TypeId, Vec<ServiceEntry>>;
 
 /// Service resolver trait — the core DI resolution interface.
 ///
@@ -38,14 +72,15 @@ pub trait IServiceResolver: Send + Sync {
     }
 
     /// Resolve a service by type (concrete or `dyn Trait`).
-    /// Panics if not registered.
-    fn get<T: ?Sized + Sync + Send + 'static>(&self) -> Arc<T>
+    /// Returns `Err(RdiError::ServiceNotFound)` if not registered.
+    fn get<T: ?Sized + Sync + Send + 'static>(&self) -> Result<Arc<T>, RdiError>
     where
         Self: Sized,
     {
-        self.get_any(std::any::type_name::<T>())
+        let type_name = std::any::type_name::<T>();
+        self.get_any(type_name)
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
-            .unwrap_or_else(|| panic!("service not registered: {}", std::any::type_name::<T>()))
+            .ok_or(RdiError::ServiceNotFound(type_name))
     }
 
     /// Resolve a service by type, returning `None` if not registered.
@@ -57,19 +92,17 @@ pub trait IServiceResolver: Send + Sync {
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
     }
 
-    /// Resolve a keyed service by type and key. Panics if not found.
-    fn get_keyed<T: ?Sized + Sync + Send + 'static>(&self, variant: &str) -> Arc<T>
+    /// Resolve a keyed service by type and key. Returns `Err` if not found.
+    fn get_keyed<T: ?Sized + Sync + Send + 'static>(&self, variant: &str) -> Result<Arc<T>, RdiError>
     where
         Self: Sized,
     {
-        self.get_keyed_any(std::any::type_name::<T>(), variant)
+        let type_name = std::any::type_name::<T>();
+        self.get_keyed_any(type_name, variant)
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
-            .unwrap_or_else(|| {
-                panic!(
-                    "keyed service not registered: {}:{}",
-                    std::any::type_name::<T>(),
-                    variant
-                )
+            .ok_or(RdiError::KeyedServiceNotFound {
+                key: variant.to_string(),
+                ty: type_name,
             })
     }
 
@@ -117,31 +150,22 @@ pub trait IServiceResolver: Send + Sync {
         None
     }
 
-    /// Resolve owned `T` (bypass cache, fresh each call). Panics if not
-    /// registered or the service is Singleton (shared instance cannot own).
-    fn get_owned<T: Send + Sync + 'static>(&self) -> T
+    /// Resolve owned `T` (bypass cache, fresh each call).
+    /// Returns `Err` if not registered or the service is Singleton.
+    fn get_owned<T: Send + Sync + 'static>(&self) -> Result<T, RdiError>
     where
         Self: Sized,
     {
+        let type_name = std::any::type_name::<T>();
         let arc_any = self
-            .get_owned_any(std::any::type_name::<T>())
-            .unwrap_or_else(|| {
-                panic!(
-                    "get_owned: not registered or Singleton: {}",
-                    std::any::type_name::<T>()
-                )
-            });
+            .get_owned_any(type_name)
+            .ok_or(RdiError::ServiceNotFound(type_name))?;
         let arc_t: Arc<T> = arc_any
             .downcast::<Arc<T>>()
             .ok()
             .map(|d| Arc::clone(&*d))
-            .unwrap_or_else(|| panic!("get_owned: type mismatch: {}", std::any::type_name::<T>()));
-        Arc::try_unwrap(arc_t).unwrap_or_else(|_| {
-            panic!(
-                "get_owned: {} is shared (refcount > 1)",
-                std::any::type_name::<T>()
-            )
-        })
+            .ok_or(RdiError::ServiceNotFound(type_name))?;
+        Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 
     /// Resolve owned `T`, returning `None` if not registered or Singleton.
@@ -154,38 +178,28 @@ pub trait IServiceResolver: Send + Sync {
         Arc::try_unwrap(arc_t).ok()
     }
 
-    /// Resolve owned keyed `T`. Panics if not found or Singleton.
-    fn get_keyed_owned<T: Send + Sync + 'static>(&self, variant: &str) -> T
+    /// Resolve owned keyed `T`.
+    /// Returns `Err` if not found or Singleton.
+    fn get_keyed_owned<T: Send + Sync + 'static>(&self, variant: &str) -> Result<T, RdiError>
     where
         Self: Sized,
     {
+        let type_name = std::any::type_name::<T>();
         let arc_any = self
-            .get_keyed_owned_any(std::any::type_name::<T>(), variant)
-            .unwrap_or_else(|| {
-                panic!(
-                    "get_keyed_owned: not registered or Singleton: {}:{}",
-                    std::any::type_name::<T>(),
-                    variant
-                )
-            });
+            .get_keyed_owned_any(type_name, variant)
+            .ok_or(RdiError::KeyedServiceNotFound {
+                key: variant.to_string(),
+                ty: type_name,
+            })?;
         let arc_t: Arc<T> = arc_any
             .downcast::<Arc<T>>()
             .ok()
             .map(|d| Arc::clone(&*d))
-            .unwrap_or_else(|| {
-                panic!(
-                    "get_keyed_owned: type mismatch: {}:{}",
-                    std::any::type_name::<T>(),
-                    variant
-                )
-            });
-        Arc::try_unwrap(arc_t).unwrap_or_else(|_| {
-            panic!(
-                "get_keyed_owned: {}:{} is shared (refcount > 1)",
-                std::any::type_name::<T>(),
-                variant
-            )
-        })
+            .ok_or(RdiError::KeyedServiceNotFound {
+                key: variant.to_string(),
+                ty: type_name,
+            })?;
+        Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
@@ -204,8 +218,21 @@ pub struct ServiceEntry {
     pub key: Option<String>,
     pub type_name: &'static str, // kept for IServiceLocator string-based resolution
     pub factory: ServiceFactory,
+    pub async_factory: Option<AsyncServiceFactory>,
     pub lifetime: ServiceLifetime,
 }
 
 pub type ServiceFactory =
     Arc<dyn Fn(&dyn IServiceResolver) -> Arc<dyn Any + Send + Sync> + Send + Sync>;
+
+/// Async variant of [`ServiceFactory`] — for services that require async
+/// initialization (e.g., database connections, remote config loading).
+///
+/// Used with [`ServiceCollection::build_async`](crate::collection::ServiceCollection::build_async).
+/// The factory receives an `Arc<ServiceProvider>` (instead of `&dyn IServiceResolver`)
+/// because async closures cannot borrow from the caller's stack frame.
+pub type AsyncServiceFactory = Arc<
+    dyn Fn(Arc<ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<dyn Any + Send + Sync>> + Send>>
+        + Send
+        + Sync,
+>;

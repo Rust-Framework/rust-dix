@@ -8,76 +8,56 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use crate::service_locator::{INamedRegistrar, IServiceLocator};
-
 use crate::entry::IServiceResolver;
 use crate::provider::ServiceProvider;
+use crate::scope::Scope;
+use crate::service_locator::{INamedRegistrar, IServiceLocator};
 use crate::wrapper::ServiceProviderWrapper;
 
-/// Enum that wraps either a root `ServiceProvider` or a `ServiceProviderWrapper`
-/// so both can be used interchangeably behind `IServiceResolver`.
-pub enum RdiProvider {
-    Root(Arc<ServiceProvider>),
-    Wrapped(Arc<ServiceProviderWrapper>),
+/// Unified provider trait for service resolution and named registry access.
+///
+/// Replaces the former `RdiProvider` enum — `ServiceProvider`, `Scope`, and
+/// `ServiceProviderWrapper` all implement this trait, enabling polymorphic
+/// dispatch via `Arc<dyn IProvider>` instead of enum matching.
+pub trait IProvider: IServiceResolver {
+    fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>>;
+    fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>);
+    fn rdi_remove_named(&self, name: &str);
 }
 
-impl IServiceResolver for RdiProvider {
-    fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        match self {
-            RdiProvider::Root(p) => IServiceResolver::get_any(p.as_ref(), key),
-            RdiProvider::Wrapped(w) => IServiceResolver::get_any(w.as_ref(), key),
-        }
+impl IProvider for ServiceProvider {
+    fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        ServiceProvider::get_named_any(self, name)
     }
-
-    fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        match self {
-            RdiProvider::Root(p) => IServiceResolver::get_keyed_any(p.as_ref(), key, variant),
-            RdiProvider::Wrapped(w) => IServiceResolver::get_keyed_any(w.as_ref(), key, variant),
-        }
+    fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
+        ServiceProvider::rdi_register_named(self, name, service);
     }
-
-    fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
-        match self {
-            RdiProvider::Root(p) => IServiceResolver::get_all_any(p.as_ref(), key),
-            RdiProvider::Wrapped(w) => IServiceResolver::get_all_any(w.as_ref(), key),
-        }
-    }
-
-    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
-        match self {
-            RdiProvider::Root(p) => Some(Arc::clone(p)),
-            RdiProvider::Wrapped(w) => IServiceResolver::provider_arc(w.as_ref()),
-        }
+    fn rdi_remove_named(&self, name: &str) {
+        ServiceProvider::rdi_remove_named(self, name);
     }
 }
 
-impl RdiProvider {
-    /// Non-generic named resolution for trait-object dispatch.
-    pub fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        match self {
-            RdiProvider::Root(p) => p.get_named_any(name),
-            RdiProvider::Wrapped(w) => w.get_named_any(name),
-        }
+impl IProvider for ServiceProviderWrapper {
+    fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        ServiceProviderWrapper::get_named_any(self, name)
     }
-
-    /// Register a named service into the active (child) provider.
-    pub fn register_named_any(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
-        match self {
-            RdiProvider::Root(p) => p.rdi_register_named(name, service),
-            RdiProvider::Wrapped(w) => w.rdi_register_named(name, service),
-        };
+    fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
+        ServiceProviderWrapper::rdi_register_named(self, name, service);
     }
+    fn rdi_remove_named(&self, name: &str) {
+        ServiceProviderWrapper::rdi_remove_named(self, name);
+    }
+}
 
-    /// Remove a named service from the active (child) provider.
-    pub fn remove_named(&self, name: &str) {
-        match self {
-            RdiProvider::Root(p) => {
-                p.rdi_remove_named(name);
-            }
-            RdiProvider::Wrapped(w) => {
-                w.rdi_remove_named(name);
-            }
-        }
+impl IProvider for Scope {
+    fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        Scope::get_named_any(self, name)
+    }
+    fn rdi_register_named(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
+        Scope::rdi_register_named(self, name, service);
+    }
+    fn rdi_remove_named(&self, name: &str) {
+        Scope::rdi_remove_named(self, name);
     }
 }
 
@@ -89,15 +69,15 @@ impl RdiProvider {
 /// Resolution order for `get_any_named`:
 /// 1. Named registry in RDI provider
 pub struct ServiceLocatorBridge {
-    provider: Arc<RdiProvider>,
+    provider: Arc<dyn IProvider>,
 }
 
 impl ServiceLocatorBridge {
-    pub fn new(provider: Arc<RdiProvider>) -> Self {
+    pub fn new(provider: Arc<dyn IProvider>) -> Self {
         Self { provider }
     }
 
-    pub fn provider(&self) -> &Arc<RdiProvider> {
+    pub fn provider(&self) -> &Arc<dyn IProvider> {
         &self.provider
     }
 }
@@ -112,21 +92,21 @@ impl IServiceLocator for ServiceLocatorBridge {
     }
 
     fn register_named_any(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
-        self.provider.register_named_any(name, service);
+        self.provider.rdi_register_named(name, service);
     }
 
     fn remove_named(&self, name: &str) {
-        self.provider.remove_named(name);
+        self.provider.rdi_remove_named(name);
     }
 }
 
 impl INamedRegistrar for ServiceLocatorBridge {
     fn register_named_any(&self, name: &str, service: Arc<dyn Any + Send + Sync>) {
-        self.provider.register_named_any(name, service);
+        self.provider.rdi_register_named(name, service);
     }
 
     fn remove_named(&self, name: &str) {
-        self.provider.remove_named(name);
+        self.provider.rdi_remove_named(name);
     }
 }
 
@@ -140,7 +120,6 @@ macro_rules! impl_service_locator {
             }
 
             fn get_any_named(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-                // Standalone providers may have named services registered.
                 self.get_named_any(name)
             }
 

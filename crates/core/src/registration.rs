@@ -1,5 +1,5 @@
 use crate::entry::IServiceResolver;
-use crate::lifetime::ServiceLifetime;
+use crate::entry::ServiceLifetime;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 

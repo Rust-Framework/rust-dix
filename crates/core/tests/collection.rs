@@ -10,7 +10,7 @@ fn collection_singleton_value() {
         .singleton_value(common::MyService { value: 42 })
         .build()
         .unwrap();
-    assert_eq!(p.get::<common::MyService>().value, 42);
+    assert_eq!(p.get::<common::MyService>().unwrap().value, 42);
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn collection_scoped_builds() {
         .scoped(|_| Arc::new(common::MyService { value: 10 }))
         .build()
         .unwrap();
-    let svc: Arc<common::MyService> = p.get();
+    let svc: Arc<common::MyService> = p.get().unwrap();
     assert_eq!(svc.value, 10);
 }
 
@@ -33,8 +33,8 @@ fn collection_keyed_transient() {
         })
         .build()
         .unwrap();
-    let _a: Arc<common::MyService> = p.get_keyed("t");
-    let _b: Arc<common::MyService> = p.get_keyed("t");
+    let _a: Arc<common::MyService> = p.get_keyed("t").unwrap();
+    let _b: Arc<common::MyService> = p.get_keyed("t").unwrap();
     assert_eq!(COUNT.load(Ordering::SeqCst), 2);
 }
 
@@ -47,8 +47,8 @@ fn collection_keyed_scoped() {
             .unwrap(),
     );
     let scope = p.scope();
-    let a: Arc<common::MyService> = scope.get_keyed("s");
-    let b: Arc<common::MyService> = scope.get_keyed("s");
+    let a: Arc<common::MyService> = scope.get_keyed("s").unwrap();
+    let b: Arc<common::MyService> = scope.get_keyed("s").unwrap();
     assert_eq!(a.value, 5);
     assert!(Arc::ptr_eq(&a, &b));
 }
@@ -63,7 +63,7 @@ fn collection_add_with_explicit_lifetime() {
         })
         .build()
         .unwrap();
-    assert_eq!(p.get::<common::Logger>().prefix, "explicit");
+    assert_eq!(p.get::<common::Logger>().unwrap().prefix, "explicit");
 }
 
 #[test]
@@ -90,6 +90,6 @@ fn composite_resolution() {
         })
         .build()
         .unwrap();
-    let composite: Arc<common::CompositeService> = p.get();
+    let composite: Arc<common::CompositeService> = p.get().unwrap();
     assert_eq!(composite.logger.prefix, "comp");
 }

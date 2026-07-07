@@ -25,8 +25,8 @@ fn transient_get_owned_returns_fresh_owned() {
         .build()
         .unwrap();
 
-    let mut a = p.get_owned::<common::MyService>();
-    let b = p.get_owned::<common::MyService>();
+    let mut a = p.get_owned::<common::MyService>().unwrap();
+    let b = p.get_owned::<common::MyService>().unwrap();
 
     // Two owned instances are independent: mutating one doesn't affect the other.
     a.value = 42;
@@ -46,19 +46,19 @@ fn scoped_get_owned_bypasses_cache() {
         .unwrap();
 
     // get() caches in root_scoped_cache.
-    let a = p.get::<common::MyService>();
-    let b = p.get::<common::MyService>();
+    let a = p.get::<common::MyService>().unwrap();
+    let b = p.get::<common::MyService>().unwrap();
     assert!(Arc::ptr_eq(&a, &b), "get() must cache scoped in root");
 
     // get_owned() bypasses cache → fresh each call.
-    let mut o1 = p.get_owned::<common::MyService>();
-    let o2 = p.get_owned::<common::MyService>();
+    let mut o1 = p.get_owned::<common::MyService>().unwrap();
+    let o2 = p.get_owned::<common::MyService>().unwrap();
     o1.value = 99;
     assert_eq!(o1.value, 99);
     assert_eq!(o2.value, 0, "get_owned must bypass cache (fresh instances)");
 
     // get_owned did not pollute the cache: get() still returns the cached Arc.
-    let c = p.get::<common::MyService>();
+    let c = p.get::<common::MyService>().unwrap();
     assert!(
         Arc::ptr_eq(&a, &c),
         "get_owned must not pollute root_scoped_cache"
@@ -74,13 +74,13 @@ fn scoped_get_owned_bypasses_cache() {
 // ─────────────────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "get_owned: not registered or Singleton")]
 fn singleton_get_owned_panics() {
     let p = ServiceCollection::new()
         .singleton(|_| Arc::new(common::MyService { value: 1 }))
         .build()
         .unwrap();
-    let _ = p.get_owned::<common::MyService>();
+    let result = p.get_owned::<common::MyService>();
+    assert!(result.is_err());
 }
 
 #[test]
@@ -135,8 +135,8 @@ fn scope_owned_transient_arc_scoped_dep_binds_to_child() {
     );
 
     let scope1 = provider.scope();
-    let h1 = scope1.get_owned::<OwnedHandler>();
-    let h2 = scope1.get_owned::<OwnedHandler>();
+    let h1 = scope1.get_owned::<OwnedHandler>().unwrap();
+    let h2 = scope1.get_owned::<OwnedHandler>().unwrap();
 
     // Handler itself is fresh (owned), but its Arc<ScopedCore> field is
     // cached in scope1 → both handlers share the same core.
@@ -146,7 +146,7 @@ fn scope_owned_transient_arc_scoped_dep_binds_to_child() {
     );
 
     let scope2 = provider.scope();
-    let h3 = scope2.get_owned::<OwnedHandler>();
+    let h3 = scope2.get_owned::<OwnedHandler>().unwrap();
     assert!(
         !Arc::ptr_eq(&h1.core, &h3.core),
         "different scopes must have independent ScopedCore"
@@ -170,18 +170,18 @@ fn keyed_transient_get_owned() {
         .keyed_transient("primary", |_| Arc::new(common::MyService { value: 7 }))
         .build()
         .unwrap();
-    let svc = p.get_keyed_owned::<common::MyService>("primary");
+    let svc = p.get_keyed_owned::<common::MyService>("primary").unwrap();
     assert_eq!(svc.value, 7);
 }
 
 #[test]
-#[should_panic(expected = "get_keyed_owned: not registered or Singleton")]
 fn keyed_singleton_get_owned_panics() {
     let p = ServiceCollection::new()
         .keyed_singleton("primary", |_| Arc::new(common::MyService { value: 7 }))
         .build()
         .unwrap();
-    let _ = p.get_keyed_owned::<common::MyService>("primary");
+    let result = p.get_keyed_owned::<common::MyService>("primary");
+    assert!(result.is_err());
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -209,7 +209,7 @@ fn derive_inject_owned_field() {
         .build()
         .unwrap();
 
-    let mut h = p.get_owned::<MixedHandler>();
+    let mut h = p.get_owned::<MixedHandler>().unwrap();
     // svc is owned (bare T) → mutable.
     h.svc.value = 123;
     assert_eq!(h.svc.value, 123, "owned field must be mutable");
@@ -234,7 +234,7 @@ fn derive_inject_option_owned_field_present() {
         .transient(|r| __rdi_construct_OptHandler(r))
         .build()
         .unwrap();
-    let h = p.get_owned::<OptHandler>();
+    let h = p.get_owned::<OptHandler>().unwrap();
     assert!(h.maybe.is_some(), "registered dep → Some(owned)");
     assert_eq!(h.maybe.as_ref().unwrap().value, 5);
 }
@@ -245,7 +245,7 @@ fn derive_inject_option_owned_field_absent() {
         .transient(|r| __rdi_construct_OptHandler(r))
         .build()
         .unwrap();
-    let h = p.get_owned::<OptHandler>();
+    let h = p.get_owned::<OptHandler>().unwrap();
     assert!(h.maybe.is_none(), "unregistered dep → None (no panic)");
 }
 
@@ -267,7 +267,7 @@ fn derive_inject_keyed_owned_field() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<KeyedOwnedHandler>();
+    let h = p.get_owned::<KeyedOwnedHandler>().unwrap();
     assert_eq!(h.svc.value, 9, "keyed owned field must resolve by key");
 }
 
@@ -312,7 +312,7 @@ fn mixed_handler_mutable_self_e2e() {
         .build()
         .unwrap();
 
-    let mut h = p.get_owned::<BlogHandler>();
+    let mut h = p.get_owned::<BlogHandler>().unwrap();
     assert_eq!(h.ctx.total(), 0, "fresh DbContext starts at 0");
 
     // &mut self methods work directly — no RwLock, no unsafe.

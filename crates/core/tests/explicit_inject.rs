@@ -43,7 +43,7 @@ fn unmarked_field_uses_default_even_when_type_registered() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<UnmarkedHandler>();
+    let h = p.get_owned::<UnmarkedHandler>().unwrap();
     assert_eq!(h.dep.prefix, "registered", "marked Arc<T> field injects");
     assert_eq!(
         h.internal.prefix, "",
@@ -69,7 +69,7 @@ fn inject_option_arc_returns_none_when_absent() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<OptionalSharedHandler>();
+    let h = p.get_owned::<OptionalSharedHandler>().unwrap();
     assert!(h.maybe.is_none(), "absent shared dep → None, no panic");
 }
 
@@ -81,7 +81,7 @@ fn inject_option_arc_returns_some_when_present() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<OptionalSharedHandler>();
+    let h = p.get_owned::<OptionalSharedHandler>().unwrap();
     assert_eq!(h.maybe.as_ref().unwrap().value, 7);
 }
 
@@ -102,7 +102,7 @@ fn inject_owned_option_returns_none_when_absent() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<OptionalOwnedHandler>();
+    let h = p.get_owned::<OptionalOwnedHandler>().unwrap();
     assert!(h.maybe.is_none(), "absent owned dep → None, no panic");
 }
 
@@ -114,7 +114,7 @@ fn inject_owned_option_returns_some_when_present() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<OptionalOwnedHandler>();
+    let h = p.get_owned::<OptionalOwnedHandler>().unwrap();
     assert_eq!(h.maybe.as_ref().unwrap().value, 11);
 }
 
@@ -156,7 +156,7 @@ fn mixed_marked_and_unmarked_fields() {
         .build()
         .unwrap();
 
-    let h = p.get_owned::<MixedMarkedHandler>();
+    let h = p.get_owned::<MixedMarkedHandler>().unwrap();
     assert_eq!(h.shared.prefix, "main");
     assert_eq!(h.audit.prefix, "audit");
     assert_eq!(h.owned_svc.value, 1);

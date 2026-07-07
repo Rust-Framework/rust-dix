@@ -26,8 +26,8 @@ struct DefaultLifetimeService;
 #[test]
 fn inject_on_struct_default_lifetime() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let svc: Arc<DefaultLifetimeService> = p.get();
-    let svc2: Arc<DefaultLifetimeService> = p.get();
+    let svc: Arc<DefaultLifetimeService> = p.get().unwrap();
+    let svc2: Arc<DefaultLifetimeService> = p.get().unwrap();
     assert!(Arc::ptr_eq(&svc, &svc2));
 }
 
@@ -40,7 +40,7 @@ struct ExplicitSingleton {
 #[test]
 fn inject_on_struct_explicit_singleton() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let svc: Arc<ExplicitSingleton> = p.get();
+    let svc: Arc<ExplicitSingleton> = p.get().unwrap();
     assert_eq!(svc.label, "");
 }
 
@@ -51,8 +51,8 @@ struct TransientService;
 #[test]
 fn inject_on_struct_transient() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let a: Arc<TransientService> = p.get();
-    let b: Arc<TransientService> = p.get();
+    let a: Arc<TransientService> = p.get().unwrap();
+    let b: Arc<TransientService> = p.get().unwrap();
     assert!(!Arc::ptr_eq(&a, &b));
 }
 
@@ -69,7 +69,7 @@ struct FieldInjectionService {
 #[test]
 fn inject_on_struct_with_fields() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let svc: Arc<FieldInjectionService> = p.get();
+    let svc: Arc<FieldInjectionService> = p.get().unwrap();
     assert!(svc.maybe.is_some());
 }
 
@@ -97,7 +97,7 @@ impl IThingA for TraitOnlyRegistration {
 #[test]
 fn inject_on_impl_trait_registration() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let svc: Arc<dyn IThingA> = p.get::<dyn IThingA>();
+    let svc: Arc<dyn IThingA> = p.get::<dyn IThingA>().unwrap();
     assert_eq!(svc.name(), "trait_only");
 }
 
@@ -122,8 +122,8 @@ impl IThingB for DualRegistered {
 #[test]
 fn inject_combined_concrete_and_trait() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let concrete: Arc<DualRegistered> = p.get();
-    let trait_obj: Arc<dyn IThingB> = p.get::<dyn IThingB>();
+    let concrete: Arc<DualRegistered> = p.get().unwrap();
+    let trait_obj: Arc<dyn IThingB> = p.get::<dyn IThingB>().unwrap();
     assert_eq!(trait_obj.kind(), "dual");
     // Concrete is also usable as the trait
     let concrete_as_trait: Arc<dyn IThingB> = concrete;
@@ -161,8 +161,8 @@ impl IThingD for MultiTraitService {
 #[test]
 fn inject_multiple_traits() {
     let p = ServiceCollection::from_injected().build().unwrap();
-    let c: Arc<dyn IThingC> = p.get::<dyn IThingC>();
-    let d: Arc<dyn IThingD> = p.get::<dyn IThingD>();
+    let c: Arc<dyn IThingC> = p.get::<dyn IThingC>().unwrap();
+    let d: Arc<dyn IThingD> = p.get::<dyn IThingD>().unwrap();
     assert_eq!(c.c(), "c");
     assert_eq!(d.d(), "d");
 }
@@ -190,8 +190,8 @@ fn inject_on_impl_scoped() {
     let p = Arc::new(ServiceCollection::from_injected().build().unwrap());
     let scope1 = p.scope();
     let scope2 = p.scope();
-    let a: Arc<dyn IThingE> = scope1.get();
-    let b: Arc<dyn IThingE> = scope2.get();
+    let a: Arc<dyn IThingE> = scope1.get().unwrap();
+    let b: Arc<dyn IThingE> = scope2.get().unwrap();
     assert_eq!(a.e(), "scoped");
     assert_eq!(b.e(), "scoped");
     assert!(!Arc::ptr_eq(&a, &b));

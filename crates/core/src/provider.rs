@@ -1,327 +1,13 @@
 use crate::cache::{AnyService, LazyCache};
-use crate::entry::{IServiceResolver, ServiceEntry, ServiceFactory};
+use crate::entry::{
+    AsyncServiceFactory, IServiceResolver, ServiceDescriptor, ServiceEntry, ServiceFactory,
+    ServiceLifetime, ServiceStore,
+};
 use crate::error::RdiError;
-use crate::lifetime::ServiceLifetime;
-use crate::store::ServiceStore;
+use crate::validation::ValidationResolver;
 use std::any::{Any, TypeId};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock, RwLock, Weak};
-
-/// Validation resolver that tracks resolution chains for cycle detection
-/// and captive dependency detection (Singleton depending on Scoped).
-///
-/// Both checks run during `build()` (Phase 0) by executing singleton factories
-/// through this resolver. Captive detection covers the `get_any` (Arc) and
-/// `get_owned_any` (owned) paths — see [`Self::check_captive_dependency`] for
-/// the full mechanism, rationale, and the validation/runtime asymmetry.
-struct ValidationResolver<'a> {
-    store: &'a ServiceStore,
-    /// Cache keys currently being resolved (for cycle detection).
-    /// Uses `RwLock` because `IServiceResolver::get_any` takes `&self`
-    /// and the trait requires `Send + Sync`.
-    resolving: RwLock<HashSet<usize>>,
-    /// 解析栈：记录当前解析链中每个节点的 (cache_key, lifetime)，
-    /// 用于 captive dependency 检测（Singleton 依赖 Scoped）。
-    stack: RwLock<Vec<(usize, ServiceLifetime)>>,
-    /// TypeId → type_name map for error messages
-    type_names: &'a HashMap<TypeId, &'static str>,
-    /// Reusable instance cache — populated as factories execute during
-    /// validation so that Phase 2 (eager singleton init) can reuse the
-    /// results instead of re-executing factories (which would double-fire
-    /// side effects like counters).
-    /// 仅缓存 Singleton 实例；Transient/Scoped 实例不缓存，避免泄漏到 singleton_cache。
-    cache: &'a LazyCache,
-}
-
-impl<'a> ValidationResolver<'a> {
-    fn new(
-        store: &'a ServiceStore,
-        type_names: &'a HashMap<TypeId, &'static str>,
-        cache: &'a LazyCache,
-    ) -> Self {
-        Self {
-            store,
-            resolving: RwLock::new(HashSet::new()),
-            stack: RwLock::new(Vec::new()),
-            type_names,
-            cache,
-        }
-    }
-
-    fn get_type_name(&self, cache_key: usize) -> String {
-        self.store
-            .iter()
-            .find(|(_, entries)| entries.iter().any(|e| e.cache_key == cache_key))
-            .and_then(|(_, entries)| entries.first())
-            .map(|e| {
-                e.type_name
-                    .split("::")
-                    .last()
-                    .unwrap_or(e.type_name)
-                    .to_string()
-            })
-            .unwrap_or_else(|| format!("service {}", cache_key))
-    }
-
-    /// Captive dependency（囚徒依赖）检测。
-    ///
-    /// # 什么是 captive dependency
-    ///
-    /// 当一个 **Singleton** 服务依赖一个 **Scoped** 服务时，Scoped 实例会被
-    /// Singleton 永久捕获（captive）：Singleton 在 build 阶段创建并全局缓存，
-    /// 此时解析出的 Scoped 实例绑定到 root scope 的 `root_scoped_cache`，
-    /// 此后所有子 scope 都共享同一份 Scoped 实例——彻底丧失 scope 隔离语义。
-    ///
-    /// 这违背了 Scoped 生命周期"每 scope 独立"的设计契约，是典型的 DI 反模式，
-    /// 必须在 build 阶段拒绝。
-    ///
-    /// # 检测原理
-    ///
-    /// `stack` 字段记录当前解析链中每个节点的 `(cache_key, lifetime)`。
-    /// 每当解析一个服务时：
-    /// 1. 先调用本方法检查 captive（在执行工厂、压栈之前）
-    /// 2. 若当前 `entry` 是 Scoped，回溯 `stack` 查找是否存在 Singleton 祖先
-    /// 3. 命中则通过 `panic_any(RdiError::SingletonDependsOnScoped)` 传递错误
-    ///
-    /// 回溯查找的是**任意 Singleton 祖先**（非仅直接父节点），因此间接链
-    /// `Singleton → Transient → Scoped` 也能被检出。
-    ///
-    /// # 为何只检测 Scoped，不检测 Transient
-    ///
-    /// Transient 每次解析新建实例、永不缓存，不会被 Singleton "捕获"——
-    /// Singleton 持有的那一份 Transient 本就无共享语义，不构成 captive 问题。
-    /// 仅 Scoped 因其"scope 内共享 + 缓存"语义才会被 captive 破坏。
-    ///
-    /// # panic 传递机制
-    ///
-    /// 检测命中时通过 `std::panic::panic_any(RdiError::SingletonDependsOnScoped)`
-    /// 抛出错误值，由上层 [`Self::validate_dependencies`] 的
-    /// `std::panic::catch_unwind` 捕获，downcast 为 `RdiError` 后转为 `Err` 返回。
-    /// 这种 panic-as-error 模式是为了穿透工厂闭包的递归调用栈。
-    ///
-    /// # validation 与 runtime 的不对称（owned 路径）
-    ///
-    /// 本方法在 `get_any`（Arc 解析）和 `get_owned_any`（owned 解析）路径
-    /// **均会调用**。owned 路径虽然绕过缓存，但依赖图遍历不绕过——
-    /// ValidationResolver 的 `get_owned_any` 对 Singleton 也调工厂以遍历
-    /// 依赖图，从而检测 cycle 与 captive。这是 sound 的：
-    /// validation 是静态分析（遍历图找问题），runtime 才强制 owned-Singleton 禁令。
-    ///
-    /// # 参考
-    ///
-    /// - 对应错误：[`RdiError::SingletonDependsOnScoped`](crate::error::RdiError::SingletonDependsOnScoped)
-    /// - 调用点：`get_any` / `get_keyed_any` / `get_owned_any` / `get_keyed_owned_any`
-    /// - 测试：`tests/validation.rs`（Arc 路径）、`tests/owned.rs::captive_singleton_depends_on_scoped_owned_rejected`（owned 路径）
-    fn check_captive_dependency(&self, entry: &ServiceEntry) {
-        if entry.lifetime == ServiceLifetime::Scoped {
-            let stack = self.stack.read().unwrap();
-            if let Some(&(ancestor_ck, ServiceLifetime::Singleton)) = stack
-                .iter()
-                .find(|(_, lt)| *lt == ServiceLifetime::Singleton)
-            {
-                let singleton_name = self.get_type_name(ancestor_ck);
-                let scoped_name = self.get_type_name(entry.cache_key);
-                std::panic::panic_any(RdiError::SingletonDependsOnScoped {
-                    singleton: singleton_name,
-                    scoped: scoped_name,
-                });
-            }
-        }
-    }
-}
-
-impl<'a> IServiceResolver for ValidationResolver<'a> {
-    fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        // Find the entry by type_name
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
-
-        // Reuse cached instance if a prior validation pass already built it.
-        if let Some(cached) = self.cache.get(entry.cache_key) {
-            return Some(cached);
-        }
-
-        // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
-        self.check_captive_dependency(entry);
-
-        // Check for cycle: if already being resolved, we have a cycle
-        if self.resolving.read().unwrap().contains(&entry.cache_key) {
-            let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self
-                .resolving
-                .read()
-                .unwrap()
-                .iter()
-                .map(|&ck| self.get_type_name(ck))
-                .collect();
-            let cycle_desc = if chain.is_empty() {
-                type_name.clone()
-            } else {
-                format!("{} -> {}", chain.join(" -> "), type_name)
-            };
-            // Type-safe panic_any: validate_dependencies downcasts RdiError directly.
-            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
-        }
-
-        // Mark as resolving and push onto the lifetime tracking stack.
-        self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack
-            .write()
-            .unwrap()
-            .push((entry.cache_key, entry.lifetime));
-
-        // Execute the factory (this may recursively resolve dependencies)
-        // We catch panics to convert them to RdiError
-        let result = (entry.factory)(self as &dyn IServiceResolver);
-
-        // Pop the stack and mark as resolved.
-        self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
-
-        // 仅缓存 Singleton 实例：Transient/Scoped 实例不缓存，
-        // 避免泄漏到 singleton_cache 造成内存浪费与 build 阶段副作用残留。
-        if entry.lifetime == ServiceLifetime::Singleton {
-            self.cache.prefill(entry.cache_key, result.clone());
-        }
-
-        Some(result)
-    }
-
-    fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        // Find the entry by type_name + variant
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self
-            .store
-            .get(tid)?
-            .iter()
-            .find(|e| e.key.as_deref() == Some(variant))?;
-
-        // Reuse cached instance if available.
-        if let Some(cached) = self.cache.get(entry.cache_key) {
-            return Some(cached);
-        }
-
-        // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
-        self.check_captive_dependency(entry);
-
-        // Check for cycle
-        if self.resolving.read().unwrap().contains(&entry.cache_key) {
-            let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self
-                .resolving
-                .read()
-                .unwrap()
-                .iter()
-                .map(|&ck| self.get_type_name(ck))
-                .collect();
-            let cycle_desc = if chain.is_empty() {
-                type_name.clone()
-            } else {
-                format!("{} -> {}", chain.join(" -> "), type_name)
-            };
-            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
-        }
-
-        self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack
-            .write()
-            .unwrap()
-            .push((entry.cache_key, entry.lifetime));
-        let result = (entry.factory)(self as &dyn IServiceResolver);
-        self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
-
-        // 仅缓存 Singleton 实例，避免 Transient/Scoped 泄漏。
-        if entry.lifetime == ServiceLifetime::Singleton {
-            self.cache.prefill(entry.cache_key, result.clone());
-        }
-
-        Some(result)
-    }
-
-    /// Owned 解析（validation 路径）：与 `get_any` 相同的 captive/cycle 检测，
-    /// 但**不读写缓存**（owned 永不缓存，符合"仅缓存 Singleton"约定）。
-    ///
-    /// 与 runtime `get_owned_any` 的关键差异：此处对 Singleton 也调工厂
-    /// （遍历依赖图以检测 cycle/captive），runtime 才拒绝 owned-Singleton。
-    /// 此不对称是 sound 的：validation 是静态分析，runtime 强制 owned 禁令。
-    fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
-
-        // Captive dependency 检测：Singleton 依赖链中解析 Scoped 服务。
-        self.check_captive_dependency(entry);
-
-        // Check for cycle
-        if self.resolving.read().unwrap().contains(&entry.cache_key) {
-            let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self
-                .resolving
-                .read()
-                .unwrap()
-                .iter()
-                .map(|&ck| self.get_type_name(ck))
-                .collect();
-            let cycle_desc = if chain.is_empty() {
-                type_name.clone()
-            } else {
-                format!("{} -> {}", chain.join(" -> "), type_name)
-            };
-            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
-        }
-
-        self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack
-            .write()
-            .unwrap()
-            .push((entry.cache_key, entry.lifetime));
-        let result = (entry.factory)(self as &dyn IServiceResolver);
-        self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
-
-        // owned 永不缓存。
-        Some(result)
-    }
-
-    fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self
-            .store
-            .get(tid)?
-            .iter()
-            .find(|e| e.key.as_deref() == Some(variant))?;
-
-        self.check_captive_dependency(entry);
-
-        if self.resolving.read().unwrap().contains(&entry.cache_key) {
-            let type_name = self.get_type_name(entry.cache_key);
-            let chain: Vec<String> = self
-                .resolving
-                .read()
-                .unwrap()
-                .iter()
-                .map(|&ck| self.get_type_name(ck))
-                .collect();
-            let cycle_desc = if chain.is_empty() {
-                type_name.clone()
-            } else {
-                format!("{} -> {}", chain.join(" -> "), type_name)
-            };
-            std::panic::panic_any(RdiError::CircularDependency(cycle_desc));
-        }
-
-        self.resolving.write().unwrap().insert(entry.cache_key);
-        self.stack
-            .write()
-            .unwrap()
-            .push((entry.cache_key, entry.lifetime));
-        let result = (entry.factory)(self as &dyn IServiceResolver);
-        self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().remove(&entry.cache_key);
-
-        Some(result)
-    }
-}
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 
 pub struct ServiceProvider {
     /// Service registry. Shared across root + scope-derived providers via `Arc`.
@@ -351,6 +37,10 @@ pub struct ServiceProvider {
     /// out `Arc<ServiceProvider>` to services using `#[inject(provider)]`.
     /// **每个 provider 独立**：scope-derived provider 的 self_weak 指向自身。
     self_weak: OnceLock<Weak<ServiceProvider>>,
+    /// Cleanup callbacks for scoped services implementing [`Disposable`](crate::scope::Disposable).
+    /// Populated by [`Self::register_disposable`], drained by [`Self::dispose_scoped`].
+    /// **每个 provider 独立**：scope-derived provider 的 disposables 绑定到当前 scope。
+    disposables: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
 }
 
 impl ServiceProvider {
@@ -371,11 +61,11 @@ impl ServiceProvider {
         let singleton_cache = Arc::new(LazyCache::new());
         Self::validate_dependencies(&store, &singleton_cache)?;
 
-        // Phase 1: collect all singleton entries.
+        // Phase 1: collect all singleton entries (skip async — handled by build_async).
         let singleton_entries: Vec<(usize, ServiceFactory)> = store
             .values()
             .flat_map(|entries| entries.iter())
-            .filter(|e| e.lifetime == ServiceLifetime::Singleton)
+            .filter(|e| e.lifetime == ServiceLifetime::Singleton && e.async_factory.is_none())
             .map(|e| (e.cache_key, e.factory.clone()))
             .collect();
 
@@ -389,6 +79,7 @@ impl ServiceProvider {
             root_scoped_cache: LazyCache::new(),
             named: Arc::new(RwLock::new(HashMap::new())),
             self_weak: OnceLock::new(),
+            disposables: Mutex::new(Vec::new()),
         };
 
         for (ck, factory) in &singleton_entries {
@@ -400,6 +91,91 @@ impl ServiceProvider {
         }
 
         Ok(sp)
+    }
+
+    /// Build a `ServiceProvider` with async factory support.
+    ///
+    /// Async singleton factories are executed during build and their results
+    /// are cached. Async transient/scoped factories are stored for later
+    /// resolution via `get_async` / `get_keyed_async`.
+    ///
+    /// Returns `Arc<ServiceProvider>` so that `provider_arc()` works for
+    /// async resolution (async factories receive `Arc<ServiceProvider>`).
+    pub(crate) async fn new_async(
+        descriptors: Vec<ServiceDescriptor>,
+    ) -> Result<Arc<Self>, RdiError> {
+        // Build ServiceStore
+        let mut store = ServiceStore::new();
+        for (n, d) in descriptors.into_iter().enumerate() {
+            let e = ServiceEntry {
+                cache_key: n,
+                key: d.key,
+                type_name: d.type_name,
+                factory: d.factory,
+                async_factory: d.async_factory,
+                lifetime: d.lifetime,
+            };
+            store.entry(d.type_id).or_default().push(e);
+        }
+
+        // Build type_name → TypeId lookup
+        let mut type_map = HashMap::new();
+        for (&tid, entries) in &store {
+            if let Some(e) = entries.first() {
+                type_map.entry(e.type_name).or_insert(tid);
+            }
+        }
+
+        // Phase 0: Validate sync singleton dependencies (async singletons skipped).
+        let singleton_cache = Arc::new(LazyCache::new());
+        Self::validate_dependencies(&store, &singleton_cache)?;
+
+        // Phase 1: create the provider in an Arc (self_weak stays valid).
+        let sp_arc = Arc::new(Self {
+            store: Arc::new(store),
+            type_map: Arc::new(type_map),
+            singleton_cache,
+            root_scoped_cache: LazyCache::new(),
+            named: Arc::new(RwLock::new(HashMap::new())),
+            self_weak: OnceLock::new(),
+            disposables: Mutex::new(Vec::new()),
+        });
+        sp_arc
+            .self_weak
+            .get_or_init(|| Arc::downgrade(&sp_arc));
+
+        // Phase 2: eagerly execute sync singleton factories.
+        let singleton_entries: Vec<(usize, ServiceFactory)> = sp_arc
+            .store
+            .values()
+            .flat_map(|entries| entries.iter())
+            .filter(|e| e.lifetime == ServiceLifetime::Singleton && e.async_factory.is_none())
+            .map(|e| (e.cache_key, e.factory.clone()))
+            .collect();
+
+        for (ck, factory) in &singleton_entries {
+            let resolver = sp_arc.as_ref() as &dyn IServiceResolver;
+            let factory = factory.clone();
+            sp_arc
+                .singleton_cache
+                .get_or_init_with(*ck, move || factory(resolver));
+        }
+
+        // Phase 3: execute async singleton factories.
+        let async_singletons: Vec<(usize, AsyncServiceFactory)> = sp_arc
+            .store
+            .values()
+            .flat_map(|entries| entries.iter())
+            .filter(|e| e.lifetime == ServiceLifetime::Singleton && e.async_factory.is_some())
+            .map(|e| (e.cache_key, e.async_factory.clone().unwrap()))
+            .collect();
+
+        for (ck, async_factory) in async_singletons {
+            let result = async_factory(Arc::clone(&sp_arc)).await;
+            sp_arc.singleton_cache.get_or_init_with(ck, || result);
+        }
+
+        Ok(sp_arc)
     }
 
     /// 创建一个 scope 范围的 ServiceProvider，共享 store/type_map/singleton_cache/named，
@@ -419,6 +195,7 @@ impl ServiceProvider {
             root_scoped_cache: LazyCache::new(),
             named: Arc::clone(&parent.named),
             self_weak: OnceLock::new(),
+            disposables: Mutex::new(Vec::new()),
         };
         let arc = Arc::new(sp);
         let this: &Self = &arc;
@@ -426,7 +203,28 @@ impl ServiceProvider {
         arc
     }
 
-    /// Validate all dependencies: detect cycles.
+    /// Register a cleanup closure for a scoped service.
+    ///
+    /// Called by users who want to ensure their scoped services are cleaned up
+    /// deterministically when the scope ends. The closure is invoked when
+    /// [`Self::dispose_scoped`] is called (via [`Scope::dispose`](crate::scope::Scope::dispose)
+    /// or [`Scope`](crate::scope::Scope) Drop).
+    pub fn register_disposable(&self, cleanup: Box<dyn FnOnce() + Send>) {
+        self.disposables.lock().unwrap().push(cleanup);
+    }
+
+    /// Drain and execute all registered cleanup closures.
+    ///
+    /// Called by [`Scope::dispose`](crate::scope::Scope::dispose).
+    pub(crate) fn dispose_scoped(&self) {
+        let cleanup: Vec<Box<dyn FnOnce() + Send>> =
+            std::mem::take(&mut *self.disposables.lock().unwrap());
+        for f in cleanup {
+            f();
+        }
+    }
+
+    /// Validate all dependencies: detect cycles and captive dependencies.
     /// Instances built during validation are stored in `cache` so they can
     /// be reused by the subsequent eager-init phase.
     fn validate_dependencies(store: &ServiceStore, cache: &LazyCache) -> Result<(), RdiError> {
@@ -445,23 +243,42 @@ impl ServiceProvider {
         // the instances instead of re-executing the factories.
         for entries in store.values() {
             for entry in entries {
-                if entry.lifetime == ServiceLifetime::Singleton {
+                if entry.lifetime == ServiceLifetime::Singleton
+                    && entry.async_factory.is_none()
+                {
                     let resolver = ValidationResolver::new(store, &type_names, cache);
                     let type_name = entry.type_name;
-                    // Attempt to resolve - if there's a cycle or captive dependency,
-                    // ValidationResolver throws via panic_any(RdiError) and we downcast it here.
-                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+
+                    // `get_any` returns `None` on validation errors (cycle/captive);
+                    // the error is stored in `resolver.last_error` and retrieved via
+                    // `take_error()`. We still use `catch_unwind` to handle user
+                    // factory panics (triggered when `get_any` returns `None` from
+                    // a recursive resolution).
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         resolver.get_any(type_name)
-                    })) {
+                    }));
+
+                    // Check framework validation errors first (cycle/captive).
+                    if let Some(err) = resolver.take_error() {
+                        return Err(err);
+                    }
+
+                    match result {
                         Ok(_) => {}
                         Err(panic_info) => {
-                            // All framework-thrown panics use panic_any(RdiError):
-                            // CircularDependency + SingletonDependsOnScoped + FactoryPanic.
-                            if let Some(err) = panic_info.downcast_ref::<RdiError>() {
-                                return Err(err.clone());
-                            }
-                            // Unknown panic — re-panic to preserve original behavior.
-                            std::panic::panic_any(panic_info);
+                            // User factory panic — wrap in RdiError for consistent
+                            // error reporting.
+                            let payload = if let Some(s) = panic_info.downcast_ref::<String>() {
+                                s.clone()
+                            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                                s.to_string()
+                            } else {
+                                "unknown".to_string()
+                            };
+                            return Err(RdiError::FactoryPanic {
+                                service: type_name.to_string(),
+                                payload,
+                            });
                         }
                     }
                 }
@@ -472,10 +289,11 @@ impl ServiceProvider {
     }
 
     /// Resolve a service by type. Works uniformly for concrete types and trait objects.
-    /// Panics if not registered.
-    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
+    /// Returns `Err(RdiError::ServiceNotFound)` if not registered.
+    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
+        let type_name = std::any::type_name::<T>();
         self.try_get::<T>()
-            .unwrap_or_else(|| panic!("service not registered: {}", std::any::type_name::<T>()))
+            .ok_or(RdiError::ServiceNotFound(type_name))
     }
 
     /// Resolve a service by type, returning `None` if not registered.
@@ -483,26 +301,94 @@ impl ServiceProvider {
         self.try_get::<T>()
     }
 
-    /// Resolve a keyed service by type and key. Panics if not found.
-    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Arc<T> {
-        self.try_get_keyed::<T>(key).unwrap_or_else(|| {
-            panic!(
-                "keyed service not registered: {}:{}",
-                std::any::type_name::<T>(),
-                key
-            )
+    /// Resolve an async service (transient or scoped) by type.
+    ///
+    /// Calls the async factory stored in the service entry. Singletons are
+    /// resolved synchronously (already cached during `build_async`).
+    pub async fn get_async<T: ?Sized + Send + Sync + 'static>(
+        &self,
+    ) -> Result<Arc<T>, RdiError> {
+        let type_name = std::any::type_name::<T>();
+        let tid = TypeId::of::<T>();
+        let entry = self
+            .store
+            .get(&tid)
+            .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
+            .ok_or(RdiError::ServiceNotFound(type_name))?;
+
+        // Singletons are already cached during build_async — use sync path.
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return self.get::<T>();
+        }
+
+        if let Some(async_factory) = &entry.async_factory {
+            let provider_arc = self
+                .provider_arc()
+                .ok_or_else(|| RdiError::FactoryPanic {
+                    service: type_name.to_string(),
+                    payload: "provider_arc() returned None for async resolution".into(),
+                })?;
+            let arc_any = async_factory(provider_arc).await;
+            Self::extract(arc_any).ok_or(RdiError::ServiceNotFound(type_name))
+        } else {
+            self.get::<T>()
+        }
+    }
+
+    /// Resolve an async keyed service by type and key.
+    pub async fn get_keyed_async<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Arc<T>, RdiError> {
+        let type_name = std::any::type_name::<T>();
+        let tid = TypeId::of::<T>();
+        let entry = self
+            .store
+            .get(&tid)
+            .and_then(|entries| entries.iter().find(|e| e.key.as_deref() == Some(key)))
+            .ok_or(RdiError::KeyedServiceNotFound {
+                key: key.to_string(),
+                ty: type_name,
+            })?;
+
+        // Singletons are already cached during build_async — use sync path.
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return self.get_keyed::<T>(key);
+        }
+
+        if let Some(async_factory) = &entry.async_factory {
+            let provider_arc = self
+                .provider_arc()
+                .ok_or_else(|| RdiError::FactoryPanic {
+                    service: type_name.to_string(),
+                    payload: "provider_arc() returned None for async resolution".into(),
+                })?;
+            let arc_any = async_factory(provider_arc).await;
+            Self::extract(arc_any).ok_or(RdiError::KeyedServiceNotFound {
+                key: key.to_string(),
+                ty: type_name,
+            })
+        } else {
+            self.get_keyed::<T>(key)
+        }
+    }
+
+    /// Resolve a keyed service by type and key.
+    /// Returns `Err(RdiError::KeyedServiceNotFound)` if not found.
+    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
+        let type_name = std::any::type_name::<T>();
+        self.try_get_keyed::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
+            key: key.to_string(),
+            ty: type_name,
         })
     }
 
-    /// Resolve owned `T` (bypass cache, fresh each call). Panics if not
-    /// registered or the service is Singleton (shared instance cannot own).
-    pub fn get_owned<T: Send + Sync + 'static>(&self) -> T {
-        self.try_get_owned::<T>().unwrap_or_else(|| {
-            panic!(
-                "get_owned: not registered or Singleton: {}",
-                std::any::type_name::<T>()
-            )
-        })
+    /// Resolve owned `T` (bypass cache, fresh each call).
+    /// Returns `Err` if not registered or the service is Singleton.
+    pub fn get_owned<T: Send + Sync + 'static>(&self) -> Result<T, RdiError> {
+        let type_name = std::any::type_name::<T>();
+        self.try_get_owned::<T>()
+            .ok_or(RdiError::ServiceNotFound(type_name))
     }
 
     /// Resolve owned `T`, returning `None` if not registered or Singleton.
@@ -514,14 +400,13 @@ impl ServiceProvider {
         Arc::try_unwrap(arc_t).ok()
     }
 
-    /// Resolve owned keyed `T`. Panics if not found or Singleton.
-    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> T {
-        self.try_get_keyed_owned::<T>(key).unwrap_or_else(|| {
-            panic!(
-                "get_keyed_owned: not registered or Singleton: {}:{}",
-                std::any::type_name::<T>(),
-                key
-            )
+    /// Resolve owned keyed `T`.
+    /// Returns `Err` if not found or Singleton.
+    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Result<T, RdiError> {
+        let type_name = std::any::type_name::<T>();
+        self.try_get_keyed_owned::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
+            key: key.to_string(),
+            ty: type_name,
         })
     }
 
@@ -586,7 +471,7 @@ impl ServiceProvider {
     /// Resolve a service by type, panicking if not registered.
     /// MEDI-inspired naming (`GetRequiredService<T>()`).
     pub fn get_required_service<T: ?Sized + Send + Sync + 'static>(&self) -> Arc<T> {
-        self.get::<T>()
+        self.get::<T>().unwrap()
     }
 
     /// Return all registered instances of the given type.

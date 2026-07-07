@@ -81,7 +81,7 @@ fn vec_inject_collects_all_implementations() {
         .build()
         .unwrap();
 
-    let consumer: FooConsumer = p.get_owned();
+    let consumer: FooConsumer = p.get_owned().unwrap();
     assert_eq!(consumer.foos.len(), 3, "should collect default + 2 keyed");
 
     let names: Vec<&str> = consumer.foos.iter().map(|f| f.name()).collect();
@@ -105,7 +105,7 @@ fn vec_inject_empty_when_unregistered() {
         .build()
         .unwrap();
 
-    let consumer: EmptyFooConsumer = p.get_owned();
+    let consumer: EmptyFooConsumer = p.get_owned().unwrap();
     assert!(
         consumer.foos.is_empty(),
         "no IFoo registered → empty Vec, no panic"
@@ -134,7 +134,7 @@ fn vec_inject_concrete_type() {
         .build()
         .unwrap();
 
-    let consumer: WidgetConsumer = p.get_owned();
+    let consumer: WidgetConsumer = p.get_owned().unwrap();
     assert_eq!(consumer.widgets.len(), 2, "2 keyed Widgets collected");
 
     let ids: Vec<u32> = consumer.widgets.iter().map(|w| w.id).collect();
@@ -164,7 +164,7 @@ fn vec_inject_works_through_scope() {
         .into_arc();
 
     let scope = p.scope();
-    let consumer: ScopedFooConsumer = scope.get_owned();
+    let consumer: ScopedFooConsumer = scope.get_owned().unwrap();
     assert_eq!(consumer.foos.len(), 2, "1 singleton + 1 scoped");
 
     let names: Vec<&str> = consumer.foos.iter().map(|f| f.name()).collect();
