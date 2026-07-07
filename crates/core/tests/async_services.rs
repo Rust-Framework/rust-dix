@@ -244,3 +244,36 @@ async fn async_scoped_keyed() {
     let svc: Arc<common::MyService> = scope.get_keyed_async("s").await.unwrap();
     assert_eq!(svc.value, 7);
 }
+
+#[tokio::test]
+async fn async_scoped_concurrent_factory_executes_once() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+
+    let provider = ServiceCollection::new()
+        .async_scoped(|_| {
+            Box::pin(async {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                Arc::new(common::MyService { value: 99 })
+            })
+        })
+        .build_async()
+        .await
+        .unwrap();
+
+    let scope = provider.scope();
+    let s1 = scope.scope_provider().clone();
+    let s2 = scope.scope_provider().clone();
+
+    let (r1, r2) = tokio::join!(
+        async { s1.get_async::<common::MyService>().await },
+        async { s2.get_async::<common::MyService>().await },
+    );
+
+    let v1 = r1.unwrap();
+    let v2 = r2.unwrap();
+    assert_eq!(v1.value, 99);
+    assert_eq!(v2.value, 99);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1, "并发首次解析：async factory 应只执行一次");
+}

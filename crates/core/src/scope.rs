@@ -19,7 +19,7 @@ pub trait ScopeFactory: Send + Sync {
 
 /// A scoped service provider — created via [`ServiceProvider::scope`].
 ///
-/// 内部持有一个 scope 范围的 `ServiceProvider`（由 [`ServiceProvider::new_scope`] 派生），
+/// 内部持有一个 scope 范围的 `ServiceProvider`（由 `ServiceProvider::new_scope` 派生），
 /// 共享 root 的 store/singleton_cache/named，独立 `root_scoped_cache`。
 ///
 /// 所有解析方法委托给内嵌的 `scope_provider`，确保：

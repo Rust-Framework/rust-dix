@@ -40,7 +40,7 @@ pub struct ServiceProvider {
     /// **每个 provider 独立**：scope-derived provider 的 self_weak 指向自身。
     self_weak: OnceLock<Weak<ServiceProvider>>,
     /// Cleanup closures for scoped services registered via [`Self::register_disposable`].
-    /// Populated during factory execution, drained by [`Self::dispose_scoped`].
+    /// Populated during factory execution, drained by `Self::dispose_scoped`.
     /// **每个 provider 独立**：scope-derived provider 的 disposables 绑定到当前 scope。
     disposables: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
 }
@@ -216,7 +216,7 @@ impl ServiceProvider {
     ///
     /// Called by users who want to ensure their scoped services are cleaned up
     /// deterministically when the scope ends. The closure is invoked when
-    /// [`Self::dispose_scoped`] is called (via [`Scope::dispose`](crate::scope::Scope::dispose)
+    /// `Self::dispose_scoped` is called (via [`Scope::dispose`](crate::scope::Scope::dispose)
     /// or [`Scope`](crate::scope::Scope) Drop).
     pub fn register_disposable(&self, cleanup: Box<dyn FnOnce() + Send>) {
         self.disposables.lock().unwrap().push(cleanup);
@@ -337,22 +337,18 @@ impl ServiceProvider {
         match entry.lifetime {
             ServiceLifetime::Singleton => self.get::<T>(),
             ServiceLifetime::Scoped => {
-                // 先查 scope 缓存，命中则直接返回
-                if let Some(cached) = self.root_scoped_cache.get(entry.cache_key) {
-                    return Self::extract(cached).ok_or(RdiError::ServiceNotFound { ty: type_name, context: None });
-                }
-                // 未命中：调 async factory 并缓存
-                let async_factory = entry.async_factory.as_ref().ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
+                let async_factory = entry.async_factory.clone().ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
                 let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
                     service: type_name.to_string(),
                     payload: "provider_arc() returned None for async resolution".into(),
                 })?;
-                let arc_any = Self::run_async_factory_safely(type_name, async_factory, provider_arc).await?;
-                self.root_scoped_cache.prefill(entry.cache_key, arc_any.clone());
+                let arc_any = self.root_scoped_cache.get_or_init_with_async(entry.cache_key, || {
+                    Self::run_async_factory_safely(type_name, async_factory, provider_arc)
+                }).await?;
                 Self::extract(arc_any).ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
             }
             ServiceLifetime::Transient => {
-                if let Some(async_factory) = &entry.async_factory {
+                if let Some(async_factory) = entry.async_factory.clone() {
                     let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
                         service: type_name.to_string(),
                         payload: "provider_arc() returned None for async resolution".into(),
@@ -385,13 +381,7 @@ impl ServiceProvider {
         match entry.lifetime {
             ServiceLifetime::Singleton => self.get_keyed::<T>(key),
             ServiceLifetime::Scoped => {
-                if let Some(cached) = self.root_scoped_cache.get(entry.cache_key) {
-                    return Self::extract(cached).ok_or(RdiError::KeyedServiceNotFound {
-                        key: key.to_string(),
-                        ty: type_name,
-                    });
-                }
-                let async_factory = entry.async_factory.as_ref().ok_or(RdiError::KeyedServiceNotFound {
+                let async_factory = entry.async_factory.clone().ok_or(RdiError::KeyedServiceNotFound {
                     key: key.to_string(),
                     ty: type_name,
                 })?;
@@ -399,15 +389,16 @@ impl ServiceProvider {
                     service: type_name.to_string(),
                     payload: "provider_arc() returned None for async resolution".into(),
                 })?;
-                let arc_any = Self::run_async_factory_safely(type_name, async_factory, provider_arc).await?;
-                self.root_scoped_cache.prefill(entry.cache_key, arc_any.clone());
+                let arc_any = self.root_scoped_cache.get_or_init_with_async(entry.cache_key, || {
+                    Self::run_async_factory_safely(type_name, async_factory, provider_arc)
+                }).await?;
                 Self::extract(arc_any).ok_or(RdiError::KeyedServiceNotFound {
                     key: key.to_string(),
                     ty: type_name,
                 })
             }
             ServiceLifetime::Transient => {
-                if let Some(async_factory) = &entry.async_factory {
+                if let Some(async_factory) = entry.async_factory.clone() {
                     let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
                         service: type_name.to_string(),
                         payload: "provider_arc() returned None for async resolution".into(),
@@ -430,7 +421,7 @@ impl ServiceProvider {
     /// 需用 `catch_unwind` 捕获并转为类型安全的 `RdiError`。
     async fn run_async_factory_safely(
         type_name: &'static str,
-        async_factory: &AsyncServiceFactory,
+        async_factory: AsyncServiceFactory,
         provider_arc: Arc<ServiceProvider>,
     ) -> Result<AnyService, RdiError> {
         let fut = async_factory(provider_arc);

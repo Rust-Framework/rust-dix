@@ -181,26 +181,11 @@ impl IServiceResolver for ValidationResolver<'_> {
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
         let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
-
-        // Captive check first.
-        if self.check_captive_dependency(entry) {
+        // 与运行时一致：Singleton 不能 owned（create_owned_any_by_entry 返回 None）
+        if entry.lifetime == ServiceLifetime::Singleton {
             return None;
         }
-        // Cycle check.
-        if self.check_cycle(entry) {
-            return None;
-        }
-
-        self.resolving.write().unwrap().push(entry.cache_key);
-        self.stack
-            .write()
-            .unwrap()
-            .push((entry.cache_key, entry.lifetime));
-        let result = (entry.factory)(self as &dyn IServiceResolver);
-        self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().pop();
-
-        Some(result)
+        self.resolve_via_factory(entry)
     }
 
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
@@ -210,23 +195,9 @@ impl IServiceResolver for ValidationResolver<'_> {
             .get(tid)?
             .iter()
             .find(|e| e.key.as_deref() == Some(variant))?;
-
-        if self.check_captive_dependency(entry) {
+        if entry.lifetime == ServiceLifetime::Singleton {
             return None;
         }
-        if self.check_cycle(entry) {
-            return None;
-        }
-
-        self.resolving.write().unwrap().push(entry.cache_key);
-        self.stack
-            .write()
-            .unwrap()
-            .push((entry.cache_key, entry.lifetime));
-        let result = (entry.factory)(self as &dyn IServiceResolver);
-        self.stack.write().unwrap().pop();
-        self.resolving.write().unwrap().pop();
-
-        Some(result)
+        self.resolve_via_factory(entry)
     }
 }
