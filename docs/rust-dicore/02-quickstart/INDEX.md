@@ -16,15 +16,15 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.4"
+rust-dicore = "0.5"
 ```
 
 如果使用过程宏：
 
 ```toml
 [dependencies]
-rust-dicore = "0.4"
-rust-dicore-macros = "0.4"
+rust-dicore = "0.5"
+rust-dicore-macros = "0.5"
 ```
 
 ## 导入约定
@@ -75,6 +75,46 @@ logger.log("Hello, rust-dicore!");
 | 全局配置、连接池 | Singleton |
 | 请求上下文、事务 | Scoped |
 | 无状态轻量服务 | Transient |
+
+## 异步容器（推荐 Web 应用使用）
+
+当服务需要异步初始化（如数据库连接、Redis 客户端），使用 `build_async()`：
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+struct DbPool { conn_str: String }
+
+// 异步初始化数据库连接池
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async {
+        Arc::new(DbPool { conn_str: "pg://localhost".into() })
+    }))
+    .build_async()
+    .await
+    .unwrap();
+
+// 解析异步服务
+let pool: Arc<DbPool> = provider.get_async().await.unwrap();
+```
+
+混合同步与异步注册：
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
+    .singleton(|_| Arc::new(AppConfig { port: 8080 }))
+    .scoped(|r| {
+        let db = r.get::<DbPool>().unwrap();
+        Arc::new(UserRepository { db })
+    })
+    .build_async()
+    .await
+    .unwrap();
+```
+
+> **关键规则**：一旦使用 `async_*` 注册，必须调用 `build_async()` 而非 `build()`。
 
 ## 下一步
 

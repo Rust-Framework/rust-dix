@@ -263,7 +263,7 @@ fn main() {
     
     // 请求处理复用容器
     for req in requests {
-        let scope = provider.create_scope();
+        let scope = provider.scope();
         let handler = scope.get::<dyn IRequestHandler>();
         handler.handle(req);
     }
@@ -300,7 +300,7 @@ let session2: Arc<Session> = provider.get();
 
 ```rust
 // 从子 Scope 解析 Scoped 服务
-let scope = provider.create_scope();
+let scope = provider.scope();
 let session1: Arc<Session> = scope.get();
 let session2: Arc<Session> = scope.get();
 // session1 与 session2 是同一实例（子 Scope 内缓存）

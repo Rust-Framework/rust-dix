@@ -7,6 +7,7 @@
 | 小节 | 内容 |
 |------|------|
 | [用法指南与决策矩阵](usage-guide.md) | 导入约定、场景推荐、简洁性技巧（首选阅读） |
+| [业务场景实战](business-scenarios.md) | Web 应用、电商、多租户、插件系统、TDD 完整示例 |
 | [面向接口开发清单](interface-checklist.md) | 核心规则速查 |
 | [常见陷阱与排查](common-pitfalls.md) | 高频错误 |
 | [性能优化建议](performance-tips.md) | 性能建议 |

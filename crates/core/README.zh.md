@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.4"
+rust-dicore = "0.5"
 ```
 
 ---
@@ -42,11 +42,11 @@ let svc = MyService::new(
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))
-    .transient(|p| Arc::new(MyService::new(p.get(), p.get())))
+    .transient(|p| Arc::new(MyService::new(p.get().unwrap(), p.get().unwrap())))
     .build()
     .unwrap();
 
-let svc: Arc<MyService> = provider.get();
+let svc: Arc<MyService> = provider.get().unwrap();
 ```
 
 **2. 你需要为测试替换实现**
@@ -58,7 +58,7 @@ let svc: Arc<MyService> = provider.get();
 fn test_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MockDatabase::new()))
-        .transient(|p| Arc::new(MyApi::new(p.get())))
+        .transient(|p| Arc::new(MyApi::new(p.get().unwrap())))
         .build()
         .unwrap()
 }
@@ -100,10 +100,10 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
-let session: Arc<dyn Strategy> = provider.create_scope().get_keyed("session");
-let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh");
-let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh");  // 不同实例
+let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
+let session: Arc<dyn Strategy> = provider.scope().get_keyed("session").unwrap();
+let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();
+let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同实例
 ```
 
 **5. 你在构建插件 / 模块化系统**
@@ -139,7 +139,7 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh");  // 不同实例
 ```rust
 ServiceCollection::new()
     .singleton(|_| Arc::new(Pool::new()))
-    .transient(|p| Arc::new(Repo::new(p.get::<Pool>())))
+    .transient(|p| Arc::new(Repo::new(p.get::<Pool>().unwrap())))
     .build()
     .unwrap();
 ```
@@ -203,24 +203,23 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 
 | 方法 | 返回 | 行为 |
 |--------|---------|------|
-| `.get::<T>()` | `Arc<T>` | 未注册则 panic |
-| `.get_service::<T>()` | `Option<Arc<T>>` | 未注册返回 `None` |
-| `.get_required_service::<T>()` | `Arc<T>` | 带描述信息的 panic |
-| `.get_keyed::<T>(key)` | `Arc<T>` | 找不到 key 则 panic |
+| `.get::<T>()` | `Result<Arc<T>, RdiError>` | 未注册返回 Err；必选服务用 `.unwrap()` |
+| `.get_optional::<T>()` | `Option<Arc<T>>` | 未注册返回 `None` |
+| `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | 找不到 key 返回 Err；必选 key 用 `.unwrap()` |
 | `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | 找不到 key 返回 `None` |
 | `.get_all::<T>()` | `Vec<Arc<T>>` | 所有已注册实例 |
-| `.get_named::<T>(name)` | `Arc<T>` | 命名解析（跨 DLL） |
+| `.get_named::<T>(name)` | `Option<Arc<T>>` | 命名解析（跨 DLL），未注册返回 `None` |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | 命名解析，不 panic |
-| `.get_owned::<T>()` | `T` | Owned 实例；Singleton 会 panic |
+| `.get_owned::<T>()` | `Result<T, RdiError>` | Owned 实例；Singleton 返回 Err；Transient/Scoped 用 `.unwrap()` |
 | `.try_get_owned::<T>()` | `Option<T>` | 未注册或 Singleton 返回 `None` |
-| `.get_keyed_owned::<T>(key)` | `T` | Owned 键控实例；Singleton 会 panic |
-| `.create_scope()` | `Scope` | 新建作用域 |
+| `.get_keyed_owned::<T>(key)` | `Result<T, RdiError>` | Owned 键控实例；Singleton 返回 Err |
+| `.scope()` | `Scope` | 新建作用域 |
 
 `T` 支持具体类型和 trait object：
 
 ```rust
-let svc: Arc<MyService> = provider.get();
-let plugin: Arc<dyn IPlugin> = provider.get();
+let svc: Arc<MyService> = provider.get().unwrap();
+let plugin: Arc<dyn IPlugin> = provider.get().unwrap();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
 
@@ -244,7 +243,7 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let mut ctx: DbContext = provider.get_owned();
+let mut ctx: DbContext = provider.get_owned().unwrap();
 ctx.add();                 // ✓ &mut self — 无锁无 unsafe
 assert_eq!(ctx.total(), 1);
 ```
@@ -268,7 +267,7 @@ struct Handler {
     logger: Arc<Logger>,      // shared → get
 }
 // ...
-let mut h: Handler = provider.get_owned();
+let mut h: Handler = provider.get_owned().unwrap();
 h.ctx.add();                 // ✓ owned 字段可变
 ```
 
@@ -280,6 +279,89 @@ h.ctx.add();                 // ✓ owned 字段可变
 
 ---
 
+### 异步支持（`build_async`）
+
+需要异步初始化的服务（数据库连接、网络 I/O、配置加载），使用 `build_async()` 和 `async_*` 注册方法。
+
+#### 注册
+
+| 方法 | 生命周期 | 使用场景 |
+|------|---------|---------|
+| `.async_singleton(f)` | Singleton | 异步初始化，全局共享（DB 连接池、Redis） |
+| `.async_scoped(f)` | Scoped | 异步初始化，Scope 内共享 |
+| `.async_transient(f)` | Transient | 异步初始化，每次新建 |
+| `.async_keyed_singleton(k, f)` | Singleton keyed | 异步初始化，命名实例 |
+| `.async_keyed_scoped(k, f)` | Scoped keyed | 异步初始化，Scope 内命名实例 |
+| `.async_keyed_transient(k, f)` | Transient keyed | 异步初始化，每次新建命名实例 |
+
+异步工厂接收 `Arc<ServiceProvider>`，返回 pinned future：
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|p: Arc<ServiceProvider>| Box::pin(async move {
+        let config: Arc<AppConfig> = p.get().unwrap();
+        Arc::new(DbPool::connect(&config.conn_str).await)
+    }))
+    .async_keyed_singleton::<dyn IPaymentGateway>("wechat", |_| Box::pin(async {
+        Arc::new(WechatPay::init().await) as Arc<dyn IPaymentGateway>
+    }))
+    .build_async()
+    .await
+    .unwrap();
+```
+
+#### 解析
+
+解析异步注册的服务使用 `get_async()` / `get_keyed_async()`：
+
+```rust
+let pool: Arc<DbPool> = provider.get_async().await.unwrap();
+let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await.unwrap();
+```
+
+同步服务仍可使用 `get()`。异步方法仅用于 `async_*` 注册的服务。
+
+#### 混合同步与异步
+
+可在同一集合中混合同步和异步注册。`build_async()` 期间，同步 Singleton 与异步 Singleton 一起验证并初始化：
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
+    .singleton(|_| Arc::new(AppConfig::new()))       // 同步 OK
+    .scoped(|r| {                                     // 同步 OK
+        let db = r.get::<DbPool>().unwrap();
+        Arc::new(UserRepository { db })
+    })
+    .build_async()
+    .await
+    .unwrap();
+```
+
+**关键规则**：一旦使用任何 `async_*` 注册，必须调用 `build_async()` 而非 `build()`。混合使用是支持的——同步 Singleton 与异步服务一起验证和初始化。
+
+#### 异步 + Scope 的请求级模式
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
+    .scoped(|r| {
+        let db = r.get::<DbPool>().unwrap();
+        Arc::new(UserRepository { db })
+    })
+    .build_async().await.unwrap();
+
+// 每个请求独立 Scope
+fn handle_request(provider: &Arc<ServiceProvider>) {
+    let scope = provider.scope();
+    let repo: Arc<UserRepository> = scope.get().unwrap();
+    // ... 处理请求 ...
+    // scope 离开作用域 → scoped 实例释放
+}
+```
+
+---
+
 ### 在哪些场景下灵活应用？
 
 #### 🔹 三层架构（Controller → Service → Repository）
@@ -287,9 +369,9 @@ h.ctx.add();                 // ✓ owned 字段可变
 ```rust
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(DbPool::new(&config)))
-    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>())))
-    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>())))
-    .transient(|p| Arc::new(UserController::new(p.get::<UserService>())))
+    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>().unwrap())))
+    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>().unwrap())))
+    .transient(|p| Arc::new(UserController::new(p.get::<UserService>().unwrap())))
     .build()
     .unwrap();
 ```
@@ -328,9 +410,9 @@ struct OrderService {
 
 impl OrderService {
     fn checkout(&self, method: &str, amount: f64) {
-        let gateway: Arc<dyn PaymentGateway> = self.resolver
+        let gateway: Arc<dyn PaymentGateway> = self.provider
             .try_get_keyed(method)
-            .unwrap_or_else(|| self.resolver.get());  // 回退默认
+            .unwrap_or_else(|| self.provider.get().unwrap());  // 回退默认
         gateway.charge(amount);
     }
 }
@@ -345,9 +427,9 @@ impl OrderService {
 
 ```rust
 fn handle_request(container: &ServiceProvider) {
-    let scope = container.create_scope();
-    let ctx: Arc<RequestContext> = scope.get();
-    let svc: Arc<MyService> = scope.get();
+    let scope = container.scope();
+    let ctx: Arc<RequestContext> = scope.get().unwrap();
+    let svc: Arc<MyService> = scope.get().unwrap();
     // ctx 和 MyService 共享同一个 scope，scoped 服务被缓存
     // scope 离开作用域时自动释放
 }
@@ -380,7 +462,7 @@ let wrapper = ServiceProviderWrapper::new(plugin_provider, host_provider);
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(EventBus::new()))
     .build().unwrap();
-provider.register_named("event_bus", provider.get::<EventBus>());
+provider.register_named("event_bus", provider.get::<EventBus>().unwrap());
 
 // 插件（独立编译的 cdylib）
 let bus = host.get_named::<EventBus>("event_bus");

@@ -51,7 +51,7 @@ panic: keyed service not registered: dyn IPayGateway:wechat
 
 ```rust
 // 检查 key 是否正确
-.keyed::<dyn IPayGateway>("wechat", ...)  // 注册 key = "wechat"
+.keyed_singleton::<dyn IPayGateway>("wechat", ...)  // 注册 key = "wechat"
 provider.get_keyed::<dyn IPayGateway>("wechat");  // 解析 key = "wechat"
 
 // 安全解析
@@ -165,13 +165,13 @@ let s2: Arc<Session> = provider.get();  // s1 == s2（同一根 scope 实例）
 需要请求级隔离时，必须创建子 `Scope`：
 
 ```rust
-let scope = provider.create_scope();
-let s1: Arc<Session> = scope.get();
-let s2: Arc<Session> = scope.get();
+let scope = provider.scope();
+let s1: Arc<Session> = scope.get().unwrap();
+let s2: Arc<Session> = scope.get().unwrap();
 // s1 == s2（子 Scope 内缓存）
 
-let scope2 = provider.create_scope();
-let s3: Arc<Session> = scope2.get();
+let scope2 = provider.scope();
+let s3: Arc<Session> = scope2.get().unwrap();
 // s3 != s1（跨子 Scope 独立）
 ```
 
@@ -401,7 +401,7 @@ impl IUserHandler for UserHandler {
 | `service not registered` | TypeId 不匹配 | 检查注册是否 `::<dyn Trait>` |
 | `keyed service not registered` | key 错误或未注册 | 检查 key 拼写 |
 | `SingletonDependsOnScoped` | Singleton 依赖 Scoped | build 阶段已拒绝，改 Singleton 只依赖 Singleton |
-| 根级 Scoped 不随请求变化 | root_scoped_cache 持久缓存 | 改用 `provider.create_scope()` 子 Scope 解析 |
+| 根级 Scoped 不随请求变化 | root_scoped_cache 持久缓存 | 改用 `provider.scope()` 子 Scope 解析 |
 | 栈溢出 | 循环依赖 | 重构或延迟解析 |
 | 编译失败 | 元组结构体 | 改命名结构体 |
 | `duplicate key` | key 重复 | 确保 key 唯一 |

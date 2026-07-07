@@ -44,9 +44,9 @@ let provider = ServiceCollection::new()
     // 默认策略（singleton 注册，无 key）
     .singleton::<dyn IPaymentGateway>(|_| Arc::new(WechatPay))
     // 替代策略（keyed 注册）
-    .keyed::<dyn IPaymentGateway>("wechat", |_| Arc::new(WechatPay))
-    .keyed::<dyn IPaymentGateway>("alipay", |_| Arc::new(Alipay))
-    .keyed::<dyn IPaymentGateway>("credit", |_| Arc::new(CreditCardPay))
+    .keyed_singleton::<dyn IPaymentGateway>("wechat", |_| Arc::new(WechatPay))
+    .keyed_singleton::<dyn IPaymentGateway>("alipay", |_| Arc::new(Alipay))
+    .keyed_singleton::<dyn IPaymentGateway>("credit", |_| Arc::new(CreditCardPay))
     .build()
     .unwrap();
 ```
@@ -55,11 +55,11 @@ let provider = ServiceCollection::new()
 
 ```rust
 // 默认解析
-let default: Arc<dyn IPaymentGateway> = provider.get();
+let default: Arc<dyn IPaymentGateway> = provider.get().unwrap();
 assert_eq!(default.name(), "wechat");
 
 // 按名称选择
-let alipay: Arc<dyn IPaymentGateway> = provider.get_keyed("alipay");
+let alipay: Arc<dyn IPaymentGateway> = provider.get_keyed("alipay").unwrap();
 assert_eq!(alipay.name(), "alipay");
 
 // 安全解析（可选）
@@ -88,8 +88,8 @@ for gateway in &all {
 ```rust
 ServiceCollection::new()
     .singleton::<dyn Trait>(|_| Arc::new(DefaultImpl))  // 默认
-    .keyed::<dyn Trait>("alt1", |_| Arc::new(AltImpl1))  // 替代
-    .keyed::<dyn Trait>("alt2", |_| Arc::new(AltImpl2))
+    .keyed_singleton::<dyn Trait>("alt1", |_| Arc::new(AltImpl1))  // 替代
+    .keyed_singleton::<dyn Trait>("alt2", |_| Arc::new(AltImpl2))
     .build()
 ```
 
@@ -100,9 +100,9 @@ ServiceCollection::new()
 
 ```rust
 ServiceCollection::new()
-    .keyed::<dyn Trait>("impl1", |_| Arc::new(Impl1))
-    .keyed::<dyn Trait>("impl2", |_| Arc::new(Impl2))
-    .keyed::<dyn Trait>("impl3", |_| Arc::new(Impl3))
+    .keyed_singleton::<dyn Trait>("impl1", |_| Arc::new(Impl1))
+    .keyed_singleton::<dyn Trait>("impl2", |_| Arc::new(Impl2))
+    .keyed_singleton::<dyn Trait>("impl3", |_| Arc::new(Impl3))
     .build()
 ```
 
@@ -122,7 +122,7 @@ impl PaymentService {
         // 尝试按指定方法获取，失败则回退默认
         let gateway: Arc<dyn IPaymentGateway> = 
             self.provider.try_get_keyed(method)
-                .unwrap_or_else(|| self.provider.get());
+                .unwrap_or_else(|| self.provider.get().unwrap());
         gateway.pay(amount)
     }
 }
@@ -169,7 +169,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 按租户选择存储
-let storage: Arc<dyn IStorage> = provider.get_keyed(tenant_id);
+let storage: Arc<dyn IStorage> = provider.get_keyed(tenant_id).unwrap();
 storage.save(tenant_id, data);
 ```
 
@@ -177,7 +177,7 @@ storage.save(tenant_id, data);
 
 | 方法 | 生命周期 | 用途 |
 |-----|---------|------|
-| `keyed::<T>(k, f)` | Singleton | 全局共享的策略 |
+| `keyed_singleton::<T>(k, f)` | Singleton | 全局共享的策略 |
 | `keyed_transient::<T>(k, f)` | Transient | 每次创建的策略 |
 | `keyed_scoped::<T>(k, f)` | Scoped | Scope 内共享的策略 |
 

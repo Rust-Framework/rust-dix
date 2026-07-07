@@ -220,7 +220,19 @@ impl ServiceCollection {
     pub async fn build_async(
         self,
     ) -> Result<Arc<crate::provider::ServiceProvider>, crate::error::RdiError> {
-        crate::provider::ServiceProvider::new_async(self.descriptors).await
+        let mut s = crate::entry::ServiceStore::new();
+        for (n, d) in self.descriptors.into_iter().enumerate() {
+            let e = crate::entry::ServiceEntry {
+                cache_key: n,
+                key: d.key,
+                type_name: d.type_name,
+                factory: d.factory,
+                async_factory: d.async_factory,
+                lifetime: d.lifetime,
+            };
+            s.entry(d.type_id).or_default().push(e);
+        }
+        crate::provider::ServiceProvider::new_async(s).await
     }
 
     /// Build a `ServiceCollection` from all `#[rust_dicore::inject]` annotations

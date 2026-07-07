@@ -73,9 +73,11 @@ struct Config { port: u16 }
 struct PgUserRepo;
 #[inject] impl IUserRepo for PgUserRepo { /* ... */ }
 
-// 场景 3：多实现路由 —— keyed
-#[inject(keyed = "wechat")] impl IPayGateway for WechatPay { /* ... */ }
-#[inject(keyed = "alipay")] impl IPayGateway for AlipayPay { /* ... */ }
+// 场景 3：多实现路由 —— keyed 手动注册（keyed 不支持 #[inject] 自动注册）
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IPayGateway>("wechat", |_| Arc::new(WechatPay))
+    .keyed_singleton::<dyn IPayGateway>("alipay", |_| Arc::new(AlipayPay))
+    .build()?;
 
 // 场景 5：已有实例 —— singleton_value 自动 Arc
 let provider = ServiceCollection::new()
@@ -84,7 +86,7 @@ let provider = ServiceCollection::new()
 
 // 场景 7：复杂工厂 —— 手动闭包
 let provider = ServiceCollection::new()
-    .singleton(|p| Arc::new(Pool::connect(&p.get::<Config>().url)))
+    .singleton(|p| Arc::new(Pool::connect(&p.get::<Config>().unwrap().url)))
     .build()?;
 ```
 
@@ -170,8 +172,8 @@ impl OrderService {
 // 注册时用闭包调用构造函数
 let provider = ServiceCollection::new()
     .singleton(|p| Arc::new(OrderService::new(
-        p.get(),
-        p.get::<Config>().threshold,
+        p.get().unwrap(),
+        p.get::<Config>().unwrap().threshold,
     )))
     .build()?;
 ```
@@ -303,8 +305,8 @@ impl OrderService {
 fn build() -> Result<rust_dicore::ServiceProvider, rust_dicore::RdiError> {
     rust_dicore::ServiceCollection::new()
         .singleton(|p| Arc::new(OrderService::new(
-            p.get::<dyn IOrderRepo>(),
-            p.get::<dyn ILogger>(),
+            p.get::<dyn IOrderRepo>().unwrap(),
+            p.get::<dyn ILogger>().unwrap(),
         )))
         .singleton::<dyn IOrderRepo>(|_| Arc::new(PgOrderRepo))
         .singleton::<dyn ILogger>(|_| Arc::new(ConsoleLogger))
@@ -331,7 +333,7 @@ impl OrderService {
 
 fn build() -> Result<ServiceProvider, RdiError> {
     ServiceCollection::new()
-        .singleton(|p| Arc::new(OrderService::new(p.get(), p.get())))
+        .singleton(|p| Arc::new(OrderService::new(p.get().unwrap(), p.get().unwrap())))
         .singleton::<dyn IOrderRepo>(|_| Arc::new(PgOrderRepo))
         .singleton::<dyn ILogger>(|_| Arc::new(ConsoleLogger))
         .build()

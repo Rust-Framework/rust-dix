@@ -246,6 +246,7 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 
 - [crates/core — core library docs](./crates/core/README.md)
 - [crates/macros — procedural macro docs](./crates/macros/README.md)
+- [Business scenario tutorials](docs/rust-dicore/08-best-practices/business-scenarios.md) — real-world patterns
 - [Integration tests](crates/core/tests/) — real-world usage patterns
 
 ## License

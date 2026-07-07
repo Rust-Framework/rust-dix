@@ -118,15 +118,15 @@ let logger: Arc<dyn ILogger> = provider.get();  // panic: TypeId 不匹配
 | 场景 | 注册方式 |
 |------|---------|
 | 默认策略 | `.singleton::<dyn Trait>(...)` |
-| 替代策略 | `.keyed::<dyn Trait>("name", ...)` |
+| 替代策略 | `.keyed_singleton::<dyn Trait>("name", ...)` |
 | 批量获取 | `.get_all::<dyn Trait>()` |
 
 ```rust
 // ✅ 多实现注册
 ServiceCollection::new()
     .singleton::<dyn IPayGateway>(|_| Arc::new(WechatPay))  // 默认
-    .keyed::<dyn IPayGateway>("wechat", |_| Arc::new(WechatPay))
-    .keyed::<dyn IPayGateway>("alipay", |_| Arc::new(Alipay))
+    .keyed_singleton::<dyn IPayGateway>("wechat", |_| Arc::new(WechatPay))
+    .keyed_singleton::<dyn IPayGateway>("alipay", |_| Arc::new(Alipay))
     .build()
     .unwrap();
 ```
@@ -237,9 +237,9 @@ fn handle(req: Request, provider: &ServiceProvider) {
 ```rust
 // ✅ 正确：Web 请求处理
 fn handle_request(provider: &Arc<ServiceProvider>, req: Request) {
-    let scope = provider.create_scope();
-    let uow: Arc<UnitOfWork> = scope.get();  // Scope 内共享
-    let handler: Arc<dyn IRequestHandler> = scope.get();
+    let scope = provider.scope();
+    let uow: Arc<UnitOfWork> = scope.get().unwrap();  // Scope 内共享
+    let handler: Arc<dyn IRequestHandler> = scope.get().unwrap();
     handler.handle(&uow, req);
 }
 
@@ -249,9 +249,9 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let session: Arc<Session> = provider.get();   // 缓存在 root_scoped_cache
-let session2: Arc<Session> = provider.get();  // session == session2（根 scope 单例语义）
-// 根级 Scoped 不会随请求变化，需要请求级隔离必须用 create_scope()
+let session: Arc<Session> = provider.get().unwrap();   // 缓存在 root_scoped_cache
+let session2: Arc<Session> = provider.get().unwrap();  // session == session2（根 scope 单例语义）
+// 根级 Scoped 不会随请求变化，需要请求级隔离必须用 scope()
 ```
 
 ## 五、测试规则

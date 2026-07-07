@@ -30,7 +30,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 解析为 dyn Trait
-let logger: Arc<dyn ILogger> = provider.get();
+let logger: Arc<dyn ILogger> = provider.get().unwrap();
 logger.log("hello");
 ```
 
@@ -44,7 +44,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // ❌ 解析为 trait
-let logger: Arc<dyn ILogger> = provider.get();  // panic: TypeId 不匹配
+let logger: Arc<dyn ILogger> = provider.get().unwrap();  // panic: TypeId 不匹配
 ```
 
 ## 注册语法详解
@@ -60,7 +60,7 @@ ServiceCollection::new()
     // Transient
     .transient::<dyn Trait>(|_| Arc::new(Impl))
     // Keyed
-    .keyed::<dyn Trait>("name", |_| Arc::new(Impl))
+    .keyed_singleton::<dyn Trait>("name", |_| Arc::new(Impl))
     .build()
     .unwrap();
 ```
@@ -84,7 +84,7 @@ let provider = ServiceCollection::from_injected()
     .build()
     .unwrap();
 
-let logger: Arc<dyn ILogger> = provider.get();
+let logger: Arc<dyn ILogger> = provider.get().unwrap();
 ```
 
 ### 多接口注册
@@ -107,8 +107,8 @@ impl IReader for FileStream { fn read(&self) -> String { "data" } }
 impl IWriter for FileStream { fn write(&self, data: &str) { println!("{}", data); } }
 
 // 分别解析
-let reader: Arc<dyn IReader> = provider.get();
-let writer: Arc<dyn IWriter> = provider.get();
+let reader: Arc<dyn IReader> = provider.get().unwrap();
+let writer: Arc<dyn IWriter> = provider.get().unwrap();
 ```
 
 ## 解析 API
@@ -117,7 +117,7 @@ let writer: Arc<dyn IWriter> = provider.get();
 
 ```rust
 // get() / get_required_service()
-let logger: Arc<dyn ILogger> = provider.get();
+let logger: Arc<dyn ILogger> = provider.get().unwrap();
 // 未注册时 panic: "service not registered: dyn ILogger"
 ```
 
@@ -135,7 +135,7 @@ if let Some(log) = logger {
 
 ```rust
 // get_keyed()
-let wechat: Arc<dyn IPayGateway> = provider.get_keyed("wechat");
+let wechat: Arc<dyn IPayGateway> = provider.get_keyed("wechat").unwrap();
 
 // try_get_keyed()
 let maybe: Option<Arc<dyn IPayGateway>> = provider.try_get_keyed("unknown");
@@ -176,7 +176,7 @@ pub trait IServiceResolver: Send + Sync {
 ServiceCollection::new()
     .singleton::<dyn IConfig>(|_| Arc::new(AppConfig))
     .singleton::<dyn ILogger>(|r| {
-        let config: Arc<dyn IConfig> = r.get();  // 解析依赖
+        let config: Arc<dyn IConfig> = r.get().unwrap();  // 解析依赖
         Arc::new(FileLogger { level: config.level() })
     })
     .build()

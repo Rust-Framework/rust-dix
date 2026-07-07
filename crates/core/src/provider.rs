@@ -1,6 +1,6 @@
 use crate::cache::{AnyService, LazyCache};
 use crate::entry::{
-    AsyncServiceFactory, IServiceResolver, ServiceDescriptor, ServiceEntry, ServiceFactory,
+    AsyncServiceFactory, IServiceResolver, ServiceEntry, ServiceFactory,
     ServiceLifetime, ServiceStore,
 };
 use crate::error::RdiError;
@@ -55,25 +55,11 @@ impl ServiceProvider {
             }
         }
 
-        // Phase 0: Validate dependencies (cycle detection).
-        // The validation resolver executes singleton factories to detect
-        // cycles, and caches the resulting instances so Phase 2 can reuse
-        // them instead of re-executing the factories (which would double-fire
-        // side effects like counters / log lines).
+        // Phase 0: Validate dependencies (cycle detection, captive dependency).
         let singleton_cache = Arc::new(LazyCache::new());
         Self::validate_dependencies(&store, &singleton_cache)?;
 
-        // Phase 1: collect all singleton entries (skip async — handled by build_async).
-        let singleton_entries: Vec<(usize, ServiceFactory)> = store
-            .values()
-            .flat_map(|entries| entries.iter())
-            .filter(|e| e.lifetime == ServiceLifetime::Singleton && e.async_factory.is_none())
-            .map(|e| (e.cache_key, e.factory.clone()))
-            .collect();
-
-        // Phase 2: create the provider in an Arc and initialize self_weak.
-        // `build()` returns `Arc<ServiceProvider>` so `provider_arc()` works
-        // out of the box — no `into_arc()` step needed.
+        // Phase 1: create the provider in an Arc and initialize self_weak.
         let sp_arc = Arc::new(Self {
             store: Arc::new(store),
             type_map: Arc::new(type_map),
@@ -87,73 +73,15 @@ impl ServiceProvider {
             .self_weak
             .get_or_init(|| Arc::downgrade(&sp_arc));
 
-        // Phase 3: eagerly execute sync singleton factories.
-        // Reuse instances already built during validation; only execute
-        // factories whose results are not yet cached.
-        for (ck, factory) in &singleton_entries {
-            // LazyCache::get_or_init_with 内部查缓存，validation 已构建的跳过。
-            let resolver = sp_arc.as_ref() as &dyn IServiceResolver;
-            let factory = factory.clone();
-            sp_arc
-                .singleton_cache
-                .get_or_init_with(*ck, move || factory(resolver));
-        }
-
+        Self::init_sync_singletons(&sp_arc);
         Ok(sp_arc)
     }
 
-    /// Build a `ServiceProvider` with async factory support.
+    /// Collect sync singleton entries and eagerly execute their factories.
     ///
-    /// Async singleton factories are executed during build and their results
-    /// are cached. Async transient/scoped factories are stored for later
-    /// resolution via `get_async` / `get_keyed_async`.
-    ///
-    /// Returns `Arc<ServiceProvider>` so that `provider_arc()` works for
-    /// async resolution (async factories receive `Arc<ServiceProvider>`).
-    pub(crate) async fn new_async(
-        descriptors: Vec<ServiceDescriptor>,
-    ) -> Result<Arc<Self>, RdiError> {
-        // Build ServiceStore
-        let mut store = ServiceStore::new();
-        for (n, d) in descriptors.into_iter().enumerate() {
-            let e = ServiceEntry {
-                cache_key: n,
-                key: d.key,
-                type_name: d.type_name,
-                factory: d.factory,
-                async_factory: d.async_factory,
-                lifetime: d.lifetime,
-            };
-            store.entry(d.type_id).or_default().push(e);
-        }
-
-        // Build type_name → TypeId lookup
-        let mut type_map = HashMap::new();
-        for (&tid, entries) in &store {
-            if let Some(e) = entries.first() {
-                type_map.entry(e.type_name).or_insert(tid);
-            }
-        }
-
-        // Phase 0: Validate sync singleton dependencies (async singletons skipped).
-        let singleton_cache = Arc::new(LazyCache::new());
-        Self::validate_dependencies(&store, &singleton_cache)?;
-
-        // Phase 1: create the provider in an Arc (self_weak stays valid).
-        let sp_arc = Arc::new(Self {
-            store: Arc::new(store),
-            type_map: Arc::new(type_map),
-            singleton_cache,
-            root_scoped_cache: LazyCache::new(),
-            named: Arc::new(RwLock::new(HashMap::new())),
-            self_weak: OnceLock::new(),
-            disposables: Mutex::new(Vec::new()),
-        });
-        sp_arc
-            .self_weak
-            .get_or_init(|| Arc::downgrade(&sp_arc));
-
-        // Phase 2: eagerly execute sync singleton factories.
+    /// Reuses instances cached by validation (build time) so factories aren't
+    /// double-fired. Called by both `new` and `new_async` (async singletons skipped).
+    fn init_sync_singletons(sp_arc: &Arc<Self>) {
         let singleton_entries: Vec<(usize, ServiceFactory)> = sp_arc
             .store
             .values()
@@ -169,8 +97,48 @@ impl ServiceProvider {
                 .singleton_cache
                 .get_or_init_with(*ck, move || factory(resolver));
         }
+    }
 
-        // Phase 3: execute async singleton factories.
+    /// Build a `ServiceProvider` with async factory support.
+    ///
+    /// Async singleton factories are executed during build and their results
+    /// are cached. Async transient/scoped factories are stored for later
+    /// resolution via `get_async` / `get_keyed_async`.
+    ///
+    /// Returns `Arc<ServiceProvider>` so that `provider_arc()` works for
+    /// async resolution (async factories receive `Arc<ServiceProvider>`).
+    pub(crate) async fn new_async(
+        store: ServiceStore,
+    ) -> Result<Arc<Self>, RdiError> {
+        // Build type_name → TypeId lookup
+        let mut type_map = HashMap::new();
+        for (&tid, entries) in &store {
+            if let Some(e) = entries.first() {
+                type_map.entry(e.type_name).or_insert(tid);
+            }
+        }
+
+        // Phase 0: Validate sync singleton dependencies (async singletons skipped).
+        let singleton_cache = Arc::new(LazyCache::new());
+        Self::validate_dependencies(&store, &singleton_cache)?;
+
+        // Phase 1: create the provider in an Arc.
+        let sp_arc = Arc::new(Self {
+            store: Arc::new(store),
+            type_map: Arc::new(type_map),
+            singleton_cache,
+            root_scoped_cache: LazyCache::new(),
+            named: Arc::new(RwLock::new(HashMap::new())),
+            self_weak: OnceLock::new(),
+            disposables: Mutex::new(Vec::new()),
+        });
+        sp_arc
+            .self_weak
+            .get_or_init(|| Arc::downgrade(&sp_arc));
+
+        Self::init_sync_singletons(&sp_arc);
+
+        // Phase 2: execute async singleton factories.
         let async_singletons: Vec<(usize, AsyncServiceFactory)> = sp_arc
             .store
             .values()
@@ -334,31 +302,16 @@ impl ServiceProvider {
             .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
             .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
 
-        match entry.lifetime {
-            ServiceLifetime::Singleton => self.get::<T>(),
-            ServiceLifetime::Scoped => {
-                let async_factory = entry.async_factory.clone().ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
-                let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
-                    service: type_name.to_string(),
-                    payload: "provider_arc() returned None for async resolution".into(),
-                })?;
-                let arc_any = self.root_scoped_cache.get_or_init_with_async(entry.cache_key, || {
-                    Self::run_async_factory_safely(type_name, async_factory, provider_arc)
-                }).await?;
-                Self::extract(arc_any).ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return self.get::<T>();
+        }
+
+        match self.resolve_async_any(entry, type_name).await? {
+            Some(arc_any) => {
+                Self::extract(arc_any)
+                    .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
             }
-            ServiceLifetime::Transient => {
-                if let Some(async_factory) = entry.async_factory.clone() {
-                    let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
-                        service: type_name.to_string(),
-                        payload: "provider_arc() returned None for async resolution".into(),
-                    })?;
-                    let arc_any = Self::run_async_factory_safely(type_name, async_factory, provider_arc).await?;
-                    Self::extract(arc_any).ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
-                } else {
-                    self.get::<T>()
-                }
-            }
+            None => self.get::<T>(),
         }
     }
 
@@ -378,24 +331,40 @@ impl ServiceProvider {
                 ty: type_name,
             })?;
 
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return self.get_keyed::<T>(key);
+        }
+
+        match self.resolve_async_any(entry, type_name).await? {
+            Some(arc_any) => Self::extract(arc_any).ok_or(RdiError::KeyedServiceNotFound {
+                key: key.to_string(),
+                ty: type_name,
+            }),
+            None => self.get_keyed::<T>(key),
+        }
+    }
+
+    /// Resolve async Scoped/Transient factory, returning `Some(AnyService)`.
+    /// Returns `None` if the entry has no async factory (caller falls back to sync path).
+    async fn resolve_async_any(
+        &self,
+        entry: &ServiceEntry,
+        type_name: &'static str,
+    ) -> Result<Option<AnyService>, RdiError> {
         match entry.lifetime {
-            ServiceLifetime::Singleton => self.get_keyed::<T>(key),
             ServiceLifetime::Scoped => {
-                let async_factory = entry.async_factory.clone().ok_or(RdiError::KeyedServiceNotFound {
-                    key: key.to_string(),
-                    ty: type_name,
-                })?;
+                let async_factory = entry.async_factory.clone()
+                    .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
                 let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
                     service: type_name.to_string(),
                     payload: "provider_arc() returned None for async resolution".into(),
                 })?;
-                let arc_any = self.root_scoped_cache.get_or_init_with_async(entry.cache_key, || {
-                    Self::run_async_factory_safely(type_name, async_factory, provider_arc)
-                }).await?;
-                Self::extract(arc_any).ok_or(RdiError::KeyedServiceNotFound {
-                    key: key.to_string(),
-                    ty: type_name,
-                })
+                self.root_scoped_cache
+                    .get_or_init_with_async(entry.cache_key, || {
+                        Self::run_async_factory_safely(type_name, async_factory, provider_arc)
+                    })
+                    .await
+                    .map(Some)
             }
             ServiceLifetime::Transient => {
                 if let Some(async_factory) = entry.async_factory.clone() {
@@ -403,19 +372,18 @@ impl ServiceProvider {
                         service: type_name.to_string(),
                         payload: "provider_arc() returned None for async resolution".into(),
                     })?;
-                    let arc_any = Self::run_async_factory_safely(type_name, async_factory, provider_arc).await?;
-                    Self::extract(arc_any).ok_or(RdiError::KeyedServiceNotFound {
-                        key: key.to_string(),
-                        ty: type_name,
-                    })
+                    Self::run_async_factory_safely(type_name, async_factory, provider_arc)
+                        .await
+                        .map(Some)
                 } else {
-                    self.get_keyed::<T>(key)
+                    Ok(None)
                 }
             }
+            _ => Ok(None),
         }
     }
 
-    /// 执行 async 工厂并捕获 panic，转为 `RdiError::FactoryPanic`。
+    /// Execute an async factory and catch panics, converting to `RdiError::FactoryPanic`.
     ///
     /// async 工厂 panic 无法自然传播到 `.await` 点之外（会终止 task），
     /// 需用 `catch_unwind` 捕获并转为类型安全的 `RdiError`。

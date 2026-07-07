@@ -30,41 +30,64 @@ Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框�
 
 ```toml
 [dependencies]
-rust-dicore = "0.4"
+rust-dicore = "0.5"
 ```
 
 ```rust
 use rust_dicore::*;
 use std::sync::Arc;
 
-// 用 #[rust_dicore::inject(...)] 标注你的结构体 —
+// 用 #[inject(...)] 标注你的结构体 —
 // 一个属性同时完成构造函数生成和自动注册
-#[rust_dicore::inject(singleton)]
+#[inject(singleton)]
 struct Config;
 
-#[rust_dicore::inject(transient)]
-struct Worker { logger: Arc<Config> }
+#[inject(transient)]
+struct Worker { config: Arc<Config> }
 
-// 自动发现所有 #[rust_dicore::inject] 标注并构建
+// 自动发现所有 #[inject] 标注并构建
 let provider = ServiceCollection::from_injected()
     .build()
     .unwrap();
 
-let logger: Arc<Config> = provider.get();
+let worker: Arc<Worker> = provider.get().unwrap();
+```
+
+### 异步应用（如 axum / actix-web）
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+struct DbPool { conn: String }
+
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async {
+        // 异步连接、配置加载等
+        Arc::new(DbPool { conn: "pg://localhost".into() })
+    }))
+    .build_async()
+    .await
+    .unwrap();
+
+let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 ```
 
 ### 特性
 
 | 特性 | 描述 |
 |------|------|
-| `#[rust_dicore::inject]` | 基于属性宏的自动注册 — 标注**结构体或 trait impl 块**后调用 `ServiceCollection::from_injected()` |
-| `#[derive(Inject)]` | 派生宏实现构造器注入（高级功能） |
-| `#[rust_dicore::module]` | 编译期模块扫描，收集 `rust_dicore::register!(...)` 声明（高级功能） |
-| **三种生命周期** | Singleton（默认）、Scoped、Transient |
-| **键控服务** | 同一类型的多个实例以字符串 key 区分 |
+| `#[inject]` | 基于属性宏的自动注册 — 标注**结构体或 trait impl 块**后调用 `ServiceCollection::from_injected()` |
+| `#[derive(Inject)]` | 派生宏实现构造器注入 |
+| `#[module]` | 编译期模块扫描，收集 `register!(...)` 声明 |
+| **三种生命周期** | Singleton、Scoped、Transient |
+| **键控服务** | 同一 trait 的多实现以字符串 key 区分 |
+| **异步支持** | `build_async()` + `async_*` 注册，异步初始化 |
+| **构建期验证** | 循环依赖检测、captive dependency 拒绝 |
 | **跨 DLL 支持** | 为 cdylib 插件系统提供的命名服务注册表 |
 | **分层容器** | 通过 `ServiceProviderWrapper` 实现子优先解析 |
-| **Owned 解析** | `get_owned::<T>()` 返回 owned `T`，支持 `&mut self` 方法 — 无需 interior mutability |
+| **Owned 解析** | `get_owned::<T>()` 返回 owned `T`，支持 `&mut self` — 无需 interior mutability |
+| **Scoped 清理** | 清理闭包 + 自动 `Drop`，Scoped 资源释放 |
 
 ### 什么时候用 rust-dicore？
 

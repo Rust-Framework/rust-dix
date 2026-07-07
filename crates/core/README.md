@@ -19,7 +19,7 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dicore = "0.4"
+rust-dicore = "0.5"
 ```
 
 ---
@@ -43,11 +43,11 @@ let svc = MyService::new(
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))
-    .transient(|p| Arc::new(MyService::new(p.get(), p.get())))
+    .transient(|p| Arc::new(MyService::new(p.get().unwrap(), p.get().unwrap())))
     .build()
     .unwrap();
 
-let svc: Arc<MyService> = provider.get();
+let svc: Arc<MyService> = provider.get().unwrap();
 ```
 
 **2. You need to swap implementations for testing**
@@ -60,7 +60,7 @@ service.
 fn test_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MockDatabase::new()))
-        .transient(|p| Arc::new(MyApi::new(p.get())))
+        .transient(|p| Arc::new(MyApi::new(p.get().unwrap())))
         .build()
         .unwrap()
 }
@@ -104,10 +104,10 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let fast: Arc<dyn Strategy> = provider.get_keyed("fast");
-let session: Arc<dyn Strategy> = provider.create_scope().get_keyed("session");
-let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh");
-let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh");  // different instance
+let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
+	let session: Arc<dyn Strategy> = provider.scope().get_keyed("session").unwrap();
+	let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();
+	let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // different instance
 ```
 
 **5. You are building a plugin / modular system**
@@ -146,7 +146,7 @@ dependencies:
 ```rust
 ServiceCollection::new()
     .singleton(|_| Arc::new(Pool::new()))
-    .transient(|p| Arc::new(Repo::new(p.get::<Pool>())))
+    .transient(|p| Arc::new(Repo::new(p.get::<Pool>().unwrap())))
     .build()
     .unwrap();
 ```
@@ -219,24 +219,23 @@ For trait-oriented services (handlers, services, repositories), prefer
 
 | Method | Returns | Behavior |
 |--------|---------|----------|
-| `.get::<T>()` | `Arc<T>` | Panics if not registered |
-| `.get_service::<T>()` | `Option<Arc<T>>` | Returns `None` if not registered |
-| `.get_required_service::<T>()` | `Arc<T>` | Panics with descriptive message |
-| `.get_keyed::<T>(key)` | `Arc<T>` | Panics if key not found |
+| `.get::<T>()` | `Result<Arc<T>, RdiError>` | Returns Err if not registered; use `.unwrap()` for required services |
+| `.get_optional::<T>()` | `Option<Arc<T>>` | Returns `None` if not registered |
+| `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | Returns Err if key not found; use `.unwrap()` for required keys |
 | `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | Returns `None` if key not found |
 | `.get_all::<T>()` | `Vec<Arc<T>>` | All registered instances (keyed + unkeyed) |
-| `.get_named::<T>(name)` | `Arc<T>` | Named resolution (cross-DLL) |
+| `.get_named::<T>(name)` | `Option<Arc<T>>` | Named resolution (cross-DLL), returns `None` if missing |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | Named, returns `None` if missing |
-| `.get_owned::<T>()` | `T` | Owned instance; Singleton panics |
+| `.get_owned::<T>()` | `Result<T, RdiError>` | Owned instance; Singleton returns Err; use `.unwrap()` for transient/scoped |
 | `.try_get_owned::<T>()` | `Option<T>` | `None` if unregistered or Singleton |
-| `.get_keyed_owned::<T>(key)` | `T` | Owned keyed instance; Singleton panics |
-| `.create_scope()` | `Scope` | New scope for scoped services |
+| `.get_keyed_owned::<T>(key)` | `Result<T, RdiError>` | Owned keyed instance; Singleton returns Err |
+| `.scope()` | `Scope` | New scope for scoped services |
 
 `T` can be a concrete type or `dyn Trait`:
 
 ```rust
-let svc: Arc<MyService> = provider.get();
-let plugin: Arc<dyn IPlugin> = provider.get();
+let svc: Arc<MyService> = provider.get().unwrap();
+let plugin: Arc<dyn IPlugin> = provider.get().unwrap();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
 
@@ -261,7 +260,7 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let mut ctx: DbContext = provider.get_owned();
+let mut ctx: DbContext = provider.get_owned().unwrap();
 ctx.add();                 // ✓ &mut self — no RwLock, no unsafe
 assert_eq!(ctx.total(), 1);
 ```
@@ -285,7 +284,7 @@ struct Handler {
     logger: Arc<Logger>,      // shared → get
 }
 // ...
-let mut h: Handler = provider.get_owned();
+let mut h: Handler = provider.get_owned().unwrap();
 h.ctx.add();                 // ✓ owned field is mutable
 ```
 
@@ -298,6 +297,94 @@ h.ctx.add();                 // ✓ owned field is mutable
 
 ---
 
+### Async support (`build_async`)
+
+For services that need async initialization (DB connections, network I/O, config
+loading), use `build_async()` and the `async_*` registration methods.
+
+#### Registration
+
+| Method | Lifetime | Use when |
+|--------|----------|----------|
+| `.async_singleton(f)` | Singleton | Async init, shared globally (DB pool, Redis) |
+| `.async_scoped(f)` | Scoped | Async init, per scope (request-scoped resources) |
+| `.async_transient(f)` | Transient | Async init, fresh each time |
+| `.async_keyed_singleton(k, f)` | Singleton keyed | Async init, named instance |
+| `.async_keyed_scoped(k, f)` | Scoped keyed | Async init, per-scope named instance |
+| `.async_keyed_transient(k, f)` | Transient keyed | Async init, fresh named instance |
+
+The async factory receives `Arc<ServiceProvider>` and returns a pinned future:
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|p: Arc<ServiceProvider>| Box::pin(async move {
+        let config: Arc<AppConfig> = p.get().unwrap();
+        Arc::new(DbPool::connect(&config.conn_str).await)
+    }))
+    .async_keyed_singleton::<dyn IPaymentGateway>("wechat", |_| Box::pin(async {
+        Arc::new(WechatPay::init().await) as Arc<dyn IPaymentGateway>
+    }))
+    .build_async()
+    .await
+    .unwrap();
+```
+
+#### Resolution
+
+Use `get_async()` / `get_keyed_async()` when resolving async-registered services:
+
+```rust
+let pool: Arc<DbPool> = provider.get_async().await.unwrap();
+let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await.unwrap();
+```
+
+For sync services, you can still use `get()`. The async methods are only needed
+for services registered with `async_*`.
+
+#### Mixing sync and async
+
+You can mix sync and async registrations in the same collection. Sync singletons
+are validated and initialized alongside async ones during `build_async()`:
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
+    .singleton(|_| Arc::new(AppConfig::new()))       // sync OK
+    .scoped(|r| {                                     // sync OK
+        let db = r.get::<DbPool>().unwrap();
+        Arc::new(UserRepository { db })
+    })
+    .build_async()
+    .await
+    .unwrap();
+```
+
+**Key rule**: Once you use any `async_*` registration, call `build_async()`
+instead of `build()`. Mixing is supported — sync singletons are validated and
+initialized alongside async ones.
+
+#### Per-request scope with async
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
+    .scoped(|r| {
+        let db = r.get::<DbPool>().unwrap();
+        Arc::new(UserRepository { db })
+    })
+    .build_async().await.unwrap();
+
+// Each request gets its own scope
+fn handle_request(provider: &Arc<ServiceProvider>) {
+    let scope = provider.scope();
+    let repo: Arc<UserRepository> = scope.get().unwrap();
+    // ... process request ...
+    // scope dropped → scoped instances released
+}
+```
+
+---
+
 ### Flexible Application Patterns
 
 #### 🔹 Three-layered architecture (Controller → Service → Repository)
@@ -305,9 +392,9 @@ h.ctx.add();                 // ✓ owned field is mutable
 ```rust
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(DbPool::new(&config)))
-    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>())))
-    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>())))
-    .transient(|p| Arc::new(UserController::new(p.get::<UserService>())))
+    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>().unwrap())))
+    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>().unwrap())))
+    .transient(|p| Arc::new(UserController::new(p.get::<UserService>().unwrap())))
     .build()
     .unwrap();
 ```
@@ -316,14 +403,14 @@ let provider = ServiceCollection::new()
 
 ```rust
 let provider = ServiceCollection::new()
-    .keyed::<dyn PaymentGateway>("credit", |_| Arc::new(CreditCardGateway))
-    .keyed::<dyn PaymentGateway>("alipay", |_| Arc::new(AlipayGateway))
-    .keyed::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
+    .keyed_singleton::<dyn PaymentGateway>("credit", |_| Arc::new(CreditCardGateway))
+    .keyed_singleton::<dyn PaymentGateway>("alipay", |_| Arc::new(AlipayGateway))
+    .keyed_singleton::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
     .build()
     .unwrap();
 
 fn checkout(provider: &ServiceProvider, method: &str) {
-    let gateway: Arc<dyn PaymentGateway> = provider.get_keyed(method);
+    let gateway: Arc<dyn PaymentGateway> = provider.get_keyed(method).unwrap();
     gateway.charge(100);
 }
 ```
@@ -332,9 +419,9 @@ fn checkout(provider: &ServiceProvider, method: &str) {
 
 ```rust
 fn handle_request(container: &ServiceProvider) {
-    let scope = container.create_scope();
-    let ctx: Arc<RequestContext> = scope.get();
-    let svc: Arc<MyService> = scope.get();
+    let scope = container.scope();
+    let ctx: Arc<RequestContext> = scope.get().unwrap();
+    let svc: Arc<MyService> = scope.get().unwrap();
     // ctx and MyService share the same scope — scoped services are cached
     // Drops when scope goes out of scope
 }
@@ -363,7 +450,7 @@ let wrapper = ServiceProviderWrapper::new(plugin_provider, host_provider);
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(EventBus::new()))
     .build().unwrap();
-provider.register_named("event_bus", provider.get::<EventBus>());
+provider.register_named("event_bus", provider.get::<EventBus>().unwrap());
 
 // Plugin loaded from cdylib (separate compilation unit)
 let bus = host.get_named::<EventBus>("event_bus");
