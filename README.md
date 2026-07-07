@@ -99,6 +99,173 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 - **You come from the .NET ecosystem** and want the same
   `IServiceCollection` / `IServiceProvider` patterns in Rust.
 
+## Interface-oriented programming
+
+The core principle of rust-dicore: **depend on traits, not concrete types**. This
+enables mock substitution in tests and swapping implementations without changing
+consumers.
+
+### Why interfaces matter
+
+| Without interfaces | With interfaces |
+|-------------------|-----------------|
+| `Arc<WechatPay>` — locked to one impl | `Arc<dyn IPaymentGateway>` — any impl |
+| Tests can't swap payment gateway | Mock with `MockPaymentGateway` |
+| Adding Alipay requires changing every consumer | Just register the new implementation |
+
+### Polymorphism: multiple implementations of the same trait
+
+Register multiple services under the same trait, then resolve them all at once.
+
+**Registration side:**
+
+```rust
+use rust_dicore::*;
+use std::sync::Arc;
+
+pub trait INotificationChannel: Send + Sync {
+    fn send(&self, msg: &str);
+}
+
+// Register three implementations of the same trait
+let provider = ServiceCollection::new()
+    .singleton::<dyn INotificationChannel>(|_| Arc::new(EmailChannel))
+    .keyed_singleton::<dyn INotificationChannel>("sms", |_| Arc::new(SmsChannel))
+    .keyed_singleton::<dyn INotificationChannel>("push", |_| Arc::new(PushChannel))
+    .build()
+    .unwrap();
+```
+
+**Consumption side:**
+
+```rust
+// Get the default (unkeyed) implementation
+let default: Arc<dyn INotificationChannel> = provider.get().unwrap();
+
+// Get a specific named implementation
+let sms: Arc<dyn INotificationChannel> = provider.get_keyed("sms").unwrap();
+
+// Get ALL implementations at once (unkeyed + all keyed)
+let all: Vec<Arc<dyn INotificationChannel>> = provider.get_all();
+
+// Broadcast a message to every channel
+for channel in &all {
+    channel.send("System alert: disk usage > 90%");
+}
+```
+
+### Keyed services: runtime strategy routing
+
+Keyed services let you select an implementation at runtime by name —
+the foundation of the Strategy pattern.
+
+**Registration side:**
+
+```rust
+pub trait IPaymentGateway: Send + Sync {
+    fn charge(&self, amount: u64) -> Result<String, String>;
+}
+
+let provider = ServiceCollection::new()
+    // Default (unkeyed) — used as fallback
+    .singleton::<dyn IPaymentGateway>(|_| Arc::new(WechatPay))
+    // Named alternatives
+    .keyed_singleton::<dyn IPaymentGateway>("alipay", |_| Arc::new(Alipay))
+    .keyed_transient::<dyn IPaymentGateway>("credit_card", |_| Arc::new(CreditCardPay))
+    .build()
+    .unwrap();
+```
+
+**Consumption side:**
+
+```rust
+// ── Pattern A: Static dispatch (compile-time known key) ──
+let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed("alipay").unwrap();
+gateway.charge(100)?;
+
+// ── Pattern B: Dynamic routing (runtime key from request) ──
+fn process_payment(provider: &ServiceProvider, method: &str, amount: u64) {
+    let gateway: Arc<dyn IPaymentGateway> = provider
+        .try_get_keyed(method)                          // returns Option
+        .unwrap_or_else(|| provider.get().unwrap());    // fallback to default
+    gateway.charge(amount).unwrap();
+}
+
+// ── Pattern C: Inject provider for lazy routing ──
+#[derive(Inject)]
+struct OrderService {
+    #[inject(provider)]
+    provider: Arc<ServiceProvider>,  // resolve strategy on demand
+}
+
+impl OrderService {
+    fn checkout(&self, method: &str, amount: u64) {
+        let gateway: Arc<dyn IPaymentGateway> = self.provider
+            .try_get_keyed(method)
+            .unwrap_or_else(|| self.provider.get().unwrap());
+        gateway.charge(amount).unwrap();
+    }
+}
+```
+
+### Scoped services: per-request isolation
+
+Scoped services are created once per scope and cached within it. The root
+`ServiceProvider` itself acts as the root scope — use child scopes for request-level isolation.
+
+**Registration side:**
+
+```rust
+pub trait IUnitOfWork: Send + Sync {
+    fn commit(&self) -> Result<(), String>;
+    fn rollback(&self);
+}
+
+let provider = ServiceCollection::new()
+    .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))   // global
+    .scoped::<dyn IUnitOfWork>(|r| {                          // per-scope
+        let db: Arc<dyn IDbPool> = r.get().unwrap();
+        Arc::new(UnitOfWork::new(db))
+    })
+    .transient::<dyn IOrderService>(|r| {                     // fresh each time
+        let uow: Arc<dyn IUnitOfWork> = r.get().unwrap();
+        Arc::new(OrderService::new(uow))
+    })
+    .build()
+    .unwrap();
+```
+
+**Consumption side:**
+
+```rust
+// ── Root scope: UoW is cached, always returns the same instance ──
+let uow1: Arc<dyn IUnitOfWork> = provider.get().unwrap();
+let uow2: Arc<dyn IUnitOfWork> = provider.get().unwrap();
+// uow1 and uow2 are the SAME instance (root scope cache)
+
+// ── Child scope: each scope gets its own UoW instance ──
+let scope_a = provider.scope();
+let scope_b = provider.scope();
+
+let uow_a: Arc<dyn IUnitOfWork> = scope_a.get().unwrap();
+let uow_b: Arc<dyn IUnitOfWork> = scope_b.get().unwrap();
+// uow_a != uow_b (different scopes, different instances)
+
+// Within the same child scope, Scoped is cached:
+let uow_a2: Arc<dyn IUnitOfWork> = scope_a.get().unwrap();
+// uow_a == uow_a2 (same scope, cached)
+
+// ── Transient from scope: resolves Scoped deps within that scope ──
+let order_svc: Arc<dyn IOrderService> = scope_a.get().unwrap();
+// OrderService's IUnitOfWork is scope_a's UoW, not the root's
+```
+
+**Key rule**: Singleton must not depend on Scoped (enforced at build time).
+Scoped can depend on Singleton. Transient can depend on anything.
+
+For detailed patterns (contracts layer, layered architecture, plugin systems),
+see the [business scenario tutorials](docs/rust-dicore/08-best-practices/business-scenarios.md).
+
 ## Best practices
 
 ### Lifetime selection
@@ -108,9 +275,6 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Singleton** | Stateless services, shared configuration, connection pools | `AppConfig`, `DbPool`, `Logger` |
 | **Scoped** | Per-request state, unit-of-work objects | `DbContext`, `UserRepository`, `UnitOfWork` |
 | **Transient** | Lightweight, stateless workers created fresh each time | `OrderService`, `Validator`, `EmailSender` |
-
-**Rule**: Singleton must not depend on Scoped (enforced at build time). Scoped
-can depend on Singleton. Transient can depend on anything.
 
 ### Sync vs async registration
 
