@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream as TokenStream2;
+﻿use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 pub(crate) fn expand_inject_derive(input: syn::DeriveInput) -> syn::Result<TokenStream2> {
@@ -18,5 +18,5 @@ pub(crate) fn expand_inject_derive(input: syn::DeriveInput) -> syn::Result<Token
         },
         _ => return Err(syn::Error::new_spanned(name, "struct only")),
     };
-    Ok(quote! {#[doc(hidden)]pub fn #fn_name(resolver:&dyn rust_dicore::IServiceResolver)->::std::sync::Arc<#name>{::std::sync::Arc::new(#constructor_body)}})
+    Ok(quote! {#[doc(hidden)]pub fn #fn_name(resolver:&dyn rust_dix::IServiceResolver)->::std::sync::Arc<#name>{::std::sync::Arc::new(#constructor_body)}})
 }

@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 # ──────────────────────────────────────────────
-# rust-dicore — One-command publish script
-# Publishes rust-dicore-macros first, then rust-dicore.
+# rust-dix — One-command publish script
+# Publishes rust-dix-macros first, then rust-dix.
 #
 # Usage:
 #   ./publish.sh                  # publish both crates
@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "============================================"
-echo "  rust-dicore Publishing Script"
+echo "  rust-dix Publishing Script"
 echo "============================================"
 echo ""
 
@@ -81,13 +81,13 @@ echo ""
 echo "    ✓ All checks passed"
 echo ""
 
-# ── Step 2: Publish rust-dicore-macros ──
+# ── Step 2: Publish rust-dix-macros ──
 
 MACROS_DIR="crates/macros"
 MACROS_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-echo "==> 2. Publishing rust-dicore-macros v${MACROS_VER}..."
+echo "==> 2. Publishing rust-dix-macros v${MACROS_VER}..."
 (cd "$MACROS_DIR" && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ rust-dicore-macros published"
+echo "    ✓ rust-dix-macros published"
 
 if [ -z "$DRY_RUN" ]; then
     echo "    Waiting 15s for crates.io index to refresh..."
@@ -96,18 +96,18 @@ fi
 
 echo ""
 
-# ── Step 3: Publish rust-dicore ──
+# ── Step 3: Publish rust-dix ──
 
 RDI_DIR="crates/core"
 RDI_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-echo "==> 3. Publishing rust-dicore v${RDI_VER}..."
+echo "==> 3. Publishing rust-dix v${RDI_VER}..."
 (cd "$RDI_DIR" && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ rust-dicore published"
+echo "    ✓ rust-dix published"
 
 echo ""
 echo "============================================"
 echo "  Done!"
 echo ""
-echo "  https://crates.io/crates/rust-dicore"
-echo "  https://crates.io/crates/rust-dicore-macros"
+echo "  https://crates.io/crates/rust-dix"
+echo "  https://crates.io/crates/rust-dix-macros"
 echo "============================================"

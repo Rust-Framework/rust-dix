@@ -1,6 +1,6 @@
-# 第二章 快速上手
+﻿# 第二章 快速上手
 
-本章带你快速入门 rust-dicore，从安装到第一个 DI 容器。
+本章带你快速入门 rust-dix，从安装到第一个 DI 容器。
 
 ## 本章小节
 
@@ -16,25 +16,25 @@
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"
+rust-dix = "0.6"
 ```
 
 如果使用过程宏：
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"
-rust-dicore-macros = "0.5"
+rust-dix = "0.6"
+rust-dix-macros = "0.6"
 ```
 
 ## 导入约定
 
-> `rust-dicore` 已重新导出全部宏与类型，**无需单独依赖 `rust-dicore-macros`**。
+> `rust-dix` 已重新导出全部宏与类型，**无需单独依赖 `rust-dix-macros`**。
 
 在每个使用 DI 的文件顶部加两行 use，之后所有宏（`#[inject]`、`#[derive(Inject)]`、`#[module]`、`register!()`）与类型（`ServiceCollection`、`ServiceProvider` 等）均可直接短名引用：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 ```
 
@@ -43,7 +43,7 @@ use std::sync::Arc;
 ## 第一个 DI 容器
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 定义接口
@@ -65,7 +65,7 @@ let provider = ServiceCollection::new()
 
 // 解析服务
 let logger: Arc<dyn ILogger> = provider.get();
-logger.log("Hello, rust-dicore!");
+logger.log("Hello, rust-dix!");
 ```
 
 ## 生命周期快速选择
@@ -81,7 +81,7 @@ logger.log("Hello, rust-dicore!");
 当服务需要异步初始化（如数据库连接、Redis 客户端），使用 `build_async()`：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 struct DbPool { conn_str: String }

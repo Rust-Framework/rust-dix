@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream as TokenStream2;
+﻿use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
@@ -10,9 +10,9 @@ use crate::module::LT;
 
 pub(crate) fn lt_to_token(lt: LT) -> TokenStream2 {
     match lt {
-        LT::S => quote! { rust_dicore::ServiceLifetime::Singleton },
-        LT::Sc => quote! { rust_dicore::ServiceLifetime::Scoped },
-        LT::T => quote! { rust_dicore::ServiceLifetime::Transient },
+        LT::S => quote! { rust_dix::ServiceLifetime::Singleton },
+        LT::Sc => quote! { rust_dix::ServiceLifetime::Scoped },
+        LT::T => quote! { rust_dix::ServiceLifetime::Transient },
     }
 }
 
@@ -74,7 +74,7 @@ fn expand_inject_struct(
     let constructor = quote! {
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        pub fn #fn_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<#name> {
+        pub fn #fn_name(resolver: &dyn rust_dix::IServiceResolver) -> ::std::sync::Arc<#name> {
             ::std::sync::Arc::new(#constructor_body)
         }
     };
@@ -84,7 +84,7 @@ fn expand_inject_struct(
     let factory = quote! {
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+        fn #factory_name(resolver: &dyn rust_dix::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
             let v: ::std::sync::Arc<#name> = #fn_name(resolver);
             ::std::sync::Arc::new(v)
                 as ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>
@@ -100,8 +100,8 @@ fn expand_inject_struct(
     };
 
     let submission = quote! {
-        rust_dicore::inventory::submit! {
-            rust_dicore::ServiceRegistration {
+        rust_dix::inventory::submit! {
+            rust_dix::ServiceRegistration {
                 lifetime: #lt_ident,
                 type_id: ::std::any::TypeId::of::<#name>(),
                 type_name_fn: #type_name_fn_name,
@@ -163,7 +163,7 @@ fn expand_inject_impl(
     let factory = quote! {
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #factory_name(resolver: &dyn rust_dicore::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
+        fn #factory_name(resolver: &dyn rust_dix::IServiceResolver) -> ::std::sync::Arc<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync> {
             let v: ::std::sync::Arc<#impl_ty> = #constructor_fn(resolver);
             let v2: ::std::sync::Arc<#trait_ty> = v;
             ::std::sync::Arc::new(v2)
@@ -180,8 +180,8 @@ fn expand_inject_impl(
     };
 
     let submission = quote! {
-        rust_dicore::inventory::submit! {
-            rust_dicore::ServiceRegistration {
+        rust_dix::inventory::submit! {
+            rust_dix::ServiceRegistration {
                 lifetime: #lt_ident,
                 type_id: ::std::any::TypeId::of::<#trait_ty>(),
                 type_name_fn: #type_name_fn_name,

@@ -1,9 +1,9 @@
-#![allow(non_snake_case)]
+﻿#![allow(non_snake_case)]
 
 mod common;
 
-use rust_dicore::*;
-use rust_dicore_macros::Inject;
+use rust_dix::*;
+use rust_dix_macros::Inject;
 use std::sync::Arc;
 
 #[derive(Inject)]

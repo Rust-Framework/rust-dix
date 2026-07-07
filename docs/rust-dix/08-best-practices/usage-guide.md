@@ -1,6 +1,6 @@
-# 用法指南与决策矩阵
+﻿# 用法指南与决策矩阵
 
-本文档是 rust-dicore 的推荐用法权威指南：如何简化导入路径、在不同场景下选择哪种注册方式与构造函数策略，以及让代码更简洁的实用技巧。
+本文档是 rust-dix 的推荐用法权威指南：如何简化导入路径、在不同场景下选择哪种注册方式与构造函数策略，以及让代码更简洁的实用技巧。
 
 > 阅读本文前，建议先浏览 [面向接口开发清单](interface-checklist.md) 建立整体认知。
 
@@ -8,14 +8,14 @@
 
 ## 1. 导入约定（路径简化）
 
-rust-dicore 的宏与类型都从 `rust_dicore` crate 重新导出。**推荐在每个使用 DI 的文件顶部加两行 use**，之后所有宏和类型可直接短名引用：
+rust-dix 的宏与类型都从 `rust_dix` crate 重新导出。**推荐在每个使用 DI 的文件顶部加两行 use**，之后所有宏和类型可直接短名引用：
 
 ```rust
-use rust_dicore::*;        // 引入所有宏与类型
+use rust_dix::*;        // 引入所有宏与类型
 use std::sync::Arc;        // 共享依赖的 Arc 包装
 ```
 
-`use rust_dicore::*` 后可直接使用：
+`use rust_dix::*` 后可直接使用：
 
 | 类别 | 可用名称 |
 |------|---------|
@@ -28,20 +28,20 @@ use std::sync::Arc;        // 共享依赖的 Arc 包装
 
 | 旧写法（全限定） | 推荐写法（简短） |
 |------------------|-----------------|
-| `#[rust_dicore::inject]` | `#[inject]` |
-| `#[rust_dicore::inject(scoped)]` | `#[inject(scoped)]` |
-| `#[derive(rust_dicore::Inject)]` | `#[derive(Inject)]` |
-| `#[rust_dicore::module]` | `#[module]` |
-| `rust_dicore::register!(...)` | `register!(...)` |
-| `rust_dicore::ServiceCollection::new()` | `ServiceCollection::new()` |
+| `#[rust_dix::inject]` | `#[inject]` |
+| `#[rust_dix::inject(scoped)]` | `#[inject(scoped)]` |
+| `#[derive(rust_dix::Inject)]` | `#[derive(Inject)]` |
+| `#[rust_dix::module]` | `#[module]` |
+| `rust_dix::register!(...)` | `register!(...)` |
+| `rust_dix::ServiceCollection::new()` | `ServiceCollection::new()` |
 
 **大型多 crate 项目**：若担心 glob 引入污染命名空间，可用别名：
 
 ```rust
-use rust_dicore as di;    // 之后写 #[di::inject]、di::register!()
+use rust_dix as di;    // 之后写 #[di::inject]、di::register!()
 ```
 
-> 约定：本文档及最佳实践章节的所有示例均采用 `use rust_dicore::*` 简短风格。参考文档（如宏详解）为明确宏来源可能使用全限定路径，实际编码请用简短形式。
+> 约定：本文档及最佳实践章节的所有示例均采用 `use rust_dix::*` 简短风格。参考文档（如宏详解）为明确宏来源可能使用全限定路径，实际编码请用简短形式。
 
 ---
 
@@ -62,7 +62,7 @@ use rust_dicore as di;    // 之后写 #[di::inject]、di::register!()
 **示例对照：**
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 场景 1：标准服务 —— 属性宏零样板
@@ -104,7 +104,7 @@ let provider = ServiceCollection::new()
 | 仅 impl、struct 无构造函数 | *不放* | `#[inject]` | ❌ 编译失败（无 `__rdi_construct`） |
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // ✅ Handler 面向接口：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
@@ -154,7 +154,7 @@ struct Config { port: u16 }
 结构体字段不带任何 DI 属性，保持纯净。在闭包中调用自定义构造函数：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 pub struct OrderService {
@@ -185,7 +185,7 @@ let provider = ServiceCollection::new()
 用 `#[derive(Inject)]` 或 `#[inject]` 属性宏自动生成构造函数，依赖字段显式标记：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 #[inject(singleton)]
@@ -208,7 +208,7 @@ let provider = ServiceCollection::from_injected().build()?;
 手动写闭包，适合已有实例或需要运行时参数：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 let existing_db = Arc::new(DbPool::connect("..."));
@@ -269,7 +269,7 @@ let provider = ServiceCollection::new()
 
 以下是让 DI 代码更简洁、可读性更高的实用技巧：
 
-1. **`use rust_dicore::*` 统一引入** —— 消除所有 `rust_dicore::` 前缀，示例见 §1。
+1. **`use rust_dix::*` 统一引入** —— 消除所有 `rust_dix::` 前缀，示例见 §1。
 2. **`#[inject]` 属性宏零样板** —— 一步完成构造 + 注册，对比手动 `ServiceCollection` 逐个 `.singleton()` 大幅减少样板。
 3. **impl 块 trait 自动推断** —— `#[inject] impl Trait for T` 自动注册为 `dyn Trait`，无需 `as = dyn Trait`。
 4. **`singleton_value(T)` 自动 Arc** —— 直接传值，框架自动 `Arc::new`，比 `instance(Arc::new(T))` 更简洁。
@@ -302,8 +302,8 @@ impl OrderService {
     }
 }
 
-fn build() -> Result<rust_dicore::ServiceProvider, rust_dicore::RdiError> {
-    rust_dicore::ServiceCollection::new()
+fn build() -> Result<rust_dix::ServiceProvider, rust_dix::RdiError> {
+    rust_dix::ServiceCollection::new()
         .singleton(|p| Arc::new(OrderService::new(
             p.get::<dyn IOrderRepo>().unwrap(),
             p.get::<dyn ILogger>().unwrap(),
@@ -317,7 +317,7 @@ fn build() -> Result<rust_dicore::ServiceProvider, rust_dicore::RdiError> {
 ### 写法 2：`use *` + 手动闭包（简洁，方式 A）
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 pub struct OrderService {            // 结构体干净，零 DI 属性
@@ -343,7 +343,7 @@ fn build() -> Result<ServiceProvider, RdiError> {
 ### 写法 3：`#[inject]` 属性宏（最简洁，推荐，方式 B）
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 #[inject(singleton)]

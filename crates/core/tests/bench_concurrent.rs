@@ -1,4 +1,4 @@
-//! 高并发基准测试：验证 async scoped 缓存竞态修复的性能损耗。
+﻿//! 高并发基准测试：验证 async scoped 缓存竞态修复的性能损耗。
 //!
 //! 测试场景：
 //! 1. 空工厂 100 并发 — 测量 `FuturesMutex` 纯开销
@@ -7,7 +7,7 @@
 
 mod common;
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::Instant;

@@ -1,4 +1,4 @@
-//! Tests for `#[inject(provider)]` — injecting `Arc<ServiceProvider>` for on-demand resolution.
+﻿//! Tests for `#[inject(provider)]` — injecting `Arc<ServiceProvider>` for on-demand resolution.
 //!
 //! Verifies:
 //! - A service with `#[inject(provider)]` receives a usable `Arc<ServiceProvider>`.
@@ -10,8 +10,8 @@
 
 mod common;
 
-use rust_dicore::*;
-use rust_dicore_macros::Inject;
+use rust_dix::*;
+use rust_dix_macros::Inject;
 use std::sync::Arc;
 
 /// Service that holds the provider for on-demand resolution.

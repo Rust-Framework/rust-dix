@@ -1,4 +1,4 @@
-//! Polymorphic injection tests — `Vec<Arc<T>>` field collects all registered
+﻿//! Polymorphic injection tests — `Vec<Arc<T>>` field collects all registered
 //! implementations of a trait (or concrete type), equivalent to C# MEDI
 //! `IEnumerable<IFoo>` constructor injection.
 //!
@@ -12,8 +12,8 @@
 
 mod common;
 
-use rust_dicore::*;
-use rust_dicore_macros::Inject;
+use rust_dix::*;
+use rust_dix_macros::Inject;
 use std::sync::Arc;
 
 // ── Shared trait + implementations for polymorphic tests ──

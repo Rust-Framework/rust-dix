@@ -1,4 +1,4 @@
-# 多实现与键控服务
+﻿# 多实现与键控服务
 
 ## 问题场景
 
@@ -7,12 +7,12 @@
 - 日志输出：文件日志、控制台日志、远程日志
 - 数据存储：PostgreSQL、MySQL、SQLite
 
-## rust-dicore 解决方案：keyed 服务
+## rust-dix 解决方案：keyed 服务
 
 ### 注册多个实现
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 接口

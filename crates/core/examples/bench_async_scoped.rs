@@ -1,9 +1,9 @@
-//! async scoped 并发压力基准测试
+﻿//! async scoped 并发压力基准测试
 //!
 //! 三级并发压力 + 延迟工厂 + 脏工厂场景，验证 FuturesMutex 性能边界。
 //! 运行方式：`cargo run --example bench_async_scoped --release`
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +18,7 @@ struct Svc {
 async fn run_bench(
     name: &str,
     concurrency: usize,
-    factory: impl Fn(Arc<rust_dicore::ServiceProvider>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<Svc>> + Send>>
+    factory: impl Fn(Arc<rust_dix::ServiceProvider>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<Svc>> + Send>>
         + Send
         + Sync
         + 'static,
@@ -93,8 +93,8 @@ async fn run_bench(
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
     println!("{:->60}", "");
-    println!("rust-dicore async scoped 并发基准测试");
-    println!("rust-dicore {} — 8 worker threads, release build", env!("CARGO_PKG_VERSION"));
+    println!("rust-dix async scoped 并发基准测试");
+    println!("rust-dix {} — 8 worker threads, release build", env!("CARGO_PKG_VERSION"));
     println!("{:->60}", "");
     println!(
         "{:<45} | {:>5} | {:>10} | {:>8} | {:>10} | {:>6} | {:>4}",

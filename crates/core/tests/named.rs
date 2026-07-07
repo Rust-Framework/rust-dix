@@ -1,6 +1,6 @@
-mod common;
+﻿mod common;
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 #[test]

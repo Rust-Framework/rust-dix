@@ -1,35 +1,35 @@
 <p align="center">
-  <img src="../assets/logo.svg" alt="rust-dicore" width="80">
+  <img src="../assets/logo.svg" alt="rust-dix" width="80">
 </p>
 
-<h1 align="center">rust-dicore-macros · 编译期依赖注入代码生成</h1>
+<h1 align="center">rust-dix-macros · 编译期依赖注入代码生成</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/rust-dicore-macros"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore-macros.svg?style=flat-square"></a>
-  <a href="https://docs.rs/rust-dicore-macros"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore-macros?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dix-macros"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix-macros.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dix-macros"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix-macros?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="README.md"><strong>English</strong></a>
+  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/crates/macros/README.md"><strong>English</strong></a>
 </p>
 
-`rust-dicore-macros` 为 [`rust-dicore`](../rust-dicore/) DI 框架提供过程宏。
+`rust-dix-macros` 为 [`rust-dix`](../core/) DI 框架提供过程宏。
 这些宏将工作从运行时移到编译期，消除样板代码，让你在类型定义处就近声明 DI 配置。
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dicore-macros
+rust-dix = "0.6"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
 ```
 
-> **注意**：你很少需要直接添加 `rust-dicore-macros` 依赖。`rust-dicore` crate 已经重新导出了
-> 所有宏（`Inject`、`module`、`inject`、`register`）。`use rust_dicore::*` 即可使用。
+> **注意**：你很少需要直接添加 `rust-dix-macros` 依赖。`rust-dix` crate 已经重新导出了
+> 所有宏（`Inject`、`module`、`inject`、`register`）。`use rust_dix::*` 即可使用。
 
 ---
 
 ### 宏
 
-#### `#[rust_dicore::inject]` — 基于属性宏的自动注册（推荐）
+#### `#[rust_dix::inject]` — 基于属性宏的自动注册（推荐）
 
 **功能**：在一个属性内同时完成构造函数生成和服务注册。该属性可以放在
 **结构体或 trait impl 块**上，带一个可选的生命周期参数，缺省为 `singleton`。
@@ -38,12 +38,12 @@ rust-dicore = "0.5"       # 所有宏都被重新导出——通常不需要直�
 **放置位置 1 — 在 struct 上**（注册为具体类型）：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 
-#[rust_dicore::inject]          // 默认 singleton
+#[rust_dix::inject]          // 默认 singleton
 struct Config;
 
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct Worker { dep: Arc<Config> }
 ```
 
@@ -52,10 +52,10 @@ struct Worker { dep: Arc<Config> }
 ```rust
 trait UserRepo { /* ... */ }
 
-#[rust_dicore::inject(transient)]   // 先在 struct 上
+#[rust_dix::inject(transient)]   // 先在 struct 上
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[rust_dicore::inject]              // 再在 impl 上 — 注册为 `dyn UserRepo`
+#[rust_dix::inject]              // 再在 impl 上 — 注册为 `dyn UserRepo`
 impl UserRepo for PgUserRepo { /* ... */ }
 ```
 
@@ -64,32 +64,32 @@ trait 类型直接从 `impl Trait for Type` 中读取，因此**无需**手写 `
 所以同一个类型可以注册到任意多个 trait 接口下：
 
 ```rust
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct BootLoader;
 
-#[rust_dicore::inject] impl EventHandler for BootLoader { /* ... */ }
-#[rust_dicore::inject] impl StartupTask   for BootLoader { /* ... */ }
+#[rust_dix::inject] impl EventHandler for BootLoader { /* ... */ }
+#[rust_dix::inject] impl StartupTask   for BootLoader { /* ... */ }
 ```
 
 **支持的语法**：
 
 | 属性 | 放置位置 | 注册方式 |
 |-----------|-----------|----------|
-| `#[rust_dicore::inject]` | struct | 具体类型，Singleton（默认） |
-| `#[rust_dicore::inject(singleton)]` | struct | 具体类型，Singleton |
-| `#[rust_dicore::inject(scoped)]` | struct | 具体类型，Scoped |
-| `#[rust_dicore::inject(transient)]` | struct | 具体类型，Transient |
-| `#[rust_dicore::inject]` | `impl Trait for T` | `dyn Trait`，Singleton（默认） |
-| `#[rust_dicore::inject(scoped)]` | `impl Trait for T` | `dyn Trait`，Scoped |
-| `#[rust_dicore::inject(transient)]` | `impl Trait for T` | `dyn Trait`，Transient |
+| `#[rust_dix::inject]` | struct | 具体类型，Singleton（默认） |
+| `#[rust_dix::inject(singleton)]` | struct | 具体类型，Singleton |
+| `#[rust_dix::inject(scoped)]` | struct | 具体类型，Scoped |
+| `#[rust_dix::inject(transient)]` | struct | 具体类型，Transient |
+| `#[rust_dix::inject]` | `impl Trait for T` | `dyn Trait`，Singleton（默认） |
+| `#[rust_dix::inject(scoped)]` | `impl Trait for T` | `dyn Trait`，Scoped |
+| `#[rust_dix::inject(transient)]` | `impl Trait for T` | `dyn Trait`，Transient |
 
 同时支持命名结构体和单元结构体（零字段）：
 
 ```rust
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct UnitService;  // 单元结构体 — 支持！
 
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct NamedService {
     dep: Arc<UnitService>,
 }
@@ -100,7 +100,7 @@ struct NamedService {
 （`#[inject]`、`#[inject(owned)]`、`#[inject(key = "...")]` 等），
 **无需同时使用两者**。impl 块放置方式**不会**生成构造函数——它复用 struct 放置方式已经生成的构造函数。
 
-> **迁移说明**：旧的冗长语法 `#[rust_dicore::inject_attr(singleton, as = dyn Trait<...>)]`
+> **迁移说明**：旧的冗长语法 `#[rust_dix::inject_attr(singleton, as = dyn Trait<...>)]`
 > 已移除。请改用 impl 块放置方式。
 
 ---
@@ -111,7 +111,7 @@ struct NamedService {
 `__rdi_construct_{类型名}()`，自动从容器中解析每个**标记的**字段。
 未标记字段使用 `Default::default()` 作为内部状态。
 
-> **注意**：此派生宏已被 struct 上的 `#[rust_dicore::inject]` 包含。仅当你需要生成
+> **注意**：此派生宏已被 struct 上的 `#[rust_dix::inject]` 包含。仅当你需要生成
 > 构造函数但不想自动注册时（例如手动用自定义工厂闭包注册），才使用 `#[derive(Inject)]`。
 
 **不使用宏**，需要手动写工厂闭包：
@@ -171,9 +171,9 @@ let provider = ServiceCollection::new()
 
 ---
 
-#### `#[rust_dicore::module]` — 编译期模块扫描
+#### `#[rust_dix::module]` — 编译期模块扫描
 
-**功能**：在编译期扫描 `mod` 块内的 `rust_dicore::register!()` 声明，
+**功能**：在编译期扫描 `mod` 块内的 `rust_dix::register!()` 声明，
 自动生成 `__rdi_build_provider_{模块名}()` 函数，构建一个完整配置的 `ServiceProvider`。
 
 **不使用宏**，需要在一个中心函数中逐个注册：
@@ -191,11 +191,11 @@ fn build_provider() -> ServiceProvider {
 **使用宏**，直接在模块内部声明注册：
 
 ```rust
-#[rust_dicore::module]
+#[rust_dix::module]
 mod services {
-    rust_dicore::register!(singleton: MyService);
-    rust_dicore::register!(singleton: dyn IPlugin => MyPlugin);
-    rust_dicore::register!(keyed "verbose": singleton: Logger);
+    rust_dix::register!(singleton: MyService);
+    rust_dix::register!(singleton: dyn IPlugin => MyPlugin);
+    rust_dix::register!(keyed "verbose": singleton: Logger);
 }
 
 // 生成: services::__rdi_build_provider_services() -> Result<Arc<ServiceProvider>>
@@ -222,15 +222,15 @@ let provider = services::__rdi_build_provider_services().unwrap();
 
 ---
 
-#### `rust_dicore::register!` — 声明宏
+#### `rust_dix::register!` — 声明宏
 
-这是在 `#[rust_dicore::module]` 块内部使用的声明宏，用于声明服务注册。
-它在项级别展开为空——其唯一作用是被外层的 `#[rust_dicore::module]` 属性收集。
+这是在 `#[rust_dix::module]` 块内部使用的声明宏，用于声明服务注册。
+它在项级别展开为空——其唯一作用是被外层的 `#[rust_dix::module]` 属性收集。
 
 也可以单独使用：
 
 ```rust
-rust_dicore::register!(singleton: MyService);
+rust_dix::register!(singleton: MyService);
 ```
 
 > **迁移说明**：函数式宏从 `inject!()` 改名为 `register!()`，以规避过程宏命名空间冲突
@@ -239,18 +239,18 @@ rust_dicore::register!(singleton: MyService);
 
 ---
 
-### 与 rust-dicore 的关系
+### 与 rust-dix 的关系
 
-`rust-dicore-macros` 是 [`rust-dicore`](../rust-dicore/) 的伴侣 crate。你可以完全不使用宏，
+`rust-dix-macros` 是 [`rust-dix`](../core/) 的伴侣 crate。你可以完全不使用宏，
 手动写工厂闭包，一切仍然正常工作。宏的存在是为了在服务数量多的时候消除重复代码，
 或者让你用声明式的方式配置 DI。
 
 | 方式 | 优点 | 缺点 |
 |------|------|------|
-| `#[rust_dicore::inject]`（推荐） | 零样板，自动注册，impl 块 trait 推断 | 需要 `inventory`；未标记字段需 `Default` |
+| `#[rust_dix::inject]`（推荐） | 零样板，自动注册，impl 块 trait 推断 | 需要 `inventory`；未标记字段需 `Default` |
 | 手动工厂闭包 | 完全可控，显式 | 服务多时样板代码多 |
 | `#[derive(Inject)]` | 构造器零样板 | 仍需手动注册 |
-| `#[rust_dicore::module]` | 声明式，集中管理 | 动态注册灵活性较差 |
+| `#[rust_dix::module]` | 声明式，集中管理 | 动态注册灵活性较差 |
 
 所有方式可以在同一个项目中自由混用。
 

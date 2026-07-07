@@ -1,6 +1,6 @@
-//! 多实现注册测试 - 验证一个 trait 多个实现的多态支持
+﻿//! 多实现注册测试 - 验证一个 trait 多个实现的多态支持
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // ── trait 定义 ──

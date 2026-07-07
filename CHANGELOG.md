@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Complete documentation system**: Added full docs/rust-dicore/ best practices guide
+- **Complete documentation system**: Added full docs/rust-dix/ best practices guide
   - 01-introduction: Framework overview and MEDI comparison
   - 02-quickstart: Installation and first container
   - 05-design-patterns: Strategy, factory, decorator patterns
@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 提供清晰的错误信息，包含依赖链路径
 
 - **生产就绪文档**: 创建了完整的最佳实践文档体系
-  - `docs/rust-dicore/` - 面向接口开发指南
+  - `docs/rust-dix/` - 面向接口开发指南
   - 设计模式实践 (策略、工厂、装饰器等)
   - 常见陷阱与反模式警示
 

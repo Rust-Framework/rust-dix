@@ -1,4 +1,4 @@
-//! LRDI — Rust Dependency Injection Framework
+﻿//! LRDI — Rust Dependency Injection Framework
 //!
 //! A dependency injection container for Rust inspired by
 //! Microsoft.Extensions.DependencyInjection (MEDI).
@@ -6,7 +6,7 @@
 //! # Quick start
 //!
 //! ```rust
-//! use rust_dicore::*;
+//! use rust_dix::*;
 //! use std::sync::Arc;
 //!
 //! // Trait-based interface (recommended)
@@ -33,7 +33,7 @@
 //! # Keyed services (strategy pattern)
 //!
 //! ```rust
-//! use rust_dicore::*;
+//! use rust_dix::*;
 //! use std::sync::Arc;
 //!
 //! trait Strategy: Send + Sync { fn execute(&self) -> &'static str; }
@@ -59,7 +59,7 @@
 //! LRDI validates dependencies during `build()` to catch errors early:
 //!
 //! ```rust
-//! # use rust_dicore::*;
+//! # use rust_dix::*;
 //! # use std::sync::Arc;
 //! # struct A;
 //! # struct B;
@@ -92,7 +92,7 @@
 //! async resolution:
 //!
 //! ```rust,ignore
-//! use rust_dicore::*;
+//! use rust_dix::*;
 //! use std::sync::Arc;
 //!
 //! struct DbPool { conn: String }
@@ -123,8 +123,8 @@
 //!   - `keyed_scoped(key, factory)` — shared within scope
 //!   - `keyed_transient(key, factory)` — new instance each time
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
-//! - **Attribute-based auto-registration**: `#[rust_dicore::inject]` on structs or trait impls
-//! - **Compile-time module scanning**: `#[rust_dicore::module]` collects `register!()` declarations
+//! - **Attribute-based auto-registration**: `#[rust_dix::inject]` on structs or trait impls
+//! - **Compile-time module scanning**: `#[rust_dix::module]` collects `register!()` declarations
 //! - **Cross-DLL support**: named service registry for cdylib plugins
 //! - **Layered containers**: child-first resolution via `ServiceProviderWrapper`
 //! - **Build-time validation**: circular dependency detection during `build()`
@@ -145,9 +145,9 @@
 //! # Proc-macros
 //!
 //! - `#[derive(Inject)]` — auto-generates constructor injection code
-//! - `#[rust_dicore::inject]` — auto-registration on structs or trait impls
-//! - `#[rust_dicore::module]` — compile-time module scanning
-//! - `rust_dicore::register!(...)` — declare services inside `#[rust_dicore::module]`
+//! - `#[rust_dix::inject]` — auto-registration on structs or trait impls
+//! - `#[rust_dix::module]` — compile-time module scanning
+//! - `rust_dix::register!(...)` — declare services inside `#[rust_dix::module]`
 
 pub mod bridge;
 mod cache;
@@ -220,8 +220,8 @@ pub use error::RdiError;
 
 pub use registration::ServiceRegistration;
 
-/// Re-export of `inventory` so that `#[rust_dicore::inject]` generated code
-/// can call `rust_dicore::inventory::submit!` without requiring downstream crates
+/// Re-export of `inventory` so that `#[rust_dix::inject]` generated code
+/// can call `rust_dix::inventory::submit!` without requiring downstream crates
 /// to add `inventory` to their own `Cargo.toml`.
 #[doc(hidden)]
 pub use inventory;
@@ -229,5 +229,5 @@ pub use inventory;
 // ── Proc-macros ──
 
 // `inject` is the attribute macro (placed on structs or trait impls).
-// `register` is the function-like macro used inside `#[rust_dicore::module]`.
-pub use rust_dicore_macros::{inject, module, register, Inject};
+// `register` is the function-like macro used inside `#[rust_dix::module]`.
+pub use rust_dix_macros::{inject, module, register, Inject};

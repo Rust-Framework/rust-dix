@@ -1,8 +1,8 @@
-{
+﻿{
   "meta": {
-    "title": "rust-dicore Dependency Injection Framework",
+    "title": "rust-dix Dependency Injection Framework",
     "subtitle": "面向接口·键控服务·设计模式落地",
-    "docTitle": "rust-dicore 开发者手册：面向接口开发的 Rust DI 框架",
+    "docTitle": "rust-dix 开发者手册：面向接口开发的 Rust DI 框架",
     "description": "受 Microsoft.Extensions.DependencyInjection 启发的 Rust 依赖注入框架。支持三种生命周期、键控服务策略模式、循环依赖检测、跨 DLL 插件、过程宏自动注册。",
     "category": "library",
     "tags": ["rust", "di", "dependency-injection", "interface-oriented", "design-patterns"],
@@ -27,12 +27,12 @@
       "chapters": [
         {
           "id": "01-introduction",
-          "title": "认识 rust-dicore",
+          "title": "认识 rust-dix",
           "subtitle": "框架定位、核心概念与适用场景",
           "sections": [
             {
-              "id": "what-is-rust-dicore",
-              "title": "什么是 rust-dicore",
+              "id": "what-is-rust-dix",
+              "title": "什么是 rust-dix",
               "summary": "框架定义、核心能力与设计目标",
               "readingTime": 8,
               "difficulty": "beginner"

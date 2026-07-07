@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream as TokenStream2;
+﻿use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
@@ -47,7 +47,7 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
                     .map(|s| s.ident.to_string())
                     .collect::<Vec<_>>()
                     .join("::");
-                if ps == "register" || ps == "rust_dicore::register" {
+                if ps == "register" || ps == "rust_dix::register" {
                     if let Ok(r) = syn::parse2::<ID>(mc.mac.tokens.clone()) {
                         rs.push(r);
                     }
@@ -64,19 +64,19 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
             IK::N { lt, ty, imp } => {
                 let mt = lmt(*lt);
                 if let Some(imp_ty) = imp {
-                    ch.push(quote!{ .#mt::<#ty>(|_: &dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt::<#ty>(|_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
                 } else {
-                    ch.push(quote!{ .#mt(|_: &dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt(|_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
                 }
             }
             IK::K { key, lt, ty } => {
                 let mt = kmt(*lt);
-                ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
             }
             IK::F { lt, f } => {
                 let mt = lmt(*lt);
                 ch.push(
-                    quote! { .#mt(move |_: &dyn rust_dicore::IServiceResolver| ::std::sync::Arc::new(#f)) },
+                    quote! { .#mt(move |_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(#f)) },
                 );
             }
         }
@@ -84,8 +84,8 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
     vd(&rs)?;
     let bi: syn::Item = syn::parse2(quote! {
         #[doc(hidden)]
-        pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<rust_dicore::ServiceProvider>, rust_dicore::RdiError> {
-            rust_dicore::ServiceCollection::new() #(#ch)* .build()
+        pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<rust_dix::ServiceProvider>, rust_dix::RdiError> {
+            rust_dix::ServiceCollection::new() #(#ch)* .build()
         }
     })
     .unwrap();

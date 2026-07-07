@@ -1,4 +1,4 @@
-//! Complex async integration test — e-commerce order processing scenario.
+﻿//! Complex async integration test — e-commerce order processing scenario.
 //!
 //! Models a realistic web application with:
 //! - Async infrastructure (DB pool, Redis cache, payment gateways)
@@ -8,7 +8,7 @@
 
 mod common;
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

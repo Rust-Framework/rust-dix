@@ -1,6 +1,6 @@
-mod common;
+﻿mod common;
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 #[test]
@@ -205,9 +205,9 @@ fn scope_get_keyed_panics_on_missing() {
 
 #[test]
 fn module_singleton_with_trait() {
-    #[rust_dicore::module]
+    #[rust_dix::module]
     mod svc {
-        rust_dicore::register!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
+        rust_dix::register!(singleton: dyn super::common::IPlugin => super::common::TestPlugin);
     }
     let p = svc::__rdi_build_provider_svc().unwrap();
     let plugin: Arc<dyn common::IPlugin> = p.get::<dyn common::IPlugin>().unwrap();
@@ -216,9 +216,9 @@ fn module_singleton_with_trait() {
 
 #[test]
 fn module_scoped_lifetime() {
-    #[rust_dicore::module]
+    #[rust_dix::module]
     mod scoped_mod {
-        rust_dicore::register!(scoped: super::common::MyService);
+        rust_dix::register!(scoped: super::common::MyService);
     }
     let p = Arc::new(scoped_mod::__rdi_build_provider_scoped_mod().unwrap());
     let scope = p.scope();
@@ -227,9 +227,9 @@ fn module_scoped_lifetime() {
 
 #[test]
 fn module_transient_lifetime() {
-    #[rust_dicore::module]
+    #[rust_dix::module]
     mod trans_mod {
-        rust_dicore::register!(transient: super::common::MyService);
+        rust_dix::register!(transient: super::common::MyService);
     }
     let p = trans_mod::__rdi_build_provider_trans_mod().unwrap();
     let _svc: Arc<common::MyService> = p.get().unwrap();
@@ -237,10 +237,10 @@ fn module_transient_lifetime() {
 
 #[test]
 fn module_multiple_registrations() {
-    #[rust_dicore::module]
+    #[rust_dix::module]
     mod multi {
-        rust_dicore::register!(singleton: super::common::Logger);
-        rust_dicore::register!(singleton: super::common::MyService);
+        rust_dix::register!(singleton: super::common::Logger);
+        rust_dix::register!(singleton: super::common::MyService);
     }
     let p = multi::__rdi_build_provider_multi().unwrap();
     let _log: Arc<common::Logger> = p.get().unwrap();
@@ -249,9 +249,9 @@ fn module_multiple_registrations() {
 
 #[test]
 fn module_keyed_singleton() {
-    #[rust_dicore::module]
+    #[rust_dix::module]
     mod keyed_mod {
-        rust_dicore::register!(keyed "x": singleton: super::common::MyService);
+        rust_dix::register!(keyed "x": singleton: super::common::MyService);
     }
     let p = keyed_mod::__rdi_build_provider_keyed_mod().unwrap();
     let svc: Arc<common::MyService> = p.get_keyed("x").unwrap();

@@ -1,6 +1,6 @@
-# 第三章 面向接口编程范式
+﻿# 第三章 面向接口编程范式
 
-本章讲解 rust-dicore 推荐的面向接口开发模式——这是实现松耦合、可测试、可扩展架构的核心。
+本章讲解 rust-dix 推荐的面向接口开发模式——这是实现松耦合、可测试、可扩展架构的核心。
 
 ## 本章小节
 
@@ -23,21 +23,21 @@ pub trait IUserService: Send + Sync {
 }
 
 // handlers/user.rs — 实现层
-#[rust_dicore::inject(singleton)]
+#[rust_dix::inject(singleton)]
 pub struct UserService {
     db: Arc<dyn IDbContext>,  // 依赖接口，不依赖具体类型
 }
 
-#[rust_dicore::inject]
+#[rust_dix::inject]
 impl IUserService for UserService { ... }
 
 // handlers/user_handler.rs — Handler 注入接口
-#[rust_dicore::inject(singleton)]
+#[rust_dix::inject(singleton)]
 pub struct CreateUserHandler {
     user_svc: Arc<dyn IUserService>,  // 接口依赖
 }
 
-#[rust_dicore::inject]
+#[rust_dix::inject]
 impl IRequestHandler<CreateUserRequest, User> for CreateUserHandler { /* ... */ }
 ```
 

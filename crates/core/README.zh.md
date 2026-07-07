@@ -1,25 +1,25 @@
-<p align="center">
-  <img src="../assets/logo.svg" alt="rust-dicore" width="80">
+﻿<p align="center">
+  <img src="../assets/logo.svg" alt="rust-dix" width="80">
 </p>
 
-<h1 align="center">rust-dicore · Rust 依赖注入容器</h1>
+<h1 align="center">rust-dix · Rust 依赖注入容器</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/rust-dicore"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore.svg?style=flat-square"></a>
-  <a href="https://docs.rs/rust-dicore"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dix"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dix"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="README.md"><strong>English</strong></a>
+  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/crates/core/README.md"><strong>English</strong></a>
 </p>
 
-`rust-dicore` 是 rust-dicore 框架的核心 crate — 一个受 Microsoft.Extensions.DependencyInjection
+`rust-dix` 是 rust-dix 框架的核心 crate — 一个受 Microsoft.Extensions.DependencyInjection
 (MEDI) 启发的 Rust 依赖注入容器。
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"
+rust-dix = "0.6"
 ```
 
 ---
@@ -67,7 +67,7 @@ fn test_provider() -> ServiceProvider {
 **3. 你的对象有不同的生命周期**
 
 有些服务应该全局共享（数据库连接池），有些应该每次请求一个（HTTP 上下文），
-有些应该每次都是新的（值对象）。rust-dicore 提供了三种生命周期来自然建模。
+有些应该每次都是新的（值对象）。rust-dix 提供了三种生命周期来自然建模。
 
 | 生命周期 | 行为 | 典型场景 |
 |----------|------|---------|
@@ -112,7 +112,7 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
   插件自己的服务优先可见，宿主服务作为回退。
 - **命名服务**：通过字符串名称注册服务 — 对于 cdylib 插件至关重要，
   因为 Rust 的 `TypeId` 跨编译单元不一致。
-- **`IServiceLocator`**：将统一的 DI 接口传递给不直接依赖 rust-dicore 的外部模块。
+- **`IServiceLocator`**：将统一的 DI 接口传递给不直接依赖 rust-dix 的外部模块。
 
 ---
 
@@ -122,7 +122,7 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
 
 | 方法 | 生命周期 | 使用场景 |
 |--------|----------|---------|
-| `.from_injected()` | *混合* | 收集所有 `#[rust_dicore::inject]` 标注（推荐） |
+| `.from_injected()` | *混合* | 收集所有 `#[rust_dix::inject]` 标注（推荐） |
 | `.singleton(f)` | Singleton | 全局唯一实例（配置、连接池） |
 | `.scoped(f)` | Scoped | 每个 Scope 一个实例（请求上下文、事务） |
 | `.transient(f)` | Transient | 每次解析新建（轻量无状态服务） |
@@ -144,19 +144,19 @@ ServiceCollection::new()
     .unwrap();
 ```
 
-#### `#[rust_dicore::inject]` — 基于属性宏的自动注册（推荐）
+#### `#[rust_dix::inject]` — 基于属性宏的自动注册（推荐）
 
-推荐的方式是直接在结构体（或 trait impl 块）上标注 `#[rust_dicore::inject(...)]`：
+推荐的方式是直接在结构体（或 trait impl 块）上标注 `#[rust_dix::inject(...)]`：
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 
 // 标注结构体 → 注册为具体类型
 // 生命周期参数省略时默认为 singleton
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct Config { url: String }
 
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct Worker { logger: Arc<Config> }
 
 // 标注 trait impl → 注册为 `dyn Trait`
@@ -168,18 +168,18 @@ trait UserRepo { /* ... */ }
 #[derive(Inject)]
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[rust_dicore::inject]              // 在 impl 上：trait 注册（默认 singleton）
+#[rust_dix::inject]              // 在 impl 上：trait 注册（默认 singleton）
 impl UserRepo for PgUserRepo { /* ... */ }
 
 // 一步收集所有标注并构建：
 let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 
-`#[rust_dicore::inject]` 属性宏自动生成构造函数代码（类似 `#[derive(Inject)]`）
+`#[rust_dix::inject]` 属性宏自动生成构造函数代码（类似 `#[derive(Inject)]`）
 并通过 `inventory` 自动注册到容器。支持命名结构体和单元结构体（零字段）：
 
 ```rust
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct RoleAuthorizer;  // 单元结构体 — 零字段
 
 impl Default for RoleAuthorizer { fn default() -> Self { Self } }
@@ -390,11 +390,11 @@ trait PaymentGateway: Send + Sync {
 #[derive(Inject)]
 struct CreditCardGateway;
 
-#[rust_dicore::inject]  // 在 impl 上：注册为默认 dyn PaymentGateway
+#[rust_dix::inject]  // 在 impl 上：注册为默认 dyn PaymentGateway
 impl PaymentGateway for CreditCardGateway { /* ... */ }
 
 // keyed 实现不能用 #[inject] 自动注册，在组合根手动注册
-// （或用 #[rust_dicore::module]）
+// （或用 #[rust_dix::module]）
 let provider = ServiceCollection::from_injected()
     .keyed_singleton::<dyn PaymentGateway>("alipay",  |_| Arc::new(AlipayGateway))
     .keyed_singleton::<dyn PaymentGateway>("wechat", |_| Arc::new(WechatGateway))
@@ -402,7 +402,7 @@ let provider = ServiceCollection::from_injected()
     .unwrap();
 
 // 消费方依赖接口，不依赖具体实现
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct OrderService {
     #[inject(provider)]  // 按需解析策略
     provider: Arc<ServiceProvider>,
@@ -509,15 +509,15 @@ let provider: Arc<dyn IProvider> = provider as Arc<dyn IProvider>;
 
 ---
 
-### 与 rust-dicore-macros 的关系
+### 与 rust-dix-macros 的关系
 
-`rust-dicore` 可以独立使用，也可以配合 [`rust-dicore-macros`](../macros/) 使用。
+`rust-dix` 可以独立使用，也可以配合 [`rust-dix-macros`](../macros/) 使用。
 过程宏提供三个编译期便利：
 
-- **`#[rust_dicore::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
+- **`#[rust_dix::inject(...)]`**（推荐）— 属性宏，同时完成构造函数生成 + 自动注册。
   只需在结构体（或 trait impl 块）上标注一行，`ServiceCollection::from_injected()` 自动收集所有注册。
-- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，`#[rust_dicore::inject]` 内部使用。
-- **`#[rust_dicore::module]`** — 编译期收集 `rust_dicore::register!()` 声明，生成完整的 provider
+- **`#[derive(Inject)]`** — 从结构体字段自动生成工厂函数，`#[rust_dix::inject]` 内部使用。
+- **`#[rust_dix::module]`** — 编译期收集 `rust_dix::register!()` 声明，生成完整的 provider
   构建函数。适用于外部类型注册、条件编译和集中式管理。
 
 详见 [`macros/README.md`](../macros/README.md)。

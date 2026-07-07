@@ -1,8 +1,8 @@
-# 业务场景实战
+﻿# 业务场景实战
 
-本文档提供真实业务场景下的 rust-dicore 完整使用方案，涵盖从项目初始化到上线部署的全流程。
+本文档提供真实业务场景下的 rust-dix 完整使用方案，涵盖从项目初始化到上线部署的全流程。
 
-> 本文示例采用简短路径风格，假定文件顶部已 `use rust_dicore::*;`。导入约定详见 [用法指南](usage-guide.md#1-导入约定路径简化)。
+> 本文示例采用简短路径风格，假定文件顶部已 `use rust_dix::*;`。导入约定详见 [用法指南](usage-guide.md#1-导入约定路径简化)。
 
 ---
 
@@ -51,7 +51,7 @@ pub struct User {
 ### 实现层：services/user_service.rs
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 use crate::contracts::user::*;
 use crate::repositories::user_repo::IUserRepo;
@@ -77,7 +77,7 @@ impl IUserService for UserService {
 ### 组合根：main.rs
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 mod contracts;
@@ -176,7 +176,7 @@ pub struct Order {
 ### 实现：策略模式 + 工厂模式
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 支付网关：键控服务实现策略模式
@@ -305,7 +305,7 @@ mod tests {
 ### 实现
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -399,7 +399,7 @@ fn handle_request(provider: &Arc<ServiceProvider>, tenant_id: &str) {
 ### 宿主端
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 定义插件接口（在宿主 crate 中）
@@ -443,7 +443,7 @@ let bus: Arc<EventBus> = wrapper.get_named("event_bus").unwrap();  // 回退宿�
 
 ```rust
 // 插件 crate 中
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 #[derive(Inject)]
@@ -483,7 +483,7 @@ impl IPlugin for MyPlugin {
 ```rust
 #[cfg(test)]
 mod tests {
-    use rust_dicore::*;
+    use rust_dix::*;
     use std::sync::Arc;
 
     // 1. Mock 实现

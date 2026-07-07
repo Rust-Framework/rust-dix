@@ -1,4 +1,4 @@
-//! Tests for owned service resolution (`get_owned::<T>() -> T`).
+﻿//! Tests for owned service resolution (`get_owned::<T>() -> T`).
 //!
 //! Covers: Transient/Scoped/Singleton owned semantics, scope dependency
 //! binding, keyed owned, #[derive(Inject)] owned/Option/keyed fields,
@@ -9,8 +9,8 @@
 
 mod common;
 
-use rust_dicore::*;
-use rust_dicore_macros::Inject;
+use rust_dix::*;
+use rust_dix_macros::Inject;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

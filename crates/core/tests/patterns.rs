@@ -1,7 +1,7 @@
-//! Architecture pattern integration tests.
+﻿//! Architecture pattern integration tests.
 //! Each pattern is self-contained with its own local types.
 
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // ── Strategy Pattern ──

@@ -1,6 +1,6 @@
-# rust-dicore 开发者手册 · 目录
+﻿# rust-dix 开发者手册 · 目录
 
-> 面向使用 rust-dicore 框架的开发者 · 面向接口开发 · 设计模式落地
+> 面向使用 rust-dix 框架的开发者 · 面向接口开发 · 设计模式落地
 
 ---
 
@@ -14,9 +14,9 @@
 
 ## 第一部分 · 入门与认知
 
-### [第一章 认识 rust-dicore](01-introduction/INDEX.md)
+### [第一章 认识 rust-dix](01-introduction/INDEX.md)
 
-- [什么是 rust-dicore](01-introduction/what-is-rust-dicore.md)
+- [什么是 rust-dix](01-introduction/what-is-rust-dix.md)
 - [核心概念与 MEDI 对照](01-introduction/core-concepts.md)
 - [适用场景与边界](01-introduction/who-should-use.md)
 

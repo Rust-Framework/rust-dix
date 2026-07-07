@@ -1,4 +1,4 @@
-//! Tests for the explicit field injection semantics introduced in 0.6.0.
+﻿//! Tests for the explicit field injection semantics introduced in 0.6.0.
 //!
 //! Invariants verified:
 //! - Unmarked fields use `Default::default()` and never consult the resolver.
@@ -12,8 +12,8 @@
 
 mod common;
 
-use rust_dicore::*;
-use rust_dicore_macros::Inject;
+use rust_dix::*;
+use rust_dix_macros::Inject;
 use std::sync::Arc;
 
 // ─────────────────────────────────────────────────────────────────

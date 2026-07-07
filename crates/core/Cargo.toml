@@ -1,19 +1,19 @@
 [package]
-name = "rust-dicore"
+name = "rust-dix"
 version.workspace = true
 edition.workspace = true
-description = "rust-dicore: A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
+description = "rust-dix: A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
 include = ["README.md", "src/**/*", "tests/**/*"]
 categories = ["rust-patterns", "asynchronous"]
-keywords = ["di", "dependency-injection", "ioc", "rust-dicore", "service-provider"]
+keywords = ["di", "dependency-injection", "ioc", "rust-dix", "service-provider"]
 
 [dependencies]
 thiserror.workspace = true
 inventory = "0.3"
-rust-dicore-macros = { path = "../macros", version = "0.5.2" }
+rust-dix-macros = { path = "../macros", version = "0.6.0" }
 futures = "0.3"
 
 [dev-dependencies]

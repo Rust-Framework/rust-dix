@@ -1,20 +1,20 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="rust-dicore" width="80">
+﻿<p align="center">
+  <img src="assets/logo.svg" alt="rust-dix" width="80">
 </p>
 
-<h1 align="center">rust-dicore · Dependency Injection for Rust</h1>
+<h1 align="center">rust-dix · Dependency Injection for Rust</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/rust-dicore"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore.svg?style=flat-square"></a>
-  <a href="https://docs.rs/rust-dicore"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dix"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dix"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="README.zh.md"><strong>中文</strong></a>
+  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/README.zh.md"><strong>中文</strong></a>
 </p>
 
-**rust-dicore** is a dependency injection framework for Rust, inspired by
+**rust-dix** is a dependency injection framework for Rust, inspired by
 Microsoft.Extensions.DependencyInjection (MEDI). It provides a service container
 with constructor injection, scoped lifetimes, async initialization, and
 compile-time validation — all with zero `unsafe` code.
@@ -23,26 +23,26 @@ compile-time validation — all with zero `unsafe` code.
 
 | Crate | What it does | Who needs it |
 |-------|-------------|--------------|
-| [`rust-dicore`](./crates/core/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
-| [`rust-dicore-macros`](./crates/macros/) | Procedural macros — `#[derive(Inject)]`, `#[rust_dicore::inject]`, `#[rust_dicore::module]` | Anyone using `rust-dicore` who wants compile-time code generation instead of manual wiring |
+| [`rust-dix`](./crates/core/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
+| [`rust-dix-macros`](./crates/macros/) | Procedural macros — `#[derive(Inject)]`, `#[rust_dix::inject]`, `#[rust_dix::module]` | Anyone using `rust-dix` who wants compile-time code generation instead of manual wiring |
 
 ## Quick Start
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"
+rust-dix = "0.6"
 ```
 
 ### Sync applications
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
-#[rust_dicore::inject(singleton)]
+#[rust_dix::inject(singleton)]
 struct Config;
 
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct Worker { config: Arc<Config> }
 
 let provider = ServiceCollection::from_injected()
@@ -55,7 +55,7 @@ let worker: Arc<Worker> = provider.get().unwrap();
 ### Async applications (e.g., axum / actix-web)
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 struct DbPool { conn: String }
@@ -76,9 +76,9 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 
 | Feature | Description |
 |---------|-------------|
-| `#[rust_dicore::inject]` | Attribute-macro-based auto-registration on structs or trait impls |
+| `#[rust_dix::inject]` | Attribute-macro-based auto-registration on structs or trait impls |
 | `#[derive(Inject)]` | Derive-macro for constructor injection on structs |
-| `#[rust_dicore::module]` | Compile-time module scanning via `register!(...)` |
+| `#[rust_dix::module]` | Compile-time module scanning via `register!(...)` |
 | **Three lifetimes** | Singleton, Scoped, Transient |
 | **Keyed services** | Multiple implementations of the same trait by string key |
 | **Async support** | `build_async()` + `async_*` registration for services needing async init |
@@ -88,7 +88,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Owned resolution** | `get_owned::<T>()` returns owned `T` for `&mut self` — no interior mutability |
 | **Scoped cleanup** | Cleanup closures + automatic `Drop` for scoped resource release |
 
-## When should you use rust-dicore?
+## When should you use rust-dix?
 
 - **You are building a medium-to-large Rust application** where manually
   constructing dependencies becomes tedious and error-prone.
@@ -101,7 +101,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 
 ## Interface-oriented programming
 
-The core principle of rust-dicore: **depend on traits, not concrete types**. This
+The core principle of rust-dix: **depend on traits, not concrete types**. This
 enables mock substitution in tests and swapping implementations without changing
 consumers.
 
@@ -120,7 +120,7 @@ Register multiple services under the same trait, then resolve them all at once.
 **Registration side:**
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 pub trait INotificationChannel: Send + Sync {
@@ -264,7 +264,7 @@ let order_svc: Arc<dyn IOrderService> = scope_a.get().unwrap();
 Scoped can depend on Singleton. Transient can depend on anything.
 
 For detailed patterns (contracts layer, layered architecture, plugin systems),
-see the [business scenario tutorials](docs/rust-dicore/08-best-practices/business-scenarios.md).
+see the [business scenario tutorials](docs/rust-dix/08-best-practices/business-scenarios.md).
 
 ## Best practices
 
@@ -354,7 +354,7 @@ Responsibility, Pipeline, Plugin, Composite, Proxy, Feature Toggle), see the
 ## Real-world example: Web application
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // ── Infrastructure (async) ──
@@ -410,7 +410,7 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 
 - [crates/core — core library docs](./crates/core/README.md)
 - [crates/macros — procedural macro docs](./crates/macros/README.md)
-- [Business scenario tutorials](docs/rust-dicore/08-best-practices/business-scenarios.md) — real-world patterns
+- [Business scenario tutorials](docs/rust-dix/08-best-practices/business-scenarios.md) — real-world patterns
 - [Integration tests](crates/core/tests/) — real-world usage patterns
 
 ## License

@@ -1,13 +1,13 @@
-# dyn Trait 注册与解析
+﻿# dyn Trait 注册与解析
 
 ## 核心规则：注册类型 = 解析类型
 
-rust-dicore 使用 Rust 的 `TypeId` 作为服务标识。注册时的类型必须与解析时的类型一致。
+rust-dix 使用 Rust 的 `TypeId` 作为服务标识。注册时的类型必须与解析时的类型一致。
 
 ### 正确示例
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 定义 trait

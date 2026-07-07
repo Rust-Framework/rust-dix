@@ -1,25 +1,25 @@
-<p align="center">
-  <img src="../assets/logo.svg" alt="rust-dicore" width="80">
+﻿<p align="center">
+  <img src="../assets/logo.svg" alt="rust-dix" width="80">
 </p>
 
-<h1 align="center">rust-dicore · Dependency Injection Container</h1>
+<h1 align="center">rust-dix · Dependency Injection Container</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/rust-dicore"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore.svg?style=flat-square"></a>
-  <a href="https://docs.rs/rust-dicore"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dix"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dix"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="README.zh.md"><strong>中文</strong></a>
+  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/crates/core/README.zh.md"><strong>中文</strong></a>
 </p>
 
-`rust-dicore` is the core crate of the rust-dicore framework — a Rust dependency injection
+`rust-dix` is the core crate of the rust-dix framework — a Rust dependency injection
 container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"
+rust-dix = "0.6"
 ```
 
 ---
@@ -69,7 +69,7 @@ fn test_provider() -> ServiceProvider {
 **3. You have objects with different lifetimes**
 
 Some services should be shared globally (database pool), some per-request
-(HTTP context), some created fresh each time (value objects). rust-dicore gives you
+(HTTP context), some created fresh each time (value objects). rust-dix gives you
 three lifetimes to model this naturally.
 
 | Lifetime | Behavior | Typical use |
@@ -118,7 +118,7 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 - **Named services**: register services by string name — critical for cdylib
   plugins where Rust's `TypeId` differs across compilation units.
 - **`IServiceLocator`**: pass a unified DI interface to external modules that
-  don't depend on rust-dicore directly.
+  don't depend on rust-dix directly.
 
 ---
 
@@ -128,7 +128,7 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 
 | Method | Lifetime | Use when |
 |--------|----------|----------|
-| `.from_injected()` | *mixed* | Collect all `#[rust_dicore::inject]` annotations (see below) |
+| `.from_injected()` | *mixed* | Collect all `#[rust_dix::inject]` annotations (see below) |
 | `.singleton(f)` | Singleton | You need exactly one instance shared globally |
 | `.scoped(f)` | Scoped | You need one instance per scope (request/transaction) |
 | `.transient(f)` | Transient | You need a new instance every time |
@@ -151,20 +151,20 @@ ServiceCollection::new()
     .unwrap();
 ```
 
-#### `#[rust_dicore::inject]` — Attribute-based auto-registration (recommended)
+#### `#[rust_dix::inject]` — Attribute-based auto-registration (recommended)
 
 The preferred way to register services is to annotate structs (or trait impl
 blocks) directly:
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 
 // Annotate a struct → registered as its concrete type.
 // Lifetime defaults to `singleton` when omitted.
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct Config { url: String }
 
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct Worker { logger: Arc<Config> }
 
 // Annotate a trait impl → registered as `dyn Trait`.
@@ -178,21 +178,21 @@ trait UserRepo { /* ... */ }
 #[derive(Inject)]
 struct PgUserRepo { db: Arc<DbPool> }
 
-#[rust_dicore::inject]              // on the impl: trait registration (singleton by default)
+#[rust_dix::inject]              // on the impl: trait registration (singleton by default)
 impl UserRepo for PgUserRepo { /* ... */ }
 
 // Then build from all annotations in one call:
 let provider = ServiceCollection::from_injected().build().unwrap();
 ```
 
-The `#[rust_dicore::inject]` attribute automatically generates constructor code
+The `#[rust_dix::inject]` attribute automatically generates constructor code
 (like `#[derive(Inject)]`) and registers the service via `inventory`
 (on Linux, macOS, and Windows).
 Supports both named-field structs and unit structs (zero fields):
 
 ```rust
 // Unit struct — zero fields, works out of the box
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct RoleAuthorizer;
 
 impl Default for RoleAuthorizer { fn default() -> Self { Self } }
@@ -495,18 +495,18 @@ let provider: Arc<dyn IProvider> = provider as Arc<dyn IProvider>;
 
 ---
 
-### Relationship with rust-dicore-macros
+### Relationship with rust-dix-macros
 
-`rust-dicore` works with or without [`rust-dicore-macros`](../macros/). The macros
+`rust-dix` works with or without [`rust-dix-macros`](../macros/). The macros
 provide three compile-time conveniences:
 
-- **`#[rust_dicore::inject(...)]`** (recommended) — Attribute macro that combines
+- **`#[rust_dix::inject(...)]`** (recommended) — Attribute macro that combines
   constructor generation + auto-registration. One annotation on a struct (or
   trait impl) is all you need — `ServiceCollection::from_injected()` collects
   everything.
 - **`#[derive(Inject)]`** — Generate the factory function automatically from
-  struct fields. Used internally by `#[rust_dicore::inject]`.
-- **`#[rust_dicore::module]`** — Collect `rust_dicore::register!()` declarations at compile
+  struct fields. Used internally by `#[rust_dix::inject]`.
+- **`#[rust_dix::module]`** — Collect `rust_dix::register!()` declarations at compile
   time and generate a complete provider builder. Useful for external types,
   conditional compilation, and centralized management.
 

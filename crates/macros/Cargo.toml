@@ -1,8 +1,8 @@
-﻿[package]
-name = "rust-dicore-macros"
+[package]
+name = "rust-dix-macros"
 version.workspace = true
 edition.workspace = true
-description = "Procedural macros for rust-dicore — a Rust dependency injection framework"
+description = "Procedural macros for rust-dix — a Rust dependency injection framework"
 license.workspace = true
 repository.workspace = true
 

@@ -1,40 +1,40 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="rust-dicore" width="80">
+﻿<p align="center">
+  <img src="assets/logo.svg" alt="rust-dix" width="80">
 </p>
 
-<h1 align="center">rust-dicore · Rust 依赖注入框架</h1>
+<h1 align="center">rust-dix · Rust 依赖注入框架</h1>
 
 <p align="center">
-  <a href="https://crates.io/crates/rust-dicore"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dicore.svg?style=flat-square"></a>
-  <a href="https://docs.rs/rust-dicore"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dicore?style=flat-square"></a>
+  <a href="https://crates.io/crates/rust-dix"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix.svg?style=flat-square"></a>
+  <a href="https://docs.rs/rust-dix"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="README.md"><strong>English</strong></a>
+  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/README.md"><strong>English</strong></a>
 </p>
 
 ## 中文
 
-**rust-dicore** 是一个 Cargo 工作空间（workspace），提供一个受
+**rust-dix** 是一个 Cargo 工作空间（workspace），提供一个受
 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 Rust 依赖注入框架。
 
 ### 工作空间包含的 crate
 
 | Crate | 功能 | 适用人群 |
 |-------|------|---------|
-| [`rust-dicore`](./crates/core/) | 核心 DI 容器 — 注册、构建、解析、作用域 | 任何希望解耦、可测试、可插拔架构的 Rust 应用 |
-| [`rust-dicore-macros`](./crates/macros/) | 过程宏 — `#[derive(Inject)]`、`#[rust_dicore::inject]`、`#[rust_dicore::module]` | 使用 `rust-dicore` 并希望编译期自动生成代码的用户 |
+| [`rust-dix`](./crates/core/) | 核心 DI 容器 — 注册、构建、解析、作用域 | 任何希望解耦、可测试、可插拔架构的 Rust 应用 |
+| [`rust-dix-macros`](./crates/macros/) | 过程宏 — `#[derive(Inject)]`、`#[rust_dix::inject]`、`#[rust_dix::module]` | 使用 `rust-dix` 并希望编译期自动生成代码的用户 |
 
 ### 快速开始
 
 ```toml
 [dependencies]
-rust-dicore = "0.5"
+rust-dix = "0.6"
 ```
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // 用 #[inject(...)] 标注你的结构体 —
@@ -56,7 +56,7 @@ let worker: Arc<Worker> = provider.get().unwrap();
 ### 异步应用（如 axum / actix-web）
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 struct DbPool { conn: String }
@@ -89,7 +89,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Owned 解析** | `get_owned::<T>()` 返回 owned `T`，支持 `&mut self` — 无需 interior mutability |
 | **Scoped 清理** | 清理闭包 + 自动 `Drop`，Scoped 资源释放 |
 
-### 什么时候用 rust-dicore？
+### 什么时候用 rust-dix？
 
 - **你在构建中等规模以上的 Rust 应用**，手动拼接依赖链变得繁琐且易出错。
 - **你需要可测试性** — 改一行注册代码就能用 mock 替换真实实现。
@@ -98,7 +98,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 
 ### 面向接口编程
 
-rust-dicore 的核心原则：**依赖 trait，而非具体类型**。这使得测试中可以替换 mock，增加新实现无需修改消费方。
+rust-dix 的核心原则：**依赖 trait，而非具体类型**。这使得测试中可以替换 mock，增加新实现无需修改消费方。
 
 #### 为什么面向接口
 
@@ -115,7 +115,7 @@ rust-dicore 的核心原则：**依赖 trait，而非具体类型**。这使得�
 **注册端：**
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 pub trait INotificationChannel: Send + Sync {
@@ -255,7 +255,7 @@ let order_svc: Arc<dyn IOrderService> = scope_a.get().unwrap();
 
 **关键规则**：Singleton 不得依赖 Scoped（构建期强制拒绝）。Scoped 可依赖 Singleton。Transient 可依赖任何生命周期。
 
-详细模式（合约层、分层架构、插件系统）见 [业务场景实战](docs/rust-dicore/08-best-practices/business-scenarios.md)。
+详细模式（合约层、分层架构、插件系统）见 [业务场景实战](docs/rust-dix/08-best-practices/business-scenarios.md)。
 
 ### 最佳实践
 
@@ -309,7 +309,7 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
 ### 真实案例：Web 应用
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use std::sync::Arc;
 
 // ── 基础设施（异步）──
@@ -355,7 +355,7 @@ async fn main() {
 
 - [crates/core — 主库完整文档](./crates/core/README.md)
 - [crates/macros — 过程宏文档](./crates/macros/README.md)
-- [业务场景实战](docs/rust-dicore/08-best-practices/business-scenarios.md) — 真实业务模式
+- [业务场景实战](docs/rust-dix/08-best-practices/business-scenarios.md) — 真实业务模式
 - [集成测试](crates/core/tests/) — 实际用法参考
 
 ---

@@ -1,4 +1,4 @@
-use crate::entry::{AsyncServiceFactory, ServiceDescriptor, ServiceFactory, ServiceLifetime};
+﻿use crate::entry::{AsyncServiceFactory, ServiceDescriptor, ServiceFactory, ServiceLifetime};
 use crate::registration::ServiceRegistration;
 use std::any::{Any, TypeId};
 use std::future::Future;
@@ -235,7 +235,7 @@ impl ServiceCollection {
         crate::provider::ServiceProvider::new_async(s).await
     }
 
-    /// Build a `ServiceCollection` from all `#[rust_dicore::inject]` annotations
+    /// Build a `ServiceCollection` from all `#[rust_dix::inject]` annotations
     /// in the current binary (across all crates).
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub fn from_injected() -> Self {

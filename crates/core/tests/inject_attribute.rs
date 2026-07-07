@@ -1,4 +1,4 @@
-//! Tests for the `#[rust_dicore::inject]` attribute macro.
+﻿//! Tests for the `#[rust_dix::inject]` attribute macro.
 //!
 //! Covers both placement sites:
 //! - On a struct: generates constructor + registers as concrete type
@@ -11,8 +11,8 @@
 
 mod common;
 
-use rust_dicore::*;
-use rust_dicore_macros::Inject;
+use rust_dix::*;
+use rust_dix_macros::Inject;
 use std::sync::Arc;
 
 // ─────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ use std::sync::Arc;
 // ─────────────────────────────────────────────────────────────────
 
 /// Default lifetime (singleton) when no args given.
-#[rust_dicore::inject]
+#[rust_dix::inject]
 struct DefaultLifetimeService;
 
 #[test]
@@ -32,7 +32,7 @@ fn inject_on_struct_default_lifetime() {
 }
 
 /// Explicit singleton with a skipped field.
-#[rust_dicore::inject(singleton)]
+#[rust_dix::inject(singleton)]
 struct ExplicitSingleton {
     label: String,
 }
@@ -45,7 +45,7 @@ fn inject_on_struct_explicit_singleton() {
 }
 
 /// Transient lifetime — new instance each time.
-#[rust_dicore::inject(transient)]
+#[rust_dix::inject(transient)]
 struct TransientService;
 
 #[test]
@@ -57,7 +57,7 @@ fn inject_on_struct_transient() {
 }
 
 /// Struct with field injection from another auto-registered service.
-#[rust_dicore::inject]
+#[rust_dix::inject]
 #[allow(dead_code)]
 struct FieldInjectionService {
     #[inject]
@@ -87,7 +87,7 @@ trait IThingA: Send + Sync {
 #[derive(Inject)]
 struct TraitOnlyRegistration;
 
-#[rust_dicore::inject]
+#[rust_dix::inject]
 impl IThingA for TraitOnlyRegistration {
     fn name(&self) -> &str {
         "trait_only"
@@ -109,10 +109,10 @@ trait IThingB: Send + Sync {
     fn kind(&self) -> &str;
 }
 
-#[rust_dicore::inject] // concrete registration + constructor
+#[rust_dix::inject] // concrete registration + constructor
 struct DualRegistered;
 
-#[rust_dicore::inject] // trait registration
+#[rust_dix::inject] // trait registration
 impl IThingB for DualRegistered {
     fn kind(&self) -> &str {
         "dual"
@@ -141,17 +141,17 @@ trait IThingD: Send + Sync {
     fn d(&self) -> &str;
 }
 
-#[rust_dicore::inject] // constructor + concrete registration
+#[rust_dix::inject] // constructor + concrete registration
 struct MultiTraitService;
 
-#[rust_dicore::inject]
+#[rust_dix::inject]
 impl IThingC for MultiTraitService {
     fn c(&self) -> &str {
         "c"
     }
 }
 
-#[rust_dicore::inject]
+#[rust_dix::inject]
 impl IThingD for MultiTraitService {
     fn d(&self) -> &str {
         "d"
@@ -178,7 +178,7 @@ trait IThingE: Send + Sync {
 #[derive(Inject)]
 struct ScopedTraitImpl;
 
-#[rust_dicore::inject(scoped)]
+#[rust_dix::inject(scoped)]
 impl IThingE for ScopedTraitImpl {
     fn e(&self) -> &str {
         "scoped"
