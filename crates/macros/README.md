@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="../assets/logo.svg" alt="rust-dix" width="80">
 </p>
 
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/crates/macros/README.zh.md"><strong>中文</strong></a>
+  <a href="https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.zh.md"><strong>中文</strong></a>
 </p>
 
 `rust-dix-macros` provides procedural macros for the [`rust-dix`](../core/) DI

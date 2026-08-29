@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gitcode.com/rf2026/rust-dix/blob/main/crates/macros/README.md"><strong>English</strong></a>
+  <a href="https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.md"><strong>English</strong></a>
 </p>
 
 `rust-dix-macros` 为 [`rust-dix`](../core/) DI 框架提供过程宏。
