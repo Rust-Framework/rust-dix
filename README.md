@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  **English** | [简体中文](README.zh-CN.md)
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 **rust-dix** is a dependency injection framework for Rust, inspired by

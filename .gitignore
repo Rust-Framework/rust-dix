@@ -3,7 +3,9 @@ target/
 **/*.rs.bk
 /Cargo.lock
 
-# IDE
+# IDE / AI agent helpers (do not publish)
+.trae/
+.agents/
 .idea/
 .vscode/
 *.swp

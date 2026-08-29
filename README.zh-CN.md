@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  [English](README.md) | **简体中文**
+  <a href="README.md">English</a> · <strong>简体中文</strong>
 </p>
 
 **rust-dix** 是一个 Rust 依赖注入框架，灵感来自
