@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.1] - 2026-08-16
 
-### Changed
+> **English** · **简体中文**
+
+### English
+
+- **crates.io re-publish**: `rust-dix` / `rust-dix-macros` have been re-published to
+  crates.io and are now managed under the `Rust-Framework` organization; repository
+  metadata (`license`, `repository`) aligned with the GitHub repo.
+- **Automated publishing**: new GitHub Actions `publish.yml` publishes crates in
+  dependency order (`rust-dix-macros` → `rust-dix`) on `v*` tag push.
+- **Docs landing page**: added `docs/README.md` bilingual navigation.
+
+> Maintenance release; the runtime API is unchanged.
+
+### 简体中文
 
 - **crates.io 再发布**：`rust-dix` / `rust-dix-macros` 重新发布到 crates.io，归入
   `Rust-Framework` 组织统一管理；仓库元数据（`license`、`repository`）已对齐 GitHub 仓库。
