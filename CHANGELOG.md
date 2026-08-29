@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-16
+
+### Changed
+
+- **crates.io 再发布**：`rust-dix` / `rust-dix-macros` 重新发布到 crates.io，归入
+  `Rust-Framework` 组织统一管理；仓库元数据（`license`、`repository`）已对齐 GitHub 仓库。
+- **自动化发布**：新增 GitHub Actions `publish.yml`，推送 `v*` tag 时按依赖顺序自动发布
+  `rust-dix-macros` → `rust-dix`。
+- **文档落地页**：新增 `docs/README.md` 中英文档导航入口。
+
+> 本版本为发布维护迭代，不改变运行时 API。
+
 ## [0.4.1] - 2026-06-29
 
 ### Changed
@@ -132,3 +144,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.3.1]: https://github.com/Rust-Framework/rust-dix/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Rust-Framework/rust-dix/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.2.6
+[0.6.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.6.1
