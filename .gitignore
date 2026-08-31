@@ -4,6 +4,7 @@ target/
 /Cargo.lock
 
 # IDE / AI agent helpers (do not publish)
+.cursor/
 .trae/
 .agents/
 .idea/
