@@ -1,4 +1,4 @@
-﻿# 第一章 认识 rust-dix
+# 第一章 认识 rust-dix
 
 本章介绍 rust-dix 框架的基本概念、与 Microsoft.Extensions.DependencyInjection 的对照，以及适用场景。
 
