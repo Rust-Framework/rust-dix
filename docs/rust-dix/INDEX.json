@@ -1,9 +1,9 @@
 {
   "meta": {
-    "title": "rust-dix",
+    "title": "Rust DI Framework",
     "subtitle": "面向接口·键控服务·设计模式落地",
-    "docTitle": "rust-dix 开发者手册",
-    "description": "Dependency injection framework for Rust, inspired by Microsoft.Extensions.DependencyInjection — lifetimes, keyed services, circular dependency detection, and proc-macro auto-registration.",
+    "docTitle": "Rust DI Framework 开发者手册",
+    "description": "面向接口的 Rust 依赖注入框架 — 三种生命周期、键控服务、循环依赖检测与过程宏自动注册。 | Interface-oriented DI for Rust — lifetimes, keyed services, circular dependency detection, and proc-macro auto-registration.",
     "category": "library",
     "tags": ["rust", "di", "dependency-injection", "interface-oriented", "design-patterns"],
     "repoUrl": "https://github.com/Rust-Framework/rust-dix",
@@ -27,12 +27,12 @@
       "chapters": [
         {
           "id": "01-introduction",
-          "title": "认识 rust-dix",
+          "title": "认识 Rust DI Framework",
           "subtitle": "框架定位、核心概念与适用场景",
           "sections": [
             {
               "id": "what-is-rust-dix",
-              "title": "什么是 rust-dix",
+              "title": "什么是 Rust DI Framework",
               "summary": "框架定义、核心能力与设计目标",
               "readingTime": 8,
               "difficulty": "beginner"
