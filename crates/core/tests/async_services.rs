@@ -143,20 +143,20 @@ async fn async_singleton_with_sync_dependency() {
 }
 
 #[tokio::test]
-async fn async_service_resolved_via_sync_path_panics() {
-    let provider = ServiceCollection::new()
+async fn async_service_rejected_on_sync_build() {
+    let result = ServiceCollection::new()
         .async_singleton(|_| {
             Box::pin(async { Arc::new(DbPool { conn: "nope".into() }) })
         })
-        // Use build() (sync) instead of build_async() — sync factory stub
-        // panics when async-only services are resolved via the sync path.
-        .build()
-        .unwrap();
+        .build();
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = provider.get::<DbPool>();
-    }));
-    assert!(result.is_err());
+    assert!(
+        matches!(
+            result,
+            Err(RdiError::AsyncServiceRequiresBuildAsync { .. })
+        ),
+        "build() must reject async registrations with a typed error"
+    );
 }
 
 #[tokio::test]

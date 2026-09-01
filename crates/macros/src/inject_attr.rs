@@ -51,6 +51,7 @@ fn expand_inject_struct(
 ) -> syn::Result<TokenStream2> {
     let name = &struct_item.ident;
     let fn_name = format_ident!("__rdi_construct_{}", name);
+    let try_fn_name = format_ident!("__rdi_try_construct_{}", name);
     let factory_name = format_ident!("__rdi_factory_{}", name);
     let type_name_fn_name = format_ident!("__rdi_type_name_{}", name);
 
@@ -58,7 +59,7 @@ fn expand_inject_struct(
         syn::Fields::Named(n) => {
             let mut inits = Vec::new();
             for field in n.named.iter() {
-                inits.push(gen_field_init(field)?);
+                inits.push(gen_field_init(field, name)?);
             }
             quote! { #name { #(#inits),* } }
         }
@@ -74,8 +75,16 @@ fn expand_inject_struct(
     let constructor = quote! {
         #[doc(hidden)]
         #[allow(non_snake_case)]
+        pub fn #try_fn_name(
+            resolver: &dyn rust_dix::IServiceResolver,
+        ) -> ::std::result::Result<::std::sync::Arc<#name>, rust_dix::RdiError> {
+            ::std::result::Result::Ok(::std::sync::Arc::new(#constructor_body))
+        }
+
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
         pub fn #fn_name(resolver: &dyn rust_dix::IServiceResolver) -> ::std::sync::Arc<#name> {
-            ::std::sync::Arc::new(#constructor_body)
+            rust_dix::inject_arc(#try_fn_name(resolver))
         }
     };
 

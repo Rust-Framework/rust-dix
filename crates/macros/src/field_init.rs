@@ -71,33 +71,30 @@ pub(crate) fn single_generic_type(seg: &syn::PathSegment) -> Option<&Type> {
 
 /// Generate the field initializer expression for a single struct field.
 ///
-/// Shared between `#[derive(Inject)]` and `#[inject]` on a struct to avoid
-/// duplicating the owned/Arc dispatch logic.
-pub(crate) fn gen_field_init(field: &Field) -> syn::Result<TokenStream> {
+/// Expressions are written for a `Result`-returning constructor body (`?` ok).
+/// Shared between `#[derive(Inject)]` and `#[inject]` on a struct.
+pub(crate) fn gen_field_init(
+    field: &Field,
+    consumer: &syn::Ident,
+) -> syn::Result<TokenStream> {
     let attrs = parse_ia(field);
     let fnm = field.ident.as_ref().unwrap();
     let (inner, kind) = classify_field(&field.ty);
+    let field_name = fnm.to_string();
+    let consumer_ty = quote! { ::std::any::type_name::<#consumer>() };
 
     if !attrs.inject && !attrs.provider {
         return Ok(quote! { #fnm: ::std::default::Default::default() });
     }
     if attrs.provider {
         return Ok(quote! {
-            #fnm: resolver.provider_arc().expect(
-                "ServiceProvider not available; build() returns Arc<ServiceProvider> which enables #[inject(provider)]"
-            )
+            #fnm: ::rust_dix::macros_support::resolve_provider(
+                resolver,
+                #consumer_ty,
+                #field_name,
+            )?
         });
     }
-
-    let arc_extract = quote! {
-        .and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok())
-        .map(|d| ::std::sync::Arc::clone(&*d))
-    };
-    let owned_extract = quote! {
-        .and_then(|a| a.downcast::<::std::sync::Arc<#inner>>().ok())
-        .map(|d| ::std::sync::Arc::clone(&*d))
-        .and_then(|arc| ::std::sync::Arc::try_unwrap(arc).ok())
-    };
 
     let key = &attrs.key;
 
@@ -105,16 +102,36 @@ pub(crate) fn gen_field_init(field: &Field) -> syn::Result<TokenStream> {
         match kind {
             FieldKind::OptionArc => {
                 if let Some(k) = key {
-                    Ok(quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_option_keyed_arc::<#inner>(
+                            resolver,
+                            #k,
+                        )
+                    })
                 } else {
-                    Ok(quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_option_arc::<#inner>(resolver)
+                    })
                 }
             }
             FieldKind::Arc => {
                 if let Some(k) = key {
-                    Ok(quote! { #fnm: resolver.get_keyed_any(::std::any::type_name::<#inner>(), #k) #arc_extract .unwrap_or_else(|| ::std::panic!("keyed not found")) })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_keyed_arc::<#inner>(
+                            resolver,
+                            #k,
+                            #consumer_ty,
+                            #field_name,
+                        )?
+                    })
                 } else {
-                    Ok(quote! { #fnm: resolver.get_any(::std::any::type_name::<#inner>()) #arc_extract .unwrap_or_else(|| ::std::panic!("svc not registered")) })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_arc::<#inner>(
+                            resolver,
+                            #consumer_ty,
+                            #field_name,
+                        )?
+                    })
                 }
             }
             FieldKind::VecArc => {
@@ -125,16 +142,11 @@ pub(crate) fn gen_field_init(field: &Field) -> syn::Result<TokenStream> {
                     ));
                 }
                 Ok(quote! {
-                    #fnm: resolver.get_all_any(::std::any::type_name::<#inner>())
-                        .into_iter()
-                        .map(|a| a.downcast::<::std::sync::Arc<#inner>>()
-                            .ok()
-                            .unwrap_or_else(|| ::std::panic!(
-                                "polymorphic inject: type mismatch for {}",
-                                ::std::any::type_name::<#inner>()
-                            )))
-                        .map(|d| ::std::sync::Arc::clone(&*d))
-                        .collect::<::std::vec::Vec<::std::sync::Arc<#inner>>>()
+                    #fnm: ::rust_dix::macros_support::resolve_vec_arc::<#inner>(
+                        resolver,
+                        #consumer_ty,
+                        #field_name,
+                    )?
                 })
             }
             _ => Err(syn::Error::new_spanned(
@@ -146,16 +158,36 @@ pub(crate) fn gen_field_init(field: &Field) -> syn::Result<TokenStream> {
         match kind {
             FieldKind::OptionOwned => {
                 if let Some(k) = key {
-                    Ok(quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_option_keyed_owned::<#inner>(
+                            resolver,
+                            #k,
+                        )
+                    })
                 } else {
-                    Ok(quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_option_owned::<#inner>(resolver)
+                    })
                 }
             }
             FieldKind::Owned => {
                 if let Some(k) = key {
-                    Ok(quote! { #fnm: resolver.get_keyed_owned_any(::std::any::type_name::<#inner>(), #k) #owned_extract .unwrap_or_else(|| ::std::panic!("keyed owned not found")) })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_keyed_owned::<#inner>(
+                            resolver,
+                            #k,
+                            #consumer_ty,
+                            #field_name,
+                        )?
+                    })
                 } else {
-                    Ok(quote! { #fnm: resolver.get_owned_any(::std::any::type_name::<#inner>()) #owned_extract .unwrap_or_else(|| ::std::panic!("owned svc not registered or Singleton")) })
+                    Ok(quote! {
+                        #fnm: ::rust_dix::macros_support::resolve_owned::<#inner>(
+                            resolver,
+                            #consumer_ty,
+                            #field_name,
+                        )?
+                    })
                 }
             }
             _ => Err(syn::Error::new_spanned(

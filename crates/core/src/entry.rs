@@ -100,7 +100,7 @@ pub trait IServiceResolver: Send + Sync {
         self.get_by_type_id(tid)
             .or_else(|| self.get_any(type_name))
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
+            .ok_or_else(|| RdiError::not_found(type_name, None))
     }
 
     /// Resolve a service by type, returning `None` if not registered.
@@ -125,10 +125,7 @@ pub trait IServiceResolver: Send + Sync {
         self.get_keyed_by_type_id(tid, variant)
             .or_else(|| self.get_keyed_any(type_name, variant))
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
-            .ok_or(RdiError::KeyedServiceNotFound {
-                key: variant.to_string(),
-                ty: type_name,
-            })
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, variant, None))
     }
 
     /// Resolve a keyed service by type and key, returning `None` if not found.
@@ -187,12 +184,12 @@ pub trait IServiceResolver: Send + Sync {
         let type_name = std::any::type_name::<T>();
         let arc_any = self
             .get_owned_any(type_name)
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
+            .ok_or_else(|| RdiError::not_found(type_name, None))?;
         let arc_t: Arc<T> = arc_any
             .downcast::<Arc<T>>()
             .ok()
             .map(|d| Arc::clone(&*d))
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
+            .ok_or_else(|| RdiError::not_found(type_name, None))?;
         Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 
@@ -215,18 +212,12 @@ pub trait IServiceResolver: Send + Sync {
         let type_name = std::any::type_name::<T>();
         let arc_any = self
             .get_keyed_owned_any(type_name, variant)
-            .ok_or(RdiError::KeyedServiceNotFound {
-                key: variant.to_string(),
-                ty: type_name,
-            })?;
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, variant, None))?;
         let arc_t: Arc<T> = arc_any
             .downcast::<Arc<T>>()
             .ok()
             .map(|d| Arc::clone(&*d))
-            .ok_or(RdiError::KeyedServiceNotFound {
-                key: variant.to_string(),
-                ty: type_name,
-            })?;
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, variant, None))?;
         Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 

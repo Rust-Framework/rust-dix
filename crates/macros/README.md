@@ -21,7 +21,7 @@ as possible.
 
 ```toml
 [dependencies]
-rust-dix = "0.6"       # re-exports all macros — you usually don't need rust-dix-macros directly
+rust-dix = "0.7"       # re-exports all macros — you usually don't need rust-dix-macros directly
 ```
 
 > **Note**: You rarely need to add `rust-dix-macros` as a direct dependency.

@@ -149,7 +149,39 @@ impl ServiceCollection {
     }
 
     pub fn try_add<T: ?Sized + Send + Sync + 'static>(
+        self,
+        f: impl Fn(&dyn crate::entry::IServiceResolver) -> Arc<T> + Send + Sync + 'static,
+    ) -> Self {
+        self.try_add_with_lifetime(ServiceLifetime::Singleton, f)
+    }
+
+    /// Register a singleton only if no unkeyed registration for `T` exists yet.
+    pub fn try_add_singleton<T: ?Sized + Send + Sync + 'static>(
+        self,
+        f: impl Fn(&dyn crate::entry::IServiceResolver) -> Arc<T> + Send + Sync + 'static,
+    ) -> Self {
+        self.try_add_with_lifetime(ServiceLifetime::Singleton, f)
+    }
+
+    /// Register a scoped service only if no unkeyed registration for `T` exists yet.
+    pub fn try_add_scoped<T: ?Sized + Send + Sync + 'static>(
+        self,
+        f: impl Fn(&dyn crate::entry::IServiceResolver) -> Arc<T> + Send + Sync + 'static,
+    ) -> Self {
+        self.try_add_with_lifetime(ServiceLifetime::Scoped, f)
+    }
+
+    /// Register a transient service only if no unkeyed registration for `T` exists yet.
+    pub fn try_add_transient<T: ?Sized + Send + Sync + 'static>(
+        self,
+        f: impl Fn(&dyn crate::entry::IServiceResolver) -> Arc<T> + Send + Sync + 'static,
+    ) -> Self {
+        self.try_add_with_lifetime(ServiceLifetime::Transient, f)
+    }
+
+    fn try_add_with_lifetime<T: ?Sized + Send + Sync + 'static>(
         mut self,
+        lt: ServiceLifetime,
         f: impl Fn(&dyn crate::entry::IServiceResolver) -> Arc<T> + Send + Sync + 'static,
     ) -> Self {
         let tid = TypeId::of::<T>();
@@ -160,7 +192,7 @@ impl ServiceCollection {
         {
             return self;
         }
-        self.push(ServiceLifetime::Singleton, None, f);
+        self.push(lt, None, f);
         self
     }
 
@@ -292,13 +324,13 @@ impl ServiceCollection {
                 Arc::new(val) as Arc<dyn Any + Send + Sync>
             }) as Pin<Box<dyn Future<Output = Arc<dyn Any + Send + Sync>> + Send>>
         });
-        // Sync factory: panics if called directly (user must use build_async).
+        // Sync factory: typed error if somehow invoked; `build()` rejects async
+        // registrations before this path is reached.
         let type_name = std::any::type_name::<T>();
         let sf: ServiceFactory = Arc::new(move |_| {
-            panic!(
-                "async service '{}' resolved via sync path; use build_async() instead",
-                type_name
-            )
+            std::panic::panic_any(crate::error::RdiError::AsyncServiceRequiresBuildAsync {
+                service: type_name.to_string(),
+            })
         });
         self.descriptors.push(ServiceDescriptor {
             type_id: TypeId::of::<T>(),

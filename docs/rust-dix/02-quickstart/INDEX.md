@@ -16,15 +16,15 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.6"
+rust-dix = "0.7"
 ```
 
 如果使用过程宏：
 
 ```toml
 [dependencies]
-rust-dix = "0.6"
-rust-dix-macros = "0.6"
+rust-dix = "0.7"
+rust-dix-macros = "0.7"
 ```
 
 ## 导入约定

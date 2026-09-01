@@ -1,4 +1,4 @@
-﻿//! LRDI — Rust Dependency Injection Framework
+﻿//! rust-dix — Rust Dependency Injection Framework
 //!
 //! A dependency injection container for Rust inspired by
 //! Microsoft.Extensions.DependencyInjection (MEDI).
@@ -56,7 +56,7 @@
 //!
 //! # Build-time validation
 //!
-//! LRDI validates dependencies during `build()` to catch errors early:
+//! rust-dix validates dependencies during `build()` to catch errors early:
 //!
 //! ```rust
 //! # use rust_dix::*;
@@ -154,6 +154,8 @@ mod cache;
 pub mod collection;
 pub mod entry;
 pub mod error;
+#[doc(hidden)]
+pub mod macros_support;
 pub mod provider;
 pub mod registration;
 pub mod scope;
@@ -214,7 +216,7 @@ pub use bridge::IProvider;
 // ── Error types ──
 
 /// Error types returned from service resolution.
-pub use error::RdiError;
+pub use error::{inject_arc, RdiError};
 
 // ── Runtime registration ──
 

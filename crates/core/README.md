@@ -19,7 +19,7 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dix = "0.6"
+rust-dix = "0.7"
 ```
 
 ---

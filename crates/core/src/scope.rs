@@ -9,8 +9,9 @@ use std::sync::Arc;
 /// 典型场景：后台 worker singleton 需要按请求创建独立 scope，
 /// 在 scope 内解析 Scoped 服务（如 request-scoped DbContext）。
 ///
-/// `ServiceProvider` 实现此 trait，通过 [`ServiceProvider::scope`] 创建 scope。
-/// 注册方式：`provider.singleton::<dyn ScopeFactory>(move |_| provider.clone() as Arc<dyn ScopeFactory>)`。
+/// `ServiceProvider` 实现此 trait。从 0.7 起，built provider 可直接
+/// `get::<dyn ScopeFactory>()`，无需手动注册。若需自定义实现，仍可
+/// `singleton::<dyn ScopeFactory>(...)` 覆盖默认行为。
 pub trait ScopeFactory: Send + Sync {
     /// 创建一个独立 scope，共享 root 的 store/singleton_cache/named，
     /// 独立 scoped_cache 和 disposables。
@@ -70,11 +71,10 @@ impl Scope {
     /// })
     /// ```
     ///
-    /// Called automatically on `Drop` as a safety net. If `Drop` runs while a
-    /// concurrent resolution is in progress (factory holding the disposable
-    /// lock), disposal is skipped — some cleanups may be delayed or dropped.
-    /// For deterministic cleanup, call this explicitly before the scope goes
-    /// out of scope.
+    /// Called automatically on `Drop` as a safety net. Disposal waits for any
+    /// in-flight `register_disposable` call, then drains and runs cleanups
+    /// without holding the lock. Prefer calling [`Self::dispose`] explicitly
+    /// at a deterministic end-of-scope point.
     pub fn dispose(&self) {
         self.scope_provider.dispose_scoped();
     }

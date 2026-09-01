@@ -30,7 +30,7 @@ compile-time validation — all with zero `unsafe` code.
 
 ```toml
 [dependencies]
-rust-dix = "0.6"
+rust-dix = "0.7"
 ```
 
 ### Sync applications

@@ -1,15 +1,44 @@
 use crate::cache::{AnyService, LazyCache};
 use crate::entry::{
-    AsyncServiceFactory, IServiceResolver, ServiceEntry, ServiceFactory,
-    ServiceLifetime, ServiceStore,
+    AsyncServiceFactory, IServiceResolver, ServiceEntry, ServiceFactory, ServiceLifetime,
+    ServiceStore,
 };
 use crate::error::RdiError;
 use crate::scope::ScopeFactory;
 use crate::validation::ValidationResolver;
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
+
+thread_local! {
+    /// Runtime resolution stack for Scoped/Transient cycle detection.
+    static RESOLVING: RefCell<Vec<(usize, &'static str)>> = const { RefCell::new(Vec::new()) };
+}
+
+struct ResolveGuard;
+
+impl Drop for ResolveGuard {
+    fn drop(&mut self) {
+        RESOLVING.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+fn enter_resolve(cache_key: usize, type_name: &'static str) -> Result<ResolveGuard, RdiError> {
+    RESOLVING.with(|stack| {
+        let mut s = stack.borrow_mut();
+        if s.iter().any(|(k, _)| *k == cache_key) {
+            let mut chain: Vec<&str> = s.iter().map(|(_, n)| *n).collect();
+            chain.push(type_name);
+            return Err(RdiError::CircularDependency(chain.join(" -> ")));
+        }
+        s.push((cache_key, type_name));
+        Ok(ResolveGuard)
+    })
+}
 
 pub struct ServiceProvider {
     /// Service registry. Shared across root + scope-derived providers via `Arc`.
@@ -47,6 +76,17 @@ pub struct ServiceProvider {
 
 impl ServiceProvider {
     pub(crate) fn new(store: ServiceStore) -> Result<Arc<Self>, RdiError> {
+        // Reject async registrations on the sync build path.
+        if let Some(entry) = store
+            .values()
+            .flat_map(|entries| entries.iter())
+            .find(|e| e.async_factory.is_some())
+        {
+            return Err(RdiError::AsyncServiceRequiresBuildAsync {
+                service: entry.type_name.to_string(),
+            });
+        }
+
         // Build type_name → TypeId lookup table for string-based resolution
         let mut type_map = HashMap::new();
         for (&tid, entries) in &store {
@@ -192,18 +232,15 @@ impl ServiceProvider {
 
     /// Drain and execute all registered cleanup closures.
     ///
-    /// Called by [`Scope::dispose`](crate::scope::Scope::dispose). Uses `try_lock`
-    /// to avoid deadlock when a concurrent resolution is in progress (factory
-    /// holding the lock via [`Self::register_disposable`]). If the lock is
-    /// contended, disposal is skipped — `Drop` is a safety net, not a guarantee.
+    /// Called by [`Scope::dispose`](crate::scope::Scope::dispose). Acquires the
+    /// disposables lock (waits if a concurrent `register_disposable` is in
+    /// progress), takes the queue, then runs cleanups **without** holding the
+    /// lock — so cleanup callbacks may safely call `register_disposable` again.
     pub(crate) fn dispose_scoped(&self) {
-        // try_lock 避免与并发 register_disposable 死锁。
-        // 锁不上时跳过——并发解析仍在进行，disposable 留待下次 dispose 或被丢弃。
-        let to_run: Vec<Box<dyn FnOnce() + Send>> = match self.disposables.try_lock() {
-            Ok(mut guard) => std::mem::take(&mut *guard),
-            Err(_) => return,
+        let to_run: Vec<Box<dyn FnOnce() + Send>> = {
+            let mut guard = self.disposables.lock().unwrap();
+            std::mem::take(&mut *guard)
         };
-        // 释放锁后再执行闭包（避免持锁调用用户代码，防止重入死锁）
         for cleanup in to_run {
             cleanup();
         }
@@ -222,28 +259,23 @@ impl ServiceProvider {
             })
             .collect();
 
-        // Validate each singleton by attempting to resolve it.
-        // Route through `get_any` (instead of calling `entry.factory`
-        // directly) so the shared cache is populated and Phase 2 can reuse
-        // the instances instead of re-executing the factories.
+        // Validate each sync singleton by attempting to resolve it.
+        // Scoped/Transient are not eagerly executed at build (avoids side effects);
+        // their cycles are detected at runtime via a thread-local resolution stack.
         for entries in store.values() {
             for entry in entries {
-                if entry.lifetime == ServiceLifetime::Singleton
-                    && entry.async_factory.is_none()
-                {
+                if entry.lifetime == ServiceLifetime::Singleton && entry.async_factory.is_none() {
                     let resolver = ValidationResolver::new(store, &type_names, cache);
                     let type_name = entry.type_name;
+                    let key = entry.key.clone();
 
-                    // `get_any` returns `None` on validation errors (cycle/captive);
-                    // the error is stored in `resolver.last_error` and retrieved via
-                    // `take_error()`. We still use `catch_unwind` to handle user
-                    // factory panics (triggered when `get_any` returns `None` from
-                    // a recursive resolution).
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        resolver.get_any(type_name)
+                        match &key {
+                            Some(k) => resolver.get_keyed_any(type_name, k),
+                            None => resolver.get_any(type_name),
+                        }
                     }));
 
-                    // Check framework validation errors first (cycle/captive).
                     if let Some(err) = resolver.take_error() {
                         return Err(err);
                     }
@@ -251,19 +283,7 @@ impl ServiceProvider {
                     match result {
                         Ok(_) => {}
                         Err(panic_info) => {
-                            // User factory panic — wrap in RdiError for consistent
-                            // error reporting.
-                            let payload = if let Some(s) = panic_info.downcast_ref::<String>() {
-                                s.clone()
-                            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
-                                s.to_string()
-                            } else {
-                                "unknown".to_string()
-                            };
-                            return Err(RdiError::FactoryPanic {
-                                service: type_name.to_string(),
-                                payload,
-                            });
+                            return Err(RdiError::from_panic_payload(type_name, panic_info));
                         }
                     }
                 }
@@ -275,15 +295,22 @@ impl ServiceProvider {
 
     /// Resolve a service by type. Works uniformly for concrete types and trait objects.
     /// Returns `Err(RdiError::ServiceNotFound)` if not registered.
+    ///
+    /// [`ScopeFactory`] is always available from a built provider (no manual
+    /// registration required). An explicit `singleton::<dyn ScopeFactory>(...)`
+    /// registration still takes precedence.
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
         let type_name = std::any::type_name::<T>();
-        self.try_get::<T>()
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
+        match self.resolve_optional::<T>() {
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(RdiError::not_found(type_name, None)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Resolve a service by type, returning `None` if not registered.
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        self.try_get::<T>()
+        self.resolve_optional::<T>().ok().flatten()
     }
 
     /// Resolve an async service (transient or scoped) by type.
@@ -300,17 +327,14 @@ impl ServiceProvider {
             .store
             .get(&tid)
             .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
+            .ok_or_else(|| RdiError::not_found(type_name, None))?;
 
         if entry.lifetime == ServiceLifetime::Singleton {
             return self.get::<T>();
         }
 
         match self.resolve_async_any(entry, type_name).await? {
-            Some(arc_any) => {
-                Self::extract(arc_any)
-                    .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
-            }
+            Some(arc_any) => Self::extract(arc_any).ok_or_else(|| RdiError::not_found(type_name, None)),
             None => self.get::<T>(),
         }
     }
@@ -326,20 +350,16 @@ impl ServiceProvider {
             .store
             .get(&tid)
             .and_then(|entries| entries.iter().find(|e| e.key.as_deref() == Some(key)))
-            .ok_or(RdiError::KeyedServiceNotFound {
-                key: key.to_string(),
-                ty: type_name,
-            })?;
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))?;
 
         if entry.lifetime == ServiceLifetime::Singleton {
             return self.get_keyed::<T>(key);
         }
 
         match self.resolve_async_any(entry, type_name).await? {
-            Some(arc_any) => Self::extract(arc_any).ok_or(RdiError::KeyedServiceNotFound {
-                key: key.to_string(),
-                ty: type_name,
-            }),
+            Some(arc_any) => {
+                Self::extract(arc_any).ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))
+            }
             None => self.get_keyed::<T>(key),
         }
     }
@@ -353,8 +373,10 @@ impl ServiceProvider {
     ) -> Result<Option<AnyService>, RdiError> {
         match entry.lifetime {
             ServiceLifetime::Scoped => {
-                let async_factory = entry.async_factory.clone()
-                    .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })?;
+                let async_factory = entry
+                    .async_factory
+                    .clone()
+                    .ok_or_else(|| RdiError::not_found(type_name, None))?;
                 let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
                     service: type_name.to_string(),
                     payload: "provider_arc() returned None for async resolution".into(),
@@ -395,17 +417,7 @@ impl ServiceProvider {
         let fut = async_factory(provider_arc);
         match futures::FutureExt::catch_unwind(AssertUnwindSafe(fut)).await {
             Ok(arc_any) => Ok(arc_any),
-            Err(payload) => {
-                let msg = payload
-                    .downcast_ref::<&'static str>()
-                    .map(|s| (*s).to_string())
-                    .or_else(|| payload.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "<non-string panic payload>".to_string());
-                Err(RdiError::FactoryPanic {
-                    service: type_name.to_string(),
-                    payload: msg,
-                })
-            }
+            Err(payload) => Err(RdiError::from_panic_payload(type_name, payload)),
         }
     }
 
@@ -413,50 +425,70 @@ impl ServiceProvider {
     /// Returns `Err(RdiError::KeyedServiceNotFound)` if not found.
     pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
         let type_name = std::any::type_name::<T>();
-        self.try_get_keyed::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
-            key: key.to_string(),
-            ty: type_name,
-        })
+        match self.resolve_keyed_optional::<T>(key) {
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(RdiError::keyed_not_found(type_name, key, None)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Resolve owned `T` (bypass cache, fresh each call).
     /// Returns `Err` if not registered or the service is Singleton.
     pub fn get_owned<T: Send + Sync + 'static>(&self) -> Result<T, RdiError> {
         let type_name = std::any::type_name::<T>();
-        self.try_get_owned::<T>()
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
+        let tid = TypeId::of::<T>();
+        let entry = self
+            .store
+            .get(&tid)
+            .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
+            .ok_or_else(|| RdiError::not_found(type_name, None))?;
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return Err(RdiError::OwnedNotSupported(type_name));
+        }
+        let arc_any = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            self.create_owned_any_by_entry(entry)
+        })) {
+            Ok(Some(v)) => v,
+            Ok(None) => return Err(RdiError::not_found(type_name, None)),
+            Err(payload) => return Err(RdiError::from_panic_payload(type_name, payload)),
+        };
+        let arc_t = Self::extract(arc_any).ok_or_else(|| RdiError::not_found(type_name, None))?;
+        Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 
     /// Resolve owned `T`, returning `None` if not registered or Singleton.
     pub fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T> {
-        let tid = TypeId::of::<T>();
-        let entry = self.store.get(&tid)?.iter().find(|e| e.key.is_none())?;
-        let arc_any = self.create_owned_any_by_entry(entry)?;
-        let arc_t = Self::extract(arc_any)?;
-        Arc::try_unwrap(arc_t).ok()
+        self.get_owned().ok()
     }
 
     /// Resolve owned keyed `T`.
     /// Returns `Err` if not found or Singleton.
     pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Result<T, RdiError> {
         let type_name = std::any::type_name::<T>();
-        self.try_get_keyed_owned::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
-            key: key.to_string(),
-            ty: type_name,
-        })
+        let tid = TypeId::of::<T>();
+        let entry = self
+            .store
+            .get(&tid)
+            .and_then(|entries| entries.iter().find(|e| e.key.as_deref() == Some(key)))
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))?;
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return Err(RdiError::OwnedNotSupported(type_name));
+        }
+        let arc_any = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            self.create_owned_any_by_entry(entry)
+        })) {
+            Ok(Some(v)) => v,
+            Ok(None) => return Err(RdiError::keyed_not_found(type_name, key, None)),
+            Err(payload) => return Err(RdiError::from_panic_payload(type_name, payload)),
+        };
+        let arc_t =
+            Self::extract(arc_any).ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))?;
+        Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(type_name))
     }
 
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
     pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
-        let tid = TypeId::of::<T>();
-        let entry = self
-            .store
-            .get(&tid)?
-            .iter()
-            .find(|e| e.key.as_deref() == Some(key))?;
-        let arc_any = self.create_owned_any_by_entry(entry)?;
-        let arc_t = Self::extract(arc_any)?;
-        Arc::try_unwrap(arc_t).ok()
+        self.get_keyed_owned(key).ok()
     }
 
     /// Return all registered instances of the given type.
@@ -482,25 +514,69 @@ impl ServiceProvider {
         crate::scope::Scope::new(self.clone())
     }
 
+    #[allow(dead_code)]
     fn try_get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        let tid = TypeId::of::<T>();
-        let entry = self.store.get(&tid)?.iter().find(|e| e.key.is_none())?;
-        let arc = self.get_any_by_entry(entry)?;
-        Self::extract(arc)
+        self.resolve_optional::<T>().ok().flatten()
     }
 
+    #[allow(dead_code)]
     fn try_get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
+        self.resolve_keyed_optional::<T>(key).ok().flatten()
+    }
+
+    /// Resolve `T`, mapping inject/`panic_any(RdiError)` factory failures to [`RdiError`].
+    fn resolve_optional<T: ?Sized + Send + Sync + 'static>(
+        &self,
+    ) -> Result<Option<Arc<T>>, RdiError> {
         let tid = TypeId::of::<T>();
-        let entry = self
+        if let Some(entry) = self
             .store
-            .get(&tid)?
-            .iter()
-            .find(|e| e.key.as_deref() == Some(key))?;
-        let arc = self.get_any_by_entry(entry)?;
-        Self::extract(arc)
+            .get(&tid)
+            .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
+        {
+            let arc = self.resolve_entry_catching(entry)?;
+            return Ok(Self::extract(arc));
+        }
+        // Built-in ScopeFactory: any built provider can create scopes.
+        if tid == TypeId::of::<dyn ScopeFactory>() {
+            let Some(p) = self.provider_arc() else {
+                return Ok(None);
+            };
+            let sf: Arc<dyn ScopeFactory> = p;
+            return Ok(Self::extract(Arc::new(sf) as AnyService));
+        }
+        Ok(None)
+    }
+
+    fn resolve_keyed_optional<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<T>>, RdiError> {
+        let tid = TypeId::of::<T>();
+        let Some(entry) = self
+            .store
+            .get(&tid)
+            .and_then(|entries| entries.iter().find(|e| e.key.as_deref() == Some(key)))
+        else {
+            return Ok(None);
+        };
+        let arc = self.resolve_entry_catching(entry)?;
+        Ok(Self::extract(arc))
+    }
+
+    pub(crate) fn resolve_entry_catching(&self, entry: &ServiceEntry) -> Result<AnyService, RdiError> {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| self.get_any_by_entry(entry))) {
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(RdiError::not_found(entry.type_name, None)),
+            Err(payload) => Err(RdiError::from_panic_payload(entry.type_name, payload)),
+        }
     }
 
     pub(crate) fn get_any_by_entry(&self, entry: &ServiceEntry) -> Option<AnyService> {
+        let _guard = match enter_resolve(entry.cache_key, entry.type_name) {
+            Ok(g) => g,
+            Err(e) => std::panic::panic_any(e),
+        };
         match entry.lifetime {
             ServiceLifetime::Singleton => {
                 // LazyCache::get_or_init_with：build 阶段已预热的走 fast path，
@@ -522,9 +598,7 @@ impl ServiceProvider {
                     factory(resolver)
                 }))
             }
-            ServiceLifetime::Transient => {
-                Some((entry.factory)(self))
-            }
+            ServiceLifetime::Transient => Some((entry.factory)(self)),
         }
     }
 
@@ -540,6 +614,10 @@ impl ServiceProvider {
         match entry.lifetime {
             ServiceLifetime::Singleton => None,
             ServiceLifetime::Scoped | ServiceLifetime::Transient => {
+                let _guard = match enter_resolve(entry.cache_key, entry.type_name) {
+                    Ok(g) => g,
+                    Err(e) => std::panic::panic_any(e),
+                };
                 Some((entry.factory)(self as &dyn IServiceResolver))
             }
         }
@@ -613,7 +691,7 @@ impl ScopeFactory for ServiceProvider {
             .get()
             .and_then(|w| w.upgrade())
             .map(crate::scope::Scope::new)
-            .expect("ScopeFactory::create_scope called before self_weak initialization")
+            .expect("ScopeFactory::create_scope: ServiceProvider self_weak not initialized")
     }
 }
 
@@ -628,8 +706,15 @@ impl IServiceResolver for ServiceProvider {
         self.get_any_by_entry(entry)
     }
     fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
-        let entry = self.store.get(&tid)?.iter().find(|e| e.key.is_none())?;
-        self.get_any_by_entry(entry)
+        if let Some(entry) = self.store.get(&tid)?.iter().find(|e| e.key.is_none()) {
+            return self.get_any_by_entry(entry);
+        }
+        if tid == TypeId::of::<dyn ScopeFactory>() {
+            let p = self.provider_arc()?;
+            let sf: Arc<dyn ScopeFactory> = p;
+            return Some(Arc::new(sf) as AnyService);
+        }
+        None
     }
     fn get_keyed_by_type_id(
         &self,

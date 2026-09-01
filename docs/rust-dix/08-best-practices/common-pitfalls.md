@@ -9,7 +9,13 @@
 ### 现象
 
 ```
-panic: service not registered: dyn ILogger
+Err(RdiError::ServiceNotFound { ty: "dyn ILogger", context: None })
+```
+
+或 inject 构造时：
+
+```
+Err(RdiError::ServiceNotFound { ty: "...Logger", context: Some("MyHandler::log") })
 ```
 
 ### 原因

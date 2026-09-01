@@ -1,6 +1,6 @@
 # 生产环境部署检查清单
 
-> 适用于 `rust-dix` v0.5.x。基于源码静态分析 + 运行时行为验证编写。
+> 适用于 `rust-dix` v0.7.x。基于源码静态分析 + 运行时行为验证编写。
 
 ---
 
@@ -38,14 +38,14 @@
 
 ### 1.3 disposables 未执行导致资源泄漏
 
-**机制**：`dispose_scoped()` 用 `try_lock()`，若并发解析正在 `register_disposable`（持锁），则 `dispose` 跳过——未执行的 disposable 闭包泄漏其捕获资源。
+**机制**：`dispose_scoped()` 获取 `disposables` 锁（若并发 `register_disposable` 正在进行则等待），取出队列后**释放锁再执行**清理闭包，避免持锁调用用户代码导致重入死锁。
 
-**风险**：文件句柄、数据库连接、网络 socket 等非内存资源泄漏。
+**风险**：若清理闭包自身再次触发长时间阻塞的解析，可能拖慢 scope 结束；非内存资源仍建议在服务 `Drop` 中兜底释放。
 
 **检查项**：
-- [ ] 确认 `Scope` 在并发解析完成后才 drop（不要在解析进行中 drop scope）
+- [ ] 确认 `Scope` 在业务终点显式调用 `scope.dispose()`（`Drop` 会作为安全网再次 drain）
 - [ ] 确认关键资源在 `dispose()` 之外有兜底释放（如 `Drop` impl on service struct）
-- [ ] 确认 `scope.dispose()` 在 scope 生命周期的确定性终点被显式调用
+- [ ] 确认 `register_disposable` 的闭包本身不会再调用 `dispose()` 形成逻辑环
 
 **缓解**：在业务代码中，scope 使用模式应为：
 ```rust

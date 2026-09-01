@@ -23,17 +23,15 @@ impl ServiceProviderWrapper {
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
         let type_name = std::any::type_name::<T>();
         self.try_get::<T>()
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
+            .ok_or_else(|| RdiError::not_found(type_name, None))
     }
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.try_get::<T>()
     }
     pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
         let type_name = std::any::type_name::<T>();
-        self.try_get_keyed::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
-            key: key.to_string(),
-            ty: type_name,
-        })
+        self.try_get_keyed::<T>(key)
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))
     }
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
         let mut r = self.child.get_all::<T>();
@@ -56,7 +54,7 @@ impl ServiceProviderWrapper {
     pub fn get_owned<T: Send + Sync + 'static>(&self) -> Result<T, RdiError> {
         let type_name = std::any::type_name::<T>();
         self.try_get_owned::<T>()
-            .ok_or(RdiError::ServiceNotFound { ty: type_name, context: None })
+            .ok_or_else(|| RdiError::not_found(type_name, None))
     }
     /// Resolve owned `T`, returning `None` if not registered or Singleton.
     pub fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T> {
@@ -70,10 +68,8 @@ impl ServiceProviderWrapper {
     /// Resolve owned keyed `T`. Child-first, root-fallback.
     pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Result<T, RdiError> {
         let type_name = std::any::type_name::<T>();
-        self.try_get_keyed_owned::<T>(key).ok_or(RdiError::KeyedServiceNotFound {
-            key: key.to_string(),
-            ty: type_name,
-        })
+        self.try_get_keyed_owned::<T>(key)
+            .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))
     }
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
     pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {

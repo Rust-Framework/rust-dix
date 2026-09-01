@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-01
+
+> **English** · **简体中文**
+
+### English
+
+#### Added
+- **`__rdi_try_construct_*`**: Result-returning inject constructors with field-level context on `ServiceNotFound` / `KeyedServiceNotFound`.
+- **`inject_arc` / `macros_support`**: helpers so generated inject code reports typed errors instead of opaque panics.
+- **Built-in `ScopeFactory`**: `provider.get::<dyn ScopeFactory>()` works without manual registration (explicit registration still overrides).
+- **`try_add_singleton` / `try_add_scoped` / `try_add_transient`**: lifetime-aware try-add APIs (`try_add` remains singleton).
+- **`RdiError::AsyncServiceRequiresBuildAsync`**: `build()` rejects async registrations with a typed error.
+- **Runtime cycle detection** for Scoped/Transient resolution (thread-local stack → `CircularDependency`).
+- **`RdiError::from_panic_payload`**: recovers `RdiError` panicked via `panic_any` from inject factories.
+
+#### Changed
+- **Dispose**: `dispose_scoped` waits on the disposables lock instead of silently skipping under contention.
+- **Keyed errors**: `KeyedServiceNotFound` now includes optional `context` (same pattern as `ServiceNotFound`).
+- **Branding**: crate docs refer to rust-dix (LRDI naming removed from module docs).
+
+#### Migration from 0.6.x
+- Prefer `__rdi_try_construct_T` when you need typed inject failures; `__rdi_construct_T` still returns `Arc<T>` and panics with `RdiError` payload (caught by `get()`).
+- Match `KeyedServiceNotFound { key, ty, context }` (new `context` field).
+- Call `build_async()` when any `async_*` service is registered — `build()` returns `Err` instead of succeeding then panicking on sync resolve.
+- Manual `singleton::<dyn ScopeFactory>(...)` is optional.
+
+### 简体中文
+
+#### 新增
+- **`__rdi_try_construct_*`**：返回 `Result` 的注入构造器，缺失依赖时带字段级 `context`。
+- **内置 `ScopeFactory`**：无需手动注册即可 `get::<dyn ScopeFactory>()`。
+- **`try_add_*` 生命周期变体**；`build()` 对 async 注册返回类型化错误。
+- **Scoped/Transient 运行时环依赖检测**；inject 失败经 `panic_any(RdiError)` 由 `get()` 还原为类型错误。
+
+#### 变更
+- **dispose** 不再因 `try_lock` 失败而静默跳过；`KeyedServiceNotFound` 增加 `context`。
+
+#### 从 0.6.x 迁移
+- 需要类型化注入失败时用 `__rdi_try_construct_T`；原 `__rdi_construct_T` 仍可用。
+- 匹配 `KeyedServiceNotFound` 时增加 `context` 字段。
+- 含 `async_*` 注册时必须用 `build_async()`。
+
 ## [0.6.1] - 2026-08-16
 
 > **English** · **简体中文**
@@ -29,6 +71,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **文档落地页**：新增 `docs/README.md` 中英文档导航入口。
 
 > 本版本为发布维护迭代，不改变运行时 API。
+
+## [0.6.0] - 2026-07 (migration notes)
+
+> Historical gap filled for crates.io consumers. Runtime changes landed across 0.5→0.6.
+
+### Changed (Breaking)
+- Crate rename: `rust-dicore` → `rust-dix` / `rust-dix-macros`
+- `ServiceCollection::build()` / `build_async()` return `Arc<ServiceProvider>`
+- `get` / `get_owned` / `get_keyed_owned` return `Result<_, RdiError>` (no longer panic on missing)
 
 ## [0.4.1] - 2026-06-29
 
@@ -150,6 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.7.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.0
+[0.6.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.6.1
 [0.4.1]: https://github.com/Rust-Framework/rust-dix/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Rust-Framework/rust-dix/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/Rust-Framework/rust-dix/compare/v0.3.2...v0.3.3
@@ -157,4 +210,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.3.1]: https://github.com/Rust-Framework/rust-dix/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Rust-Framework/rust-dix/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.2.6
-[0.6.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.6.1
