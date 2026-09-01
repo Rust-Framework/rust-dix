@@ -21,3 +21,8 @@ target/
 *.so
 *.dylib
 *.exe
+# Local secrets / env files
+.env
+.env.*
+!.env.example
+
