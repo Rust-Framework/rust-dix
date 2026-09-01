@@ -49,7 +49,7 @@ ServiceCollection::new()
     .unwrap();
 
 // 无法按 trait 解析
-let logger: Arc<dyn ILogger> = provider.get();  // panic
+let logger: Arc<dyn ILogger> = provider.get()?;  // Err(ServiceNotFound)
 ```
 
 ### ✅ 正确做法

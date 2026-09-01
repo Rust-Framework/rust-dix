@@ -254,10 +254,10 @@ let provider = ServiceCollection::new()
 | 标记 | 字段类型 | 行为 | 未注册时 |
 |------|---------|------|---------|
 | *(无标记)* | 任意（需 `Default`） | `Default::default()` | N/A |
-| `#[inject]` | `Arc<T>` | 共享注入 | panic |
+| `#[inject]` | `Arc<T>` | 共享注入 | `Err(ServiceNotFound)`（含字段 `context`） |
 | `#[inject]` | `Option<Arc<T>>` | 可选共享 | `None` |
-| `#[inject(key = "k")]` | `Arc<T>` | 键控共享 | panic |
-| `#[inject(owned)]` | 裸 `T` | owned 注入 | panic |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享 | `Err(KeyedServiceNotFound)` |
+| `#[inject(owned)]` | 裸 `T` | owned 注入 | `Err`（未注册或 Singleton） |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned | `None` |
 | `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver | N/A |
 

@@ -170,11 +170,11 @@ driven by the field type (`Option<...>`), not by a marker.
 | Attribute | Field type | Behavior |
 |-----------|-----------|----------|
 | *(none)* | any (`Default`) | Internal field — uses `Default::default()` |
-| `#[inject]` | `Arc<T>` | Required shared — panics if `T` not registered |
+| `#[inject]` | `Arc<T>` | Required shared — `Err(ServiceNotFound)` (+ field `context` via try-construct) |
 | `#[inject]` | `Option<Arc<T>>` | Optional shared — `None` if `T` not registered |
-| `#[inject(key = "k")]` | `Arc<T>` | Keyed shared, panics if key missing |
+| `#[inject(key = "k")]` | `Arc<T>` | Keyed shared — `Err(KeyedServiceNotFound)` if key missing |
 | `#[inject(key = "k")]` | `Option<Arc<T>>` | Optional keyed shared |
-| `#[inject(owned)]` | bare `T` | Required owned — panics if not registered or Singleton |
+| `#[inject(owned)]` | bare `T` | Required owned — `Err` if not registered or Singleton |
 | `#[inject(owned)]` | `Option<T>` | Optional owned — `None` if not registered or Singleton |
 | `#[inject(owned, key = "k")]` | bare `T` / `Option<T>` | Keyed owned |
 | `#[inject]` | `Vec<Arc<T>>` | Polymorphic — collects all registered implementations (default + keyed); key not supported |

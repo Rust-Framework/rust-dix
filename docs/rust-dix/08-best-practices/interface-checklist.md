@@ -110,7 +110,7 @@ ServiceCollection::new()
     .build()
     .unwrap();
 
-let logger: Arc<dyn ILogger> = provider.get();  // panic: TypeId 不匹配
+let logger: Arc<dyn ILogger> = provider.get()?;  // Err: TypeId 不匹配
 ```
 
 ### 多实现用 keyed

@@ -114,7 +114,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 ```
 
-> **关键规则**：一旦使用 `async_*` 注册，必须调用 `build_async()` 而非 `build()`。
+> **关键规则**：一旦使用 `async_*` 注册，必须调用 `build_async()`。同步 `build()` 会返回 `Err(RdiError::AsyncServiceRequiresBuildAsync)`（0.7+），而不会在后续 sync `get()` 时才 panic。
 
 ## 下一步
 

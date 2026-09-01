@@ -193,7 +193,7 @@ storage.save(tenant_id, data);
 
 | ✅ 推荐 | ❌ 避免 |
 |--------|--------|
-| 默认 + keyed 组合 | 只 keyed 无默认导致 get() panic |
+| 默认 + keyed 组合 | 只 keyed 无默认导致 `get()` 返回 `Err(ServiceNotFound)` |
 | key 名称语义明确（如 "wechat"） | key 名称模糊（如 "impl1"） |
 | 用 get_all 批量处理观察者 | 手动逐个 get_keyed |
 | 策略选择逻辑集中封装 | 分散在各处的 if/else |

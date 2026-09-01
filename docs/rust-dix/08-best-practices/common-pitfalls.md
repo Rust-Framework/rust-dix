@@ -27,7 +27,7 @@ Err(RdiError::ServiceNotFound { ty: "...Logger", context: Some("MyHandler::log")
 .singleton(|_| Arc::new(FileLogger))
 
 // 解析为 trait
-let logger: Arc<dyn ILogger> = provider.get();  // panic
+let logger: Arc<dyn ILogger> = provider.get()?;  // Err(ServiceNotFound) — TypeId 不匹配
 ```
 
 ### 排查
@@ -44,7 +44,7 @@ let logger: Arc<dyn ILogger> = provider.get();  // panic
 ### 现象
 
 ```
-panic: keyed service not registered: dyn IPayGateway:wechat
+Err(RdiError::KeyedServiceNotFound { key: "wechat", ty: "dyn IPayGateway", context: … })
 ```
 
 ### 原因
@@ -58,7 +58,7 @@ panic: keyed service not registered: dyn IPayGateway:wechat
 ```rust
 // 检查 key 是否正确
 .keyed_singleton::<dyn IPayGateway>("wechat", ...)  // 注册 key = "wechat"
-provider.get_keyed::<dyn IPayGateway>("wechat");  // 解析 key = "wechat"
+provider.get_keyed::<dyn IPayGateway>("wechat")?;  // 解析 key = "wechat"
 
 // 安全解析
 if let Some(gateway) = provider.try_get_keyed::<dyn IPayGateway>("wechat") {
@@ -251,7 +251,7 @@ mod services {
 ### 现象
 
 ```
-panic: svc not registered
+Err(RdiError::ServiceNotFound { ty: "…IUserService", context: Some("Handler::user_svc") })
 ```
 
 ### 原因
@@ -266,7 +266,7 @@ struct Handler {
 }
 ```
 
-> 注：未标记字段走 `Default::default()`，不会触发此 panic。
+> 注：未标记字段走 `Default::default()`，不会触发此错误。
 > 若字段本应注入却忘了加 `#[inject]`，会静默使用 `Default`——务必显式标记依赖字段。
 
 ### 排查
@@ -293,7 +293,7 @@ struct Handler {
 ### 现象
 
 ```
-panic: get_owned: not registered or Singleton: DbContext
+Err(RdiError::…) — get_owned: not registered or Singleton: DbContext
 ```
 
 或：期望 Scoped 的 `get_owned` 复用缓存，但每次都拿到新实例。
@@ -303,18 +303,18 @@ panic: get_owned: not registered or Singleton: DbContext
 `get_owned::<T>()` 返回 owned `T`（非 `Arc<T>`），语义与 `get` 不同：
 
 1. **Singleton 不可 owned**：Singleton 全局共享，refcount 恒 >1，无法 `try_unwrap`。
-   `get_owned` 对 Singleton 直接 panic（`try_get_owned` 返回 `None`）。
+   `get_owned` 对 Singleton 返回 `Err`（`try_get_owned` 返回 `None`）。
 2. **Scoped owned 绕过缓存**：`get_owned` 对 Scoped 绕过 `scoped_cache` /
    `root_scoped_cache`，每次调用创建新实例。这是有意为之——owned `&mut self`
    与 scope 共享语义不兼容。
 3. **宏 owned 字段未注册或为 Singleton**：`#[derive(Inject)]` 的 `#[inject(owned)]` 裸 `T` 字段
-   走 owned 路径，若该类型未注册或注册为 Singleton，构造时 panic。
+   走 owned 路径，若该类型未注册或注册为 Singleton，构造失败返回 `Err`（含字段 `context`）。
 
 ```rust
 // ❌ DbContext 注册为 Singleton，无法 owned
 .singleton(|_| Arc::new(DbContext::new()))
 // ...
-let ctx: DbContext = provider.get_owned();  // panic
+let ctx: DbContext = provider.get_owned()?;  // Err
 
 // ❌ 期望 Scoped owned 缓存复用（实际每次新建）
 .scoped(|_| Arc::new(DbContext::new()))

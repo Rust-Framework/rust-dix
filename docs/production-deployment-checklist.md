@@ -119,7 +119,7 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 | 缓存位置 | 不缓存，每次 `get()` 新建 |
 | 生命周期 | = 调用方持有的 `Arc<T>` 引用计数 |
 | 依赖约束 | 可依赖 Singleton / Scoped / Transient |
-| 循环依赖 | **运行时才暴露**（build 时不验证，会栈溢出） |
+| 循环依赖 | **运行时检测**（线程局部解析栈 → `RdiError::CircularDependency`） |
 
 **检查项**：
 - [ ] 确认 Transient 服务之间无循环依赖（A 依赖 B，B 依赖 A）
@@ -146,10 +146,10 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 
 ### 2.5 Scope Drop 行为
 
-**机制**：`Scope::drop()` 调用 `self.dispose()` → `dispose_scoped()`。`dispose_scoped` 用 `try_lock`，并发时跳过。
+**机制**：`Scope::drop()` 调用 `self.dispose()` → `dispose_scoped()`。`dispose_scoped` 会**等待** `disposables` 锁（不再因 `try_lock` 失败而静默跳过），取出队列后释放锁再执行清理闭包。
 
 **检查项**：
-- [ ] 确认 `Scope` drop 时无并发解析（否则 disposable 可能未执行）
+- [ ] 确认 `Scope` 在业务终点显式调用 `dispose()`（`Drop` 仍会 drain，但显式更清晰）
 - [ ] 确认关键资源不依赖 `Scope::drop` 执行 disposable（用显式 `dispose()` 或服务自身的 `Drop`）
 - [ ] 确认 `Scope` 不在 `Arc` 中长期持有（应短生命周期）
 
@@ -195,11 +195,11 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 
 **检测范围**：
 - ✅ Singleton 的循环依赖（build 时执行工厂检测）
-- ❌ Scoped / Transient 的循环依赖（运行时首次解析才暴露，栈溢出）
+- ✅ Scoped / Transient 的循环依赖（运行时解析栈 → `RdiError::CircularDependency`，不再静默栈溢出）
 
 **检查项**：
-- [ ] 确认所有 Singleton 的循环依赖在 build 时被检测（无运行时栈溢出）
-- [ ] 确认 Scoped / Transient 服务无循环依赖（人工审查依赖图）
+- [ ] 确认所有 Singleton 的循环依赖在 build 时被检测
+- [ ] 确认 Scoped / Transient 循环依赖在首次解析时返回 `Err`（调用方处理，勿 `.unwrap()`）
 - [ ] 确认 `RdiError::CircularDependency` 的路径信息用于调试日志
 
 ---
@@ -271,10 +271,10 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 
 ### 4.3 dispose/register 竞态
 
-**机制**：`dispose_scoped` 用 `try_lock`，并发 `register_disposable` 时跳过。
+**机制**：`dispose_scoped` **等待** `disposables` 锁（0.7+；不再 `try_lock` 静默跳过）。取出队列后释放锁再执行清理闭包，避免持锁调用用户代码导致重入死锁。
 
 **检查项**：
-- [ ] 确认 `Scope` drop 时无并发解析（`try_lock` 失败会跳过 disposable）
+- [ ] 确认 `register_disposable` 闭包不会再次调用 `dispose()` 形成逻辑环
 - [ ] 确认关键资源有 `Drop` impl 兜底（不依赖 `register_disposable`）
 
 ---

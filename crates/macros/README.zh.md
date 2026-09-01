@@ -156,11 +156,11 @@ let provider = ServiceCollection::new()
 | 属性 | 字段类型 | 行为 |
 |-----------|-----------|------|
 | *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
-| `#[inject]` | `Arc<T>` | 必选共享 — 未注册则 panic |
+| `#[inject]` | `Arc<T>` | 必选共享 — 未注册返回 `Err(ServiceNotFound)`（try-construct 带字段 `context`） |
 | `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
-| `#[inject(key = "k")]` | `Arc<T>` | 键控共享，找不到 key 则 panic |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享 — 找不到 key 返回 `Err(KeyedServiceNotFound)` |
 | `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
-| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
+| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 返回 `Err` |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
 | `#[inject]` | `Vec<Arc<T>>` | 多态注入 — 收集所有注册实现（default + keyed）；不支持 key |

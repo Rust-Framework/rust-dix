@@ -44,7 +44,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // ❌ 解析为 trait
-let logger: Arc<dyn ILogger> = provider.get().unwrap();  // panic: TypeId 不匹配
+let logger: Arc<dyn ILogger> = provider.get().unwrap();  // Err: TypeId 不匹配
 ```
 
 ## 注册语法详解
@@ -113,19 +113,19 @@ let writer: Arc<dyn IWriter> = provider.get().unwrap();
 
 ## 解析 API
 
-### 必需解析（panic）
+### 必需解析（`Result`）
 
 ```rust
-// get() / get_required_service()
-let logger: Arc<dyn ILogger> = provider.get().unwrap();
-// 未注册时 panic: "service not registered: dyn ILogger"
+// get() 返回 Result — 未注册时 Err(ServiceNotFound)，不 panic
+let logger: Arc<dyn ILogger> = provider.get()?;
+// 或: provider.get().expect("ILogger registered at composition root");
 ```
 
 ### 可选解析
 
 ```rust
-// get_optional() / get_service()
-let logger: Option<Arc<dyn ILogger>> = provider.get_optional();
+// try_get()
+let logger: Option<Arc<dyn ILogger>> = provider.try_get();
 if let Some(log) = logger {
     log.log("hello");
 }
@@ -208,11 +208,11 @@ impl ILogger for FileLogger { /* ... */ }
 | 属性 | 字段类型 | 说明 |
 |------|---------|------|
 | *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
-| `#[inject]` | `Arc<T>` | 必选共享 — 未注册则 panic |
+| `#[inject]` | `Arc<T>` | 必选共享 — 未注册返回 `Err(ServiceNotFound)` |
 | `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
-| `#[inject(key = "k")]` | `Arc<T>` | 键控共享，找不到 key 则 panic |
+| `#[inject(key = "k")]` | `Arc<T>` | 键控共享 — 找不到 key 返回 `Err(KeyedServiceNotFound)` |
 | `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
-| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 则 panic |
+| `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 返回 `Err` |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
 | `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver 自身 |
