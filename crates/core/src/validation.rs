@@ -197,10 +197,10 @@ impl IServiceResolver for ValidationResolver<'_> {
         }
         // Built-in services available during validation too: eager singletons
         // may inject `Arc<dyn ScopeFactory>` / `Arc<ServiceProvider>` through
-        // the macro string path.
+        // the macro string path. Reuse the provider's cached ScopeFactory so the
+        // injected instance is identical to `provider.get::<dyn ScopeFactory>()`.
         if key == std::any::type_name::<dyn crate::scope::ScopeFactory>() {
-            let factory = crate::scope::builtin_scope_factory(Arc::downgrade(&self.provider));
-            return Some(crate::scope::builtin_scope_factory_any(factory));
+            return self.provider.builtin_scope_factory_any_cached();
         }
         if key == std::any::type_name::<ServiceProvider>() {
             let provider: Arc<ServiceProvider> = Arc::clone(&self.provider);

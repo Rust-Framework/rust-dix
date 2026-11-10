@@ -608,6 +608,14 @@ impl ServiceProvider {
         ))
     }
 
+    /// Cached built-in `dyn ScopeFactory` service for the validation resolver.
+    ///
+    /// Exposed `pub(crate)` so eager singletons receive the same factory
+    /// instance as `provider.get::<dyn ScopeFactory>()` (singleton identity).
+    pub(crate) fn builtin_scope_factory_any_cached(&self) -> Option<AnyService> {
+        self.builtin_scope_factory_any()
+    }
+
     /// Resolve container-provided (built-in) services that need no registration.
     ///
     /// - `dyn ScopeFactory`: weak-backed singleton factory that creates scopes.

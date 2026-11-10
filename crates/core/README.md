@@ -39,7 +39,8 @@ let svc = MyService::new(
     Arc::new(Cache::new(1024)),
 );
 
-// With DI: declare once, resolve anywhere (`MyService` derives `Inject`)
+// With DI: declare once, resolve anywhere
+// (`MyService` uses `#[derive(Inject)]`; its definition is omitted here)
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))

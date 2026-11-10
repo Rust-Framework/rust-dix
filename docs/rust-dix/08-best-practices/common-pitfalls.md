@@ -115,13 +115,13 @@ struct GlobalService {
 #[derive(Inject)]
 struct ServiceA {
     #[inject]
-    b: Arc<dyn IServiceB>,
+    b: Arc<ServiceB>,
 }
 
 #[derive(Inject)]
 struct ServiceB {
     #[inject]
-    a: Arc<dyn IServiceA>,
+    a: Arc<ServiceA>,
 }
 
 ServiceCollection::new()

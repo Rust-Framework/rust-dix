@@ -73,6 +73,11 @@ fn eager_singleton_injects_builtin_scope_factory() {
         .expect("eager singleton with ScopeFactory must build");
 
     let worker: Arc<EagerScopeFactoryWorker> = provider.get().unwrap();
+    let from_get: Arc<dyn ScopeFactory> = provider.get().unwrap();
+    assert!(
+        Arc::ptr_eq(&worker.scope_factory, &from_get),
+        "eager injection must reuse the provider's cached ScopeFactory singleton"
+    );
 
     let scope1 = worker.scope_factory.create_scope();
     let a: Arc<common::MyService> = scope1.get().unwrap();
