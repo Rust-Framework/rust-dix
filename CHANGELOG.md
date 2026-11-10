@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-10
+
+> **English** · **简体中文**
+
+### English
+
+#### Added
+- **Container injection in eager singletons**: `#[inject(provider)]` and
+  `#[inject] Arc<dyn ScopeFactory>` now work on services constructed during
+  `build()` / `build_async()` (previously `FactoryPanic` / `ServiceNotFound`).
+  Build order is now: create provider `Arc` + `self_weak` → validate
+  dependencies → eager-init remaining singletons.
+- **Built-in container services on every resolver path**: `dyn ScopeFactory`
+  and `ServiceProvider` resolve through `get()`, `get_any` / `get_by_type_id`
+  (the path used by `#[inject]` fields), including during build-time validation.
+  Explicit registrations still take precedence.
+- **`#[inject] Arc<ServiceProvider>`**: the container itself is resolvable as a
+  built-in service (MEDI `IServiceProvider` parity) in addition to the dedicated
+  `#[inject(provider)]` attribute.
+
+#### Changed
+- **Built-in `ScopeFactory` is weak-backed**: it holds `Weak<ServiceProvider>`
+  instead of `Arc`, so a singleton may store the factory without creating a
+  `container → singleton → container` reference cycle. The container must outlive
+  services created from it; `create_scope()` panics after the provider is dropped.
+- **`get_by_type_id` built-in fallback fixed**: the `ScopeFactory` fallback is no
+  longer short-circuited when the built-in type has no store entry.
+- Build-time validation runs against the real provider; resolutions performed
+  through an injected provider inside a constructor are dynamic and therefore not
+  part of the static captive-dependency chain (documented; prefer resolving in
+  methods).
+
+#### Migration from 0.7.0
+- Additive: no code changes required. Singleton constructors now receive a live
+  provider; prefer `Arc<dyn ScopeFactory>` in singletons to avoid the
+  strong-reference cycle of `#[inject(provider)]`.
+
+### 简体中文
+
+#### 新增
+- **eager singleton 可注入容器自身**：`#[inject(provider)]` 与
+  `#[inject] Arc<dyn ScopeFactory>` 在 `build()`/`build_async()` 期间构建的
+  服务上可用（此前分别报 `FactoryPanic`/`ServiceNotFound`）。构建顺序调整为：
+  创建 provider Arc + `self_weak` → 依赖校验 → eager 初始化剩余 singleton。
+- **内建服务全解析路径可达**：`dyn ScopeFactory` 与 `ServiceProvider` 可通过
+  `get()`、`get_any`/`get_by_type_id`（`#[inject]` 字段使用的路径）解析，
+  构建期校验同样可用；显式注册仍然优先。
+- **`#[inject] Arc<ServiceProvider>`**：容器自身作为内建服务可解析
+  （对齐 MEDI `IServiceProvider`），与 `#[inject(provider)]` 并存。
+
+#### 变更
+- **内置 `ScopeFactory` 改为弱引用**：持有 `Weak<ServiceProvider>`，singleton
+  保存它不会形成 `容器 → singleton → 容器` 的 Arc 环；容器必须先于其创建的服务
+  存活（provider 释放后 `create_scope()` panic）。
+- **修复 `get_by_type_id` 内建回退**：内建类型在 store 无注册时不再被提前 `?`
+  短路。
+- 构建期校验现在使用真实 provider；在构造函数内经注入 provider 发起的解析属于
+  动态解析，不进入静态囚徒依赖链（已在文档说明，推荐在方法内延迟解析）。
+
+#### 从 0.7.0 迁移
+- 纯增量，无需改代码；singleton 构造函数现在能拿到可用的 provider。singleton 内
+  推荐用 `Arc<dyn ScopeFactory>`，避免 `#[inject(provider)]` 的强引用环。
+
 ## [0.7.0] - 2026-09-01
 
 > **English** · **简体中文**
@@ -201,6 +264,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.7.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.0
 [0.6.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.6.1
 [0.4.1]: https://github.com/Rust-Framework/rust-dix/compare/v0.4.0...v0.4.1

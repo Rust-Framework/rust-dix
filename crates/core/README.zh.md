@@ -223,6 +223,22 @@ let plugin: Arc<dyn IPlugin> = provider.get().unwrap();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
 
+#### 容器注入（`ServiceProvider` / `ScopeFactory`）
+
+容器自身是内建服务（无需注册），`provider.get()`、`#[inject]` 字段与构建期校验
+都走同一套解析路径：
+
+| 字段 | 说明 |
+|------|------|
+| `#[inject(provider)] provider: Arc<ServiceProvider>` | 按需解析；eager singleton 中同样可用 |
+| `#[inject] provider: Arc<ServiceProvider>` | 同一内建服务的普通写法（对齐 MEDI `IServiceProvider`） |
+| `#[inject] scope_factory: Arc<dyn ScopeFactory>` | singleton worker 推荐：每个任务一个 scope；弱引用，不会形成 `Arc` 环 |
+
+显式 `singleton::<dyn ScopeFactory>(...)` / `instance(...)` 注册优先于内建实现。
+
+> 在 singleton 构造函数内**通过注入的 provider** 发起的解析属于动态解析，不参与
+> 构建期囚徒依赖分析；推荐在方法内延迟解析。
+
 ---
 
 ### Owned 服务解析（`&mut self` 无需 interior mutability）

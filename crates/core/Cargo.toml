@@ -13,7 +13,7 @@ keywords = ["di", "dependency-injection", "ioc", "rust-dix", "service-provider"]
 [dependencies]
 thiserror.workspace = true
 inventory = "0.3"
-rust-dix-macros = { path = "../macros", version = "0.7.0" }
+rust-dix-macros = { path = "../macros", version = "0.7.1" }
 futures = "0.3"
 
 [dev-dependencies]

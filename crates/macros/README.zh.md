@@ -169,6 +169,11 @@ let provider = ServiceCollection::new()
 > 严格类型校验：`#[inject]` 接受 `Arc<T>`、`Option<Arc<T>>` 或 `Vec<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
 
+内建容器服务无需注册，且在 eager singleton（0.7.1+）中同样可注入：
+`#[inject] scope_factory: Arc<dyn ScopeFactory>`、`#[inject] provider: Arc<ServiceProvider>`
+以及专用的 `#[inject(provider)]`。内置 `ScopeFactory` 为弱引用，singleton 持有它
+不会形成 `Arc` 环；容器必须先于其创建的服务存活。
+
 ---
 
 #### `#[rust_dix::module]` — 编译期模块扫描

@@ -82,6 +82,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **键控服务** | 同一 trait 可通过字符串键注册多个实现 |
 | **异步支持** | `build_async()` + `async_*` 注册，用于需要异步初始化的服务 |
 | **构建期校验** | 循环依赖检测、受控依赖（captive dependency）拒绝 |
+| **容器注入** | `#[inject(provider)]`、`Arc<dyn ScopeFactory>`、`Arc<ServiceProvider>` —— eager singleton 与懒解析服务均可用 |
 | **跨 DLL 支持** | 面向 cdylib 插件系统的具名服务注册表 |
 | **分层容器** | 通过 `ServiceProviderWrapper` 实现子容器优先解析 |
 | **拥有式解析** | `get_owned::<T>()` 为 `&mut self` 返回拥有型 `T` —— 无需内部可变性 |
@@ -199,6 +200,26 @@ impl OrderService {
             .unwrap_or_else(|| self.provider.get().unwrap());
         gateway.charge(amount).unwrap();
     }
+}
+```
+
+容器注入在 **`build()` 期间**同样成立：eager singleton 可以持有 provider 或内置
+scope factory。singleton worker 推荐使用弱引用的 `ScopeFactory` —— 每个任务创建
+独立 scope，同时不会因为 `Arc` 环让容器无法回收：
+
+```rust
+#[derive(Inject)]
+struct OutboxWorker {
+    #[inject]
+    scope_factory: Arc<dyn ScopeFactory>, // 无需手动注册
+}
+
+impl OutboxWorker {
+    fn tick(&self) {
+        let scope = self.scope_factory.create_scope();
+        let db: Arc<DbContext> = scope.get().unwrap();
+        // ... 在当前 scope 内投递一批消息 ...
+    } // scope 释放时清理 scoped 服务
 }
 ```
 

@@ -259,9 +259,12 @@ let provider = ServiceCollection::new()
 | `#[inject(key = "k")]` | `Arc<T>` | 键控共享 | `Err(KeyedServiceNotFound)` |
 | `#[inject(owned)]` | 裸 `T` | owned 注入 | `Err`（未注册或 Singleton） |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned | `None` |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver | N/A |
+| `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入容器自身（按需解析） | N/A（内建） |
+| `#[inject]` | `Arc<dyn ScopeFactory>` | 内建 scope 工厂（每任务/每 tick 独立 scope） | N/A（内建） |
+| `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（普通写法） | N/A（内建） |
 
 > 严格类型校验：`#[inject]` 只接受 `Arc<T>`/`Option<Arc<T>>`，`#[inject(owned)]` 只接受裸 `T`/`Option<T>`，不匹配触发编译错误。可选性由 `Option<...>` 类型决定，无需额外标记。
+> 内建服务（`ServiceProvider` / `dyn ScopeFactory`）无需注册，eager singleton 与懒解析服务均可用；显式注册仍优先。内置 `ScopeFactory` 是弱引用，适合 singleton worker 持有。
 
 ---
 

@@ -239,6 +239,25 @@ let plugin: Arc<dyn IPlugin> = provider.get().unwrap();
 let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 ```
 
+#### Container injection (`ServiceProvider` / `ScopeFactory`)
+
+The container is itself resolvable as a built-in service (no registration
+required) through every resolver path — `provider.get()`, `#[inject]` fields and
+build-time validation alike:
+
+| Field | Notes |
+|-------|-------|
+| `#[inject(provider)] provider: Arc<ServiceProvider>` | On-demand resolution; also available in eagerly built singletons |
+| `#[inject] provider: Arc<ServiceProvider>` | Same built-in, plain form (MEDI `IServiceProvider` parity) |
+| `#[inject] scope_factory: Arc<dyn ScopeFactory>` | Recommended for singleton workers: one scope per task. Weak-backed, so holding it does not create an `Arc` cycle |
+
+Explicit `singleton::<dyn ScopeFactory>(...)` / `instance(...)` registrations
+still take precedence over the built-ins.
+
+> Resolution performed *through an injected provider* inside a singleton
+> constructor is dynamic: it bypasses build-time captive-dependency analysis.
+> Prefer resolving lazily in methods.
+
 ---
 
 ### Owned service resolution (`&mut self` without interior mutability)

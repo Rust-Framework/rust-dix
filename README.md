@@ -83,6 +83,7 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Keyed services** | Multiple implementations of the same trait by string key |
 | **Async support** | `build_async()` + `async_*` registration for services needing async init |
 | **Build-time validation** | Circular dependency detection, captive dependency rejection |
+| **Container injection** | `#[inject(provider)]`, `Arc<dyn ScopeFactory>`, `Arc<ServiceProvider>` — works in eager singletons and lazily resolved services |
 | **Cross-DLL support** | Named service registry for cdylib plugin systems |
 | **Layered containers** | Child-first resolution via `ServiceProviderWrapper` |
 | **Owned resolution** | `get_owned::<T>()` returns owned `T` for `&mut self` — no interior mutability |
@@ -205,6 +206,28 @@ impl OrderService {
             .unwrap_or_else(|| self.provider.get().unwrap());
         gateway.charge(amount).unwrap();
     }
+}
+```
+
+Container injection also works **during `build()`**: eagerly built singletons
+may hold the provider or the built-in scope factory. The weak-backed
+`ScopeFactory` is the recommended choice for singleton workers — it creates an
+independent scope per task without keeping the container alive through an `Arc`
+cycle:
+
+```rust
+#[derive(Inject)]
+struct OutboxWorker {
+    #[inject]
+    scope_factory: Arc<dyn ScopeFactory>, // no manual registration needed
+}
+
+impl OutboxWorker {
+    fn tick(&self) {
+        let scope = self.scope_factory.create_scope();
+        let db: Arc<DbContext> = scope.get().unwrap();
+        // ... deliver one batch in this scope ...
+    } // dropping the scope disposes scoped services
 }
 ```
 

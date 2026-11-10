@@ -185,7 +185,7 @@ pub struct CreateUserHandler {
 
 | 外层 | 可依赖 | 不可依赖 |
 |------|--------|---------|
-| Singleton | Singleton | Scoped / Transient |
+| Singleton | Singleton / 内建 `ScopeFactory`（弱引用） | Scoped / Transient |
 | Scoped | Singleton / Scoped | Transient |
 | Transient | 所有 | 无限制 |
 
@@ -212,6 +212,7 @@ pub struct RequestHandler {
 | main.rs 构建一次 | 每次请求重建 |
 | `Arc::new(provider)` 传递 | 传递 ServiceCollection |
 | 需要时解析服务 | 传递 Provider 到处使用 |
+| 后台任务注入 `Arc<dyn ScopeFactory>` 每 tick 建 scope | 让 Singleton 持有 Scoped 实例或 `Scope` |
 
 ```rust
 // ✅ 正确

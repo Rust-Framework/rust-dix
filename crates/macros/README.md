@@ -184,6 +184,13 @@ driven by the field type (`Option<...>`), not by a marker.
 > `Vec<Arc<T>>`, `#[inject(owned)]` only accepts bare `T` / `Option<T>`.
 > Mismatched markers produce a compile-time error.
 
+Built-in container services need no registration and also resolve in eagerly
+built singletons (0.7.1+): `#[inject] scope_factory: Arc<dyn ScopeFactory>`,
+`#[inject] provider: Arc<ServiceProvider>`, and the dedicated
+`#[inject(provider)]`. The built-in `ScopeFactory` is weak-backed, so holding it
+in a singleton does not create an `Arc` cycle; the container must outlive the
+services created from it.
+
 ---
 
 #### `#[rust_dix::module]` — Compile-time module scanning

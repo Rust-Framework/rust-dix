@@ -82,7 +82,7 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 | 属性 | 行为 |
 |------|------|
 | 缓存位置 | `singleton_cache`（全局唯一，`OnceLock` 保护） |
-| 初始化时机 | `build()` 时 eager init（工厂执行一次） |
+| 初始化时机 | `build()` 时 eager init（工厂执行一次）；此时 provider `Arc` 已创建，工厂内可解析 `#[inject(provider)]` / 内置 `ScopeFactory`（0.7.1+） |
 | 生命周期 | = `ServiceProvider` 生命周期 |
 | 线程安全 | `OnceLock::get_or_init` 保证工厂只执行一次 |
 | 依赖约束 | 不能依赖 Scoped（captive dependency 检测） |
@@ -91,6 +91,8 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 - [ ] 确认所有 Singleton 工厂是幂等的（虽然只执行一次，但工厂内不应有副作用依赖）
 - [ ] 确认 Singleton 不持有 `Scope` 或 `Scoped` 服务的 `Arc`（会延长 Scoped 生命周期）
 - [ ] 确认 Singleton 工厂内 `#[inject(provider)]` 拿到的是 root provider（非 scope）
+- [ ] 需要按任务建 scope 的 Singleton 优先注入 `Arc<dyn ScopeFactory>`（内置、弱引用，0.7.1+ 在 eager singleton 中可用）；仅确需容器自身时才用 `#[inject(provider)]`
+- [ ] 确认 Singleton 构造函数内不通过注入的 provider 做动态解析（该路径绕过构建期 captive dependency 校验）
 
 ---
 

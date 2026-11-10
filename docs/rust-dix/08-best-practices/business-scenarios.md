@@ -550,6 +550,49 @@ mod tests {
 
 ---
 
+## 场景 6：后台任务 / 定时器（每 tick 独立 scope）
+
+### 架构约束
+
+- 后台 worker（`IHostedService`、定时器、消息消费者）是 **Singleton**，不能持有
+  `DbContext` 等 Scoped 实例。
+- 每个 tick / 每个任务创建一个独立 `Scope`，在 scope 内解析 Scoped 服务，结束即释放。
+- 推荐注入内置 `Arc<dyn ScopeFactory>`：无需手动注册，0.7.1+ 在 eager singleton
+  中也可注入；内置实现持 `Weak` 引用，不会形成 `容器 → worker → 容器` 的 `Arc` 环。
+
+### 实现
+
+```rust
+use rust_dix::*;
+use std::sync::Arc;
+
+#[derive(Inject)]
+struct OutboxWorker {
+    #[inject]
+    scope_factory: Arc<dyn ScopeFactory>, // 内建服务，无需注册
+}
+
+impl OutboxWorker {
+    fn tick(&self) {
+        let scope = self.scope_factory.create_scope();
+        let mut ctx: DbContext = scope.get_owned().unwrap(); // 每 tick 新实例
+        // ... 处理一批消息 ...
+    } // scope drop → dispose 本 tick 的 scoped 资源
+}
+```
+
+### 检查点
+
+| 项 | 要求 |
+|----|------|
+| 生命周期 | worker = Singleton；`DbContext` 等工作单元 = Scoped；每 tick 一个 scope |
+| 捕获 | worker 不得保存 `DbContext` / `Scope` / 任何 Scoped 服务 |
+| 清理 | 每个 scope 结束（显式 `dispose()` 或 drop） |
+| 注入 | 优先 `Arc<dyn ScopeFactory>`；用 `#[inject(provider)]` 时自行建 scope，并注意强引用环 |
+| 测试 | 直接调用 tick / 处理函数，验证跨 tick 状态不泄漏 |
+
+---
+
 ## 生命周期选择速查
 
 | 服务类型 | 生命周期 | 示例 |
@@ -573,7 +616,7 @@ mod tests {
 |--------|---------|---------|
 | 依赖具体类型 | `Arc<UserService>` | `Arc<dyn IUserService>` |
 | 注册为具体类型 | `.singleton(\|_\| Arc::new(Impl))` | `.singleton::<dyn Trait>(...)` |
-| 传递 Provider 到处使用 | `provider: Arc<ServiceProvider>` 到处传 | 显式依赖字段 |
+| 传递 Provider 到处使用 | `provider: Arc<ServiceProvider>` 当服务定位器到处传 | 显式依赖字段；仅按需路由/后台 worker 建 scope 时注入 `provider` 或 `ScopeFactory` |
 | 每次请求重建容器 | 请求内 `build()` | 构建一次，`scope()` 创建 Scope |
 | Singleton 依赖 Scoped | `#[inject(singleton)]` 包含 Scoped 字段 | Singleton 只依赖 Singleton |
 | struct 与 impl 同时 `#[inject]` | 双重注册 | struct 用 `#[derive(Inject)]`，impl 用 `#[inject]` |

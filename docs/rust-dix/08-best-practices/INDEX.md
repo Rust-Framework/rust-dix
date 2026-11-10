@@ -7,7 +7,7 @@
 | 小节 | 内容 |
 |------|------|
 | [用法指南与决策矩阵](usage-guide.md) | 导入约定、场景推荐、简洁性技巧（首选阅读） |
-| [业务场景实战](business-scenarios.md) | Web 应用、电商、多租户、插件系统、TDD 完整示例 |
+| [业务场景实战](business-scenarios.md) | Web 应用、电商、多租户、插件系统、TDD、后台任务完整示例 |
 | [面向接口开发清单](interface-checklist.md) | 核心规则速查 |
 | [常见陷阱与排查](common-pitfalls.md) | 高频错误 |
 | [性能优化建议](performance-tips.md) | 性能建议 |
@@ -38,7 +38,8 @@
 | 规则 | 说明 |
 |------|------|
 | 构建一次，Arc 持有 | 不要每次重建 |
-| 组合根集中配置 | 不传递 Provider 到处使用 |
+| 组合根集中配置 | 不把 Provider 当服务定位器到处传递 |
+| 后台任务按 tick 建 scope | Singleton 注入 `Arc<dyn ScopeFactory>`（内置、弱引用），不持有 scoped 实例 |
 | 测试替换实现 | 改一行注册换 mock |
 
 ## 下一步

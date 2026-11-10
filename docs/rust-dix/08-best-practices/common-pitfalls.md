@@ -127,24 +127,29 @@ ServiceCollection::new()
 
 ### 排查
 
-当前版本无循环依赖检测。解决方案：
+0.3+ 在 `build()` 阶段就会检测循环依赖并返回 `RdiError::CircularDependency`
+（运行期 Scoped/Transient 解析也有线程局部解析栈兜底；通过注入 provider 发起的
+动态解析同样参与该栈检测）。仍建议从设计上消除循环；确需延迟解析时：
 
 1. **重构依赖方向**：消除循环
-2. **延迟解析**：用 `#[inject(provider)]` 按需解析
+2. **延迟解析**：用 `#[inject(provider)]` 按需解析（eager singleton 与懒解析服务都支持）
 
 ```rust
 #[inject(singleton)]
 struct ServiceA {
     #[inject(provider)]
-    resolver: Arc<dyn IServiceResolver>,  // 按需解析
+    provider: Arc<ServiceProvider>,  // 按需解析
 }
 
 impl ServiceA {
     fn use_b(&self) {
-        let b: Arc<dyn IServiceB> = self.resolver.get();  // 延迟解析
+        let b: Arc<dyn IServiceB> = self.provider.get().unwrap();  // 延迟解析
     }
 }
 ```
+
+> 注意：构造函数内通过 provider 发起的解析属于动态解析，不进入构建期静态囚徒依赖
+> 链；不要依赖构造函数里 `provider.get()` 来获得 captive dependency 报错。
 
 ## 陷阱 5：根 Scope 与子 Scope 语义混淆
 
@@ -400,6 +405,37 @@ impl IUserHandler for UserHandler {
 
 > **为何宏无法编译时检测？** 过程宏跨调用无状态、struct 与 impl 的 TypeId 不冲突、且双重注册是被支持的特性（见 `inject_combined_concrete_and_trait` 测试）。防范完全依赖门禁 A9/B6。详见 [反模式 10 · 为什么宏无法编译时检测双重注册](anti-patterns.md#为什么宏无法编译时检测双重注册)。
 
+## 陷阱 11：singleton 持有 `Arc<ServiceProvider>` 形成引用环
+
+### 现象
+
+外部 `drop(provider)` 后容器的 singleton 缓存与单例仍互相持有，内存不释放；
+反复 `build()` 的测试/长跑进程内存持续增长。
+
+### 原因
+
+provider 的 singleton 缓存持有 singleton，而 singleton 的
+`#[inject(provider)]` 字段又持有 `Arc<ServiceProvider>`，形成
+`容器 → singleton → 容器` 的 `Arc` 环。0.7.1 起内置 `ScopeFactory` 使用
+`Weak` 引用，专门用于打破这个环。
+
+### 排查
+
+- singleton 需要按任务创建 scope 时，优先 `#[inject] scope_factory: Arc<dyn ScopeFactory>`
+  （内置实现持 `Weak`，不形成环）。
+- 确实需要容器自身时可用 `#[inject(provider)]`，但应只在应用级、与进程同生命周期的
+  容器上使用；不要在短生命周期容器上这样做。
+- 不要让 singleton 保存 `Scope` 或 scoped 实例（作用域缓存会持住它们）。
+
+```rust
+// ✅ 推荐：弱引用 scope 工厂，无 Arc 环
+#[derive(Inject)]
+struct OutboxWorker {
+    #[inject]
+    scope_factory: Arc<dyn ScopeFactory>,
+}
+```
+
 ## 排查速查表
 
 | 现象 | 可能原因 | 排查方向 |
@@ -412,7 +448,9 @@ impl IUserHandler for UserHandler {
 | 编译失败 | 元组结构体 | 改命名结构体 |
 | `duplicate key` | key 重复 | 确保 key 唯一 |
 | `svc not registered` | 字段类型未注册 | 注册所有依赖 |
+| `service not registered: dyn ScopeFactory`（eager singleton） | 0.7.0 无法在构建期注入容器服务 | 升级 0.7.1+；singleton 改用 `#[inject] Arc<dyn ScopeFactory>` |
 | `get_owned: ... Singleton` | 对 Singleton 调 `get_owned` | 改用 Transient/Scoped，或用 `try_get_owned` 取 `None` |
+| drop provider 后内存不释放 | singleton 持有 `Arc<ServiceProvider>` 引用环 | singleton 内改用弱引用的 `Arc<dyn ScopeFactory>` |
 | `get_owned` 每次不同实例 | Scoped owned 绕过缓存（设计如此） | 需共享用 `get()`，需 `&mut self` 用 `get_owned()` |
 | 同一服务能被 `get::<具体类型>()` 绕过 trait | struct 与 impl 同时用 `#[inject]`（双重注册） | struct 改 `#[derive(Inject)]`，仅 impl 上用 `#[inject]` |
 

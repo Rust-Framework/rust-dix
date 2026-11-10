@@ -215,7 +215,13 @@ impl ILogger for FileLogger { /* ... */ }
 | `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 返回 `Err` |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
-| `#[inject(provider)]` | `Arc<dyn IServiceResolver>` | 注入 resolver 自身 |
+| `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入容器自身（按需解析） |
+| `#[inject]` | `Arc<dyn ScopeFactory>` | 内建 scope 工厂 — 每任务/每 tick 建独立 scope |
+| `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（等价普通写法，对齐 MEDI `IServiceProvider`） |
+
+> 内建服务无需注册，且在 `build()`/`build_async()` 期间构建的 eager singleton 中同样
+> 可注入（0.7.1+）。内置 `ScopeFactory` 为弱引用，singleton 持有它不会形成
+> `容器 → singleton → 容器` 的 `Arc` 环；容器必须先于其创建的服务存活。
 
 > 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
@@ -230,7 +236,7 @@ struct Handler {
     #[inject(key = "wechat")]
     pay: Arc<dyn IPayGateway>,                 // 键控
     #[inject(provider)]
-    resolver: Arc<dyn IServiceResolver>,       // 注入解析器
+    resolver: Arc<ServiceProvider>,            // 注入容器（按需解析）
     name: String,                              // 未标记 → Default
 }
 ```
