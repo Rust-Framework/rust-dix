@@ -15,9 +15,11 @@ use std::sync::{Arc, Mutex, RwLock};
 ///
 /// The provider `Arc` is available during validation (the container is created
 /// before validation runs), so factories may inject the container itself via
-/// `#[inject(provider)]` or the built-in [`crate::ScopeFactory`]. Resolutions
-/// performed *through that injected provider* are dynamic; they are not part of
-/// this resolver's static dependency chain (same caveat as runtime resolution).
+/// `#[inject(provider)]` or the built-in [`crate::ScopeFactory`]. Resolving
+/// services through that injected provider *inside a constructor* is rejected:
+/// it would bypass the build-time cycle/captive checks and make the validation
+/// result depend on store iteration order. Store the handle and resolve lazily in
+/// methods instead (see [`crate::provider::BuildFactoryGuard`]).
 ///
 /// The `catch_unwind` in `validate_dependencies` only catches user factory
 /// panics (triggered by `None` returns from this resolver), not framework errors.
@@ -156,7 +158,10 @@ impl<'a> ValidationResolver<'a> {
             }
         };
 
-        let result = (entry.factory)(self as &dyn IServiceResolver);
+        let result = {
+            let _build_guard = crate::provider::BuildFactoryGuard::enter();
+            (entry.factory)(self as &dyn IServiceResolver)
+        };
         drop(resolve_guard);
 
         self.stack.write().unwrap().pop();
@@ -194,9 +199,8 @@ impl IServiceResolver for ValidationResolver<'_> {
         // may inject `Arc<dyn ScopeFactory>` / `Arc<ServiceProvider>` through
         // the macro string path.
         if key == std::any::type_name::<dyn crate::scope::ScopeFactory>() {
-            return Some(crate::scope::builtin_scope_factory_any(Arc::downgrade(
-                &self.provider,
-            )));
+            let factory = crate::scope::builtin_scope_factory(Arc::downgrade(&self.provider));
+            return Some(crate::scope::builtin_scope_factory_any(factory));
         }
         if key == std::any::type_name::<ServiceProvider>() {
             let provider: Arc<ServiceProvider> = Arc::clone(&self.provider);

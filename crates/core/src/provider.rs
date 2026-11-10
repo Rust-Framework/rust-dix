@@ -7,7 +7,7 @@ use crate::error::RdiError;
 use crate::scope::ScopeFactory;
 use crate::validation::ValidationResolver;
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
@@ -15,6 +15,12 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 thread_local! {
     /// Runtime resolution stack for Scoped/Transient cycle detection.
     static RESOLVING: RefCell<Vec<(usize, &'static str)>> = const { RefCell::new(Vec::new()) };
+    /// Non-zero while a build-time singleton factory is executing.
+    ///
+    /// Resolving services through an injected provider inside a constructor
+    /// would bypass build-time cycle/captive validation *and* make the outcome
+    /// depend on store iteration order, so it is rejected deterministically.
+    static BUILD_FACTORY_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 pub(crate) struct ResolveGuard;
@@ -23,6 +29,39 @@ impl Drop for ResolveGuard {
     fn drop(&mut self) {
         RESOLVING.with(|stack| {
             stack.borrow_mut().pop();
+        });
+    }
+}
+
+/// RAII marker for “a build-time singleton factory is currently executing”.
+pub(crate) struct BuildFactoryGuard;
+
+impl BuildFactoryGuard {
+    pub(crate) fn enter() -> Self {
+        BUILD_FACTORY_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+impl Drop for BuildFactoryGuard {
+    fn drop(&mut self) {
+        BUILD_FACTORY_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// Reject provider-mediated resolution while a constructor is running.
+///
+/// Construction should declare dependencies as fields; dynamic resolution must
+/// happen later in methods, where no build-time validation constraint applies.
+fn reject_build_time_provider_resolution(type_name: &'static str) {
+    if BUILD_FACTORY_DEPTH.with(|depth| depth.get()) > 0 {
+        std::panic::panic_any(RdiError::FactoryPanic {
+            service: type_name.to_string(),
+            payload: format!(
+                "resolving services through the injected provider from a build-time constructor \
+                 is not supported: store the provider/ScopeFactory and resolve lazily in methods \
+                 (attempted to resolve {type_name})"
+            ),
         });
     }
 }
@@ -71,6 +110,10 @@ pub struct ServiceProvider {
     /// out `Arc<ServiceProvider>` to services using `#[inject(provider)]`.
     /// **每个 provider 独立**：scope-derived provider 的 self_weak 指向自身。
     self_weak: OnceLock<Weak<ServiceProvider>>,
+    /// Built-in `dyn ScopeFactory` singleton, created lazily on first resolution.
+    /// It holds a `Weak` provider reference, so caching it cannot create an
+    /// `Arc` cycle (MEDI parity: the scope factory is itself a singleton).
+    scope_factory_cache: OnceLock<Arc<dyn ScopeFactory>>,
     /// Cleanup closures for scoped services registered via [`Self::register_disposable`].
     /// Populated during factory execution, drained by `Self::dispose_scoped`.
     /// **每个 provider 独立**：scope-derived provider 的 disposables 绑定到当前 scope。
@@ -112,6 +155,7 @@ impl ServiceProvider {
             root_scoped_cache: LazyCache::new(),
             named: Arc::new(RwLock::new(HashMap::new())),
             self_weak: OnceLock::new(),
+            scope_factory_cache: OnceLock::new(),
             disposables: Mutex::new(Vec::new()),
         });
         sp_arc.self_weak.get_or_init(|| Arc::downgrade(&sp_arc));
@@ -177,6 +221,7 @@ impl ServiceProvider {
             root_scoped_cache: LazyCache::new(),
             named: Arc::new(RwLock::new(HashMap::new())),
             self_weak: OnceLock::new(),
+            scope_factory_cache: OnceLock::new(),
             disposables: Mutex::new(Vec::new()),
         });
         sp_arc.self_weak.get_or_init(|| Arc::downgrade(&sp_arc));
@@ -221,6 +266,7 @@ impl ServiceProvider {
             root_scoped_cache: LazyCache::new(),
             named: Arc::clone(&parent.named),
             self_weak: OnceLock::new(),
+            scope_factory_cache: OnceLock::new(),
             disposables: Mutex::new(Vec::new()),
         };
         let arc = Arc::new(sp);
@@ -547,17 +593,30 @@ impl ServiceProvider {
         self.resolve_keyed_optional::<T>(key).ok().flatten()
     }
 
+    /// Built-in `dyn ScopeFactory` singleton for this provider (weak-backed).
+    fn builtin_scope_factory(&self) -> Option<Arc<dyn ScopeFactory>> {
+        let weak = self.self_weak.get()?.clone();
+        Some(Arc::clone(
+            self.scope_factory_cache
+                .get_or_init(|| crate::scope::builtin_scope_factory(weak)),
+        ))
+    }
+
+    fn builtin_scope_factory_any(&self) -> Option<AnyService> {
+        Some(crate::scope::builtin_scope_factory_any(
+            self.builtin_scope_factory()?,
+        ))
+    }
+
     /// Resolve container-provided (built-in) services that need no registration.
     ///
-    /// - `dyn ScopeFactory`: weak-backed factory that creates independent scopes.
+    /// - `dyn ScopeFactory`: weak-backed singleton factory that creates scopes.
     /// - `ServiceProvider`: the container itself (MEDI `IServiceProvider` parity),
     ///   enabling `#[inject] Arc<ServiceProvider>` in addition to the dedicated
     ///   `#[inject(provider)]` field attribute.
     fn builtin_service_by_type_id(&self, tid: TypeId) -> Option<AnyService> {
         if tid == TypeId::of::<dyn ScopeFactory>() {
-            return Some(crate::scope::builtin_scope_factory_any(
-                self.self_weak.get()?.clone(),
-            ));
+            return self.builtin_scope_factory_any();
         }
         if tid == TypeId::of::<ServiceProvider>() {
             let provider = self.self_weak.get()?.upgrade()?;
@@ -570,9 +629,7 @@ impl ServiceProvider {
     /// `IServiceResolver::get_any` path used by the inject macros.
     fn builtin_service_by_name(&self, key: &str) -> Option<AnyService> {
         if key == std::any::type_name::<dyn ScopeFactory>() {
-            return Some(crate::scope::builtin_scope_factory_any(
-                self.self_weak.get()?.clone(),
-            ));
+            return self.builtin_scope_factory_any();
         }
         if key == std::any::type_name::<ServiceProvider>() {
             let provider = self.self_weak.get()?.upgrade()?;
@@ -628,6 +685,7 @@ impl ServiceProvider {
     }
 
     pub(crate) fn get_any_by_entry(&self, entry: &ServiceEntry) -> Option<AnyService> {
+        reject_build_time_provider_resolution(entry.type_name);
         let _guard = match enter_resolve(entry.cache_key, entry.type_name) {
             Ok(g) => g,
             Err(e) => std::panic::panic_any(e),
@@ -668,6 +726,7 @@ impl ServiceProvider {
     ///   resolved transitively bind to the root scope (consistent with
     ///   `get_any_by_entry`'s Scoped root-cache semantics).
     pub(crate) fn create_owned_any_by_entry(&self, entry: &ServiceEntry) -> Option<AnyService> {
+        reject_build_time_provider_resolution(entry.type_name);
         match entry.lifetime {
             ServiceLifetime::Singleton => None,
             ServiceLifetime::Scoped | ServiceLifetime::Transient => {

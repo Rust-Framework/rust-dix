@@ -179,6 +179,10 @@ pub use collection::ServiceCollection;
 /// - 与 MEDI 对齐，容器自身可作为内建服务解析：`provider.get::<ServiceProvider>()`
 ///   与 `#[inject] Arc<ServiceProvider>`（或专用 `#[inject(provider)]`）均可用，
 ///   eager singleton 与懒解析服务一致。
+/// - ⚠️ singleton 持有 `Arc<ServiceProvider>` 会形成 `容器 → singleton → 容器` 的
+///   强引用环，容器不再可能被回收；需要按任务创建 scope 的 singleton 应优先注入
+///   [`ScopeFactory`]（内置实现为弱引用，无环）。构造函数内也不要通过注入的
+///   provider 解析服务（会被拒绝），请保存句柄并在方法中延迟解析。
 ///
 /// Analogous to `IServiceProvider` in MEDI.
 pub use provider::ServiceProvider;

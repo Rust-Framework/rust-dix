@@ -21,6 +21,7 @@ pub(crate) fn expand_inject_derive(input: syn::DeriveInput) -> syn::Result<Token
     };
     Ok(quote! {
             #[doc(hidden)]
+            #[allow(non_snake_case)]
             pub fn #try_fn(
                 resolver: &dyn rust_dix::IServiceResolver,
             ) -> ::std::result::Result<::std::sync::Arc<#name>, rust_dix::RdiError> {
@@ -33,6 +34,7 @@ pub(crate) fn expand_inject_derive(input: syn::DeriveInput) -> syn::Result<Token
     /// Failures panic with `RdiError` as the payload so `ServiceProvider::get`
     /// can recover a typed error via `catch_unwind`.
     #[doc(hidden)]
+    #[allow(non_snake_case)]
     pub fn #fn_name(resolver: &dyn rust_dix::IServiceResolver) -> ::std::sync::Arc<#name> {
         rust_dix::inject_arc(#try_fn(resolver))
     }

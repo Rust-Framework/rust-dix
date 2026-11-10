@@ -10,7 +10,9 @@
 //!
 //! Both now resolve during build: the provider `Arc` is created before
 //! dependency validation and the built-in `ScopeFactory` is reachable through
-//! the `get_any` string path used by the inject macros.
+//! the `get_any` string path used by the inject macros. Constructors may store
+//! the injected handles but must not resolve services through them — those calls
+//! are deterministically rejected at build time (see the last tests).
 
 #![allow(non_snake_case)]
 
@@ -18,6 +20,7 @@ mod common;
 
 use rust_dix::*;
 use rust_dix_macros::Inject;
+use std::any::TypeId;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -170,9 +173,10 @@ fn scope_factory_injection_works_through_build_async() {
 }
 
 #[test]
-fn provider_mediated_self_resolution_is_rejected_as_cycle() {
-    // A factory that uses the injected provider to resolve its own service must
-    // surface CircularDependency (not recurse until stack overflow).
+fn build_time_provider_resolution_is_rejected() {
+    // Constructors may store the injected provider but must not resolve
+    // services through it: the attempt fails with a typed FactoryPanic, so no
+    // service can be built dynamically and bypass validation.
     #[derive(Debug)]
     struct SelfReferential;
 
@@ -183,19 +187,165 @@ fn provider_mediated_self_resolution_is_rejected_as_cycle() {
                 .expect("provider must be available during validation");
             let error = provider
                 .get::<SelfReferential>()
-                .expect_err("resolving the in-flight singleton must fail");
-            assert!(
-                matches!(error, RdiError::CircularDependency(_)),
-                "expected CircularDependency, got {error:?}"
-            );
+                .expect_err("resolving through the provider during build must fail");
+            match error {
+                RdiError::FactoryPanic { payload, .. } => assert!(
+                    payload.contains("resolve lazily"),
+                    "expected a constructor-resolution rejection, got: {payload}"
+                ),
+                other => panic!("expected FactoryPanic, got {other:?}"),
+            }
             Arc::new(SelfReferential)
         })
         .build();
 
     match result {
         Ok(_) => {}
-        Err(error) => panic!("build failed: {error:?}"),
+        Err(error) => {
+            panic!("the constructor handled the rejection, build should succeed: {error:?}")
+        }
     }
+}
+
+#[test]
+fn build_time_provider_resolution_is_order_independent() {
+    // Before the constructor guard, dynamic resolution during validation could
+    // build a captive singleton before its static turn (order-dependent:
+    // 84 Ok / 116 Err over 200 identical builds). With the guard, no dynamic
+    // build happens and the captive dependency is always reported.
+    static REJECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Debug)]
+    struct A;
+    #[derive(Debug)]
+    struct B;
+    #[derive(Debug)]
+    struct Captive;
+
+    fn a_factory(r: &dyn IServiceResolver) -> Arc<A> {
+        let provider = r
+            .provider_arc()
+            .expect("provider must be available during validation");
+        if let Err(RdiError::FactoryPanic { payload, .. }) = provider.get::<B>() {
+            assert!(
+                payload.contains("resolve lazily"),
+                "unexpected payload: {payload}"
+            );
+            REJECTIONS.fetch_add(1, Ordering::SeqCst);
+        }
+        Arc::new(A)
+    }
+
+    // B is captive: it (transitively) requires the Scoped service.
+    fn b_factory(r: &dyn IServiceResolver) -> Arc<B> {
+        let any = r
+            .get_any(std::any::type_name::<Captive>())
+            .expect("Captive must resolve through the validation resolver");
+        let arc = any.downcast::<Arc<Captive>>().expect("Captive downcast");
+        let captive: Arc<Captive> = Arc::clone(&*arc);
+        std::hint::black_box(captive);
+        Arc::new(B)
+    }
+
+    for b_first in [false, true] {
+        for _ in 0..20 {
+            let collection = ServiceCollection::new().scoped(|_| Arc::new(Captive));
+            let collection = if b_first {
+                collection.singleton(b_factory).singleton(a_factory)
+            } else {
+                collection.singleton(a_factory).singleton(b_factory)
+            };
+            match collection.build() {
+                Err(RdiError::SingletonDependsOnScoped { .. }) => {}
+                Err(other) => panic!("expected SingletonDependsOnScoped, got {other:?}"),
+                Ok(_) => {
+                    panic!("build must reject provider-mediated resolution (b_first={b_first})")
+                }
+            }
+        }
+    }
+
+    // The guard must have fired before B was built (both registration orders).
+    assert!(REJECTIONS.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn builtin_services_resolve_through_resolver_paths() {
+    let provider = ServiceCollection::new().build().unwrap();
+
+    let by_type_id = IServiceResolver::get_by_type_id(&*provider, TypeId::of::<dyn ScopeFactory>())
+        .expect("get_by_type_id must expose the built-in ScopeFactory");
+    assert!(by_type_id.downcast::<Arc<dyn ScopeFactory>>().is_ok());
+
+    let by_name = IServiceResolver::get_any(&*provider, std::any::type_name::<dyn ScopeFactory>())
+        .expect("get_any must expose the built-in ScopeFactory");
+    assert!(by_name.downcast::<Arc<dyn ScopeFactory>>().is_ok());
+
+    let provider_any =
+        IServiceResolver::get_by_type_id(&*provider, TypeId::of::<ServiceProvider>())
+            .expect("get_by_type_id must expose the built-in ServiceProvider");
+    assert!(provider_any.downcast::<Arc<ServiceProvider>>().is_ok());
+}
+
+#[test]
+fn builtin_scope_factory_is_a_singleton() {
+    let provider = ServiceCollection::new().build().unwrap();
+    let first: Arc<dyn ScopeFactory> = provider.get().unwrap();
+    let second: Arc<dyn ScopeFactory> = provider.get().unwrap();
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "the built-in ScopeFactory is a singleton (MEDI parity)"
+    );
+}
+
+#[test]
+fn explicit_scope_factory_registration_takes_precedence() {
+    struct CountingFactory {
+        provider: Arc<ServiceProvider>,
+        calls: AtomicUsize,
+    }
+
+    impl ScopeFactory for CountingFactory {
+        fn create_scope(&self) -> Scope {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.provider.scope()
+        }
+    }
+
+    // Auxiliary container: the explicit factory must create scopes over it, not
+    // over the container that resolves it (which is what the built-in would do).
+    let auxiliary = ServiceCollection::new()
+        .scoped(|_| Arc::new(common::MyService { value: 99 }))
+        .build()
+        .unwrap();
+    let explicit = Arc::new(CountingFactory {
+        provider: Arc::clone(&auxiliary),
+        calls: AtomicUsize::new(0),
+    });
+    let explicit_for_registration = Arc::clone(&explicit);
+
+    let provider = ServiceCollection::new()
+        .scoped(|_| Arc::new(common::MyService { value: 1 }))
+        .singleton::<dyn ScopeFactory>(move |_| {
+            Arc::clone(&explicit_for_registration) as Arc<dyn ScopeFactory>
+        })
+        .singleton(|r| __rdi_construct_EagerScopeFactoryWorker(r))
+        .build()
+        .expect("explicit ScopeFactory registration must build");
+
+    // `provider.get` honours the explicit registration.
+    let from_get: Arc<dyn ScopeFactory> = provider.get().unwrap();
+    assert!(Arc::ptr_eq(
+        &from_get,
+        &(explicit.clone() as Arc<dyn ScopeFactory>)
+    ));
+
+    // Field injection in an eager singleton does too.
+    let worker: Arc<EagerScopeFactoryWorker> = provider.get().unwrap();
+    let scope = worker.scope_factory.create_scope();
+    let svc: Arc<common::MyService> = scope.get().unwrap();
+    assert_eq!(svc.value, 99, "explicit factory must win over the built-in");
+    assert_eq!(explicit.calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]

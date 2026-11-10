@@ -49,11 +49,15 @@ impl ScopeFactory for BuiltinScopeFactory {
     }
 }
 
-/// Build the built-in `dyn ScopeFactory` service in the `Arc<Arc<T>>`-style
-/// storage format used by [`IServiceResolver`] (`Arc::new(Arc<dyn T>)`).
-pub(crate) fn builtin_scope_factory_any(provider: Weak<ServiceProvider>) -> AnyService {
-    let sf: Arc<dyn ScopeFactory> = Arc::new(BuiltinScopeFactory::new(provider));
-    Arc::new(sf) as AnyService
+/// Create the built-in `dyn ScopeFactory` singleton for a provider.
+pub(crate) fn builtin_scope_factory(provider: Weak<ServiceProvider>) -> Arc<dyn ScopeFactory> {
+    Arc::new(BuiltinScopeFactory::new(provider))
+}
+
+/// Wrap a scope factory in the `Arc<Arc<T>>`-style storage format used by
+/// [`IServiceResolver`] (`Arc::new(Arc<dyn T>)`).
+pub(crate) fn builtin_scope_factory_any(factory: Arc<dyn ScopeFactory>) -> AnyService {
+    Arc::new(factory) as AnyService
 }
 
 /// A scoped service provider — created via [`ServiceProvider::scope`].
