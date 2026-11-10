@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # ──────────────────────────────────────────────
@@ -83,11 +83,32 @@ echo ""
 
 # ── Step 2: Publish rust-dix-macros ──
 
+publish_crate() {
+  local dir="$1" crate="$2" ver="$3" attempt log
+  echo "==> Publishing ${crate} v${ver}..."
+  for attempt in 1 2 3 4 5 6; do
+    log="$(mktemp)"
+    if (cd "$dir" && cargo publish $DRY_RUN --allow-dirty 2>&1 | tee "$log"); then
+      rm -f "$log"
+      echo "    ✓ ${crate} published"
+      return 0
+    fi
+    if grep -qiE 'already (uploaded|exists)|crate version .*already' "$log"; then
+      rm -f "$log"
+      echo "    ✓ ${crate} already on crates.io (rerun-safe)"
+      return 0
+    fi
+    rm -f "$log"
+    echo "    attempt ${attempt} failed; retrying in 20s (crates.io index propagation)..."
+    sleep 20
+  done
+  echo "    ERROR: failed to publish ${crate}"
+  return 1
+}
+
 MACROS_DIR="crates/macros"
 MACROS_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-echo "==> 2. Publishing rust-dix-macros v${MACROS_VER}..."
-(cd "$MACROS_DIR" && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ rust-dix-macros published"
+publish_crate "$MACROS_DIR" rust-dix-macros "$MACROS_VER"
 
 if [ -z "$DRY_RUN" ]; then
     echo "    Waiting 15s for crates.io index to refresh..."
@@ -100,9 +121,7 @@ echo ""
 
 RDI_DIR="crates/core"
 RDI_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-echo "==> 3. Publishing rust-dix v${RDI_VER}..."
-(cd "$RDI_DIR" && cargo publish $DRY_RUN --allow-dirty)
-echo "    ✓ rust-dix published"
+publish_crate "$RDI_DIR" rust-dix "$RDI_VER"
 
 echo ""
 echo "============================================"

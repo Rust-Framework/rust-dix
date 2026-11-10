@@ -6,7 +6,7 @@ description = "rust-dix: A Rust dependency injection framework inspired by Micro
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
-include = ["README.md", "src/**/*", "tests/**/*"]
+include = ["README.md", "src/**/*", "tests/**/*", "examples/**/*"]
 categories = ["rust-patterns", "asynchronous"]
 keywords = ["di", "dependency-injection", "ioc", "rust-dix", "service-provider"]
 
