@@ -38,11 +38,11 @@ let svc = MyService::new(
     Arc::new(Cache::new(1024)),
 );
 
-// 用 DI：声明一次，随处解析
+// 用 DI：声明一次，随处解析（`MyService` 使用 `#[derive(Inject)]`）
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))
-    .transient(|p| Arc::new(MyService::new(p.get().unwrap(), p.get().unwrap())))
+    .transient(|p| __rdi_construct_MyService(p))
     .build()
     .unwrap();
 
@@ -58,7 +58,7 @@ let svc: Arc<MyService> = provider.get().unwrap();
 fn test_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MockDatabase::new()))
-        .transient(|p| Arc::new(MyApi::new(p.get().unwrap())))
+        .transient(|p| __rdi_construct_MyApi(p))
         .build()
         .unwrap()
 }
@@ -230,14 +230,15 @@ let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 
 | 字段 | 说明 |
 |------|------|
-| `#[inject(provider)] provider: Arc<ServiceProvider>` | 按需解析；eager singleton 中同样可用 |
-| `#[inject] provider: Arc<ServiceProvider>` | 同一内建服务的普通写法（对齐 MEDI `IServiceProvider`） |
-| `#[inject] scope_factory: Arc<dyn ScopeFactory>` | singleton worker 推荐：每个任务一个 scope；弱引用，不会形成 `Arc` 环 |
+| `#[inject(provider)] provider: Arc<ServiceProvider>` | 按需解析；eager singleton 中同样可用。**注意**：singleton 持有会形成 `容器 → singleton → 容器` 强引用环，优先用 `ScopeFactory` |
+| `#[inject] provider: Arc<ServiceProvider>` | 同一内建服务的普通写法（对齐 MEDI `IServiceProvider`）；同样有强引用环风险 |
+| `#[inject] scope_factory: Arc<dyn ScopeFactory>` | singleton worker 推荐：每个任务一个 scope；弱引用单例，不会形成 `Arc` 环 |
 
-显式 `singleton::<dyn ScopeFactory>(...)` / `instance(...)` 注册优先于内建实现。
+显式 `singleton::<dyn ScopeFactory>(...)` 注册优先于内建实现。
 
-> 在 singleton 构造函数内**通过注入的 provider** 发起的解析属于动态解析，不参与
-> 构建期囚徒依赖分析；推荐在方法内延迟解析。
+> 在 singleton 构造函数内**通过注入的 provider** 解析服务会在 build 期返回类型化
+> `FactoryPanic`（被拒绝）：否则会绕过循环/囚徒依赖校验，并使校验结果依赖注册顺序。
+> 请保存句柄，在方法中延迟解析。
 
 ---
 

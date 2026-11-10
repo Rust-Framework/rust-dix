@@ -263,8 +263,8 @@ let provider = ServiceCollection::new()
 | `#[inject]` | `Arc<dyn ScopeFactory>` | 内建 scope 工厂（每任务/每 tick 独立 scope） | N/A（内建） |
 | `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（普通写法） | N/A（内建） |
 
-> 严格类型校验：`#[inject]` 只接受 `Arc<T>`/`Option<Arc<T>>`，`#[inject(owned)]` 只接受裸 `T`/`Option<T>`，不匹配触发编译错误。可选性由 `Option<...>` 类型决定，无需额外标记。
-> 内建服务（`ServiceProvider` / `dyn ScopeFactory`）无需注册，eager singleton 与懒解析服务均可用；显式注册仍优先。内置 `ScopeFactory` 是弱引用，适合 singleton worker 持有。
+> 严格类型校验：`#[inject]` 接受 `Arc<T>` / `Option<Arc<T>>` / `Vec<Arc<T>>`，`#[inject(owned)]` 只接受裸 `T`/`Option<T>`，不匹配触发编译错误。可选性由 `Option<...>` 类型决定，无需额外标记。
+> 内建服务（`ServiceProvider` / `dyn ScopeFactory`）无需注册，eager singleton 与懒解析服务均可用；显式注册仍优先。singleton 内优先持有 `Arc<dyn ScopeFactory>`（弱引用单例，无 `Arc` 环），而不是 `Arc<ServiceProvider>`（强引用环）；在构造函数内通过注入的 provider 解析服务会被拒绝，请在方法中延迟解析。
 
 ---
 

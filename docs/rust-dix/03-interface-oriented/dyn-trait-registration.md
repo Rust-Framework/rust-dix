@@ -170,17 +170,34 @@ pub trait IServiceResolver: Send + Sync {
 
 ## 工厂闭包中的依赖解析
 
-工厂闭包接收 `&dyn IServiceResolver` 参数，可解析依赖：
+工厂闭包接收 `&dyn IServiceResolver` 参数；该 trait 的泛型 `get` 带 `Self: Sized`
+约束，不能直接在 trait object 上调用，推荐用 `#[derive(Inject)]` 生成构造函数，
+或通过 `get_any` + downcast：
 
 ```rust
 ServiceCollection::new()
     .singleton::<dyn IConfig>(|_| Arc::new(AppConfig))
     .singleton::<dyn ILogger>(|r| {
-        let config: Arc<dyn IConfig> = r.get().unwrap();  // 解析依赖
+        let any = r
+            .get_any(std::any::type_name::<dyn IConfig>())
+            .expect("IConfig must be registered");
+        let config: Arc<dyn IConfig> =
+            Arc::clone(&*any.downcast::<Arc<dyn IConfig>>().expect("IConfig downcast"));
         Arc::new(FileLogger { level: config.level() })
     })
     .build()
     .unwrap();
+```
+
+更简洁的方式是使用 `#[derive(Inject)]`，由生成的 `__rdi_construct_*` 完成依赖解析：
+
+```rust
+#[derive(Inject)]
+struct FileLogger {
+    #[inject]
+    config: Arc<dyn IConfig>,
+}
+// .singleton::<dyn ILogger>(|r| __rdi_construct_FileLogger(r))
 ```
 
 过程宏自动处理字段依赖：
@@ -220,8 +237,10 @@ impl ILogger for FileLogger { /* ... */ }
 | `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（等价普通写法，对齐 MEDI `IServiceProvider`） |
 
 > 内建服务无需注册，且在 `build()`/`build_async()` 期间构建的 eager singleton 中同样
-> 可注入（0.7.1+）。内置 `ScopeFactory` 为弱引用，singleton 持有它不会形成
-> `容器 → singleton → 容器` 的 `Arc` 环；容器必须先于其创建的服务存活。
+> 可注入（0.7.1+）。内置 `ScopeFactory` 为弱引用单例，singleton 持有它不会形成
+> `容器 → singleton → 容器` 的 `Arc` 环；但持有 `Arc<ServiceProvider>` 会形成强引用环，
+> singleton 内优先用 `ScopeFactory`。在构造函数内通过注入的 provider 解析服务会被拒绝，
+> 请保存句柄并在方法中延迟解析。
 
 > 严格类型校验：`#[inject]` 只接受 `Arc<T>` / `Option<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。

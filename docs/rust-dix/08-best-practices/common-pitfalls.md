@@ -112,17 +112,22 @@ struct GlobalService {
 服务 A 依赖 B，B 依赖 A：
 
 ```rust
+#[derive(Inject)]
+struct ServiceA {
+    #[inject]
+    b: Arc<dyn IServiceB>,
+}
+
+#[derive(Inject)]
+struct ServiceB {
+    #[inject]
+    a: Arc<dyn IServiceA>,
+}
+
 ServiceCollection::new()
-    .singleton::<dyn IServiceA>(|r| {
-        let b: Arc<dyn IServiceB> = r.get();  // A 依赖 B
-        Arc::new(ServiceA { b })
-    })
-    .singleton::<dyn IServiceB>(|r| {
-        let a: Arc<dyn IServiceA> = r.get();  // B 依赖 A → 循环
-        Arc::new(ServiceB { a })
-    })
-    .build()
-    .unwrap();
+    .singleton(|r| __rdi_construct_ServiceA(r))
+    .singleton(|r| __rdi_construct_ServiceB(r))
+    .build()?; // Err(RdiError::CircularDependency)
 ```
 
 ### 排查
@@ -148,8 +153,8 @@ impl ServiceA {
 }
 ```
 
-> 注意：构造函数内通过 provider 发起的解析属于动态解析，不进入构建期静态囚徒依赖
-> 链；不要依赖构造函数里 `provider.get()` 来获得 captive dependency 报错。
+> 注意：在 build 期构造函数内通过注入的 provider 发起的解析会被拒绝（返回类型化
+> `FactoryPanic`），目的是避免绕过循环/囚徒依赖校验；把解析移到方法中即可。
 
 ## 陷阱 5：根 Scope 与子 Scope 语义混淆
 

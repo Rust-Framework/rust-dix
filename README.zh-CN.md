@@ -204,8 +204,10 @@ impl OrderService {
 ```
 
 容器注入在 **`build()` 期间**同样成立：eager singleton 可以持有 provider 或内置
-scope factory。singleton worker 推荐使用弱引用的 `ScopeFactory` —— 每个任务创建
-独立 scope，同时不会因为 `Arc` 环让容器无法回收：
+scope factory。singleton worker 推荐使用弱引用且单例缓存的 `ScopeFactory` —— 每个
+任务创建独立 scope，同时不会因为 `Arc` 环让容器无法回收。singleton 内应优先用它
+而非 `#[inject(provider)]`（持有 `Arc<ServiceProvider>` 会形成强引用环），并在方法中
+延迟解析：在 build 期构造函数内经注入 provider 解析服务会被拒绝。
 
 ```rust
 #[derive(Inject)]
@@ -236,16 +238,22 @@ pub trait IUnitOfWork: Send + Sync {
     fn rollback(&self);
 }
 
+#[derive(Inject)]
+struct UnitOfWork {
+    #[inject]
+    db: Arc<dyn IDbPool>,
+}
+
+#[derive(Inject)]
+struct OrderService {
+    #[inject]
+    uow: Arc<dyn IUnitOfWork>,
+}
+
 let provider = ServiceCollection::new()
-    .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))   // 全局
-    .scoped::<dyn IUnitOfWork>(|r| {                          // 每作用域
-        let db: Arc<dyn IDbPool> = r.get().unwrap();
-        Arc::new(UnitOfWork::new(db))
-    })
-    .transient::<dyn IOrderService>(|r| {                     // 每次都新建
-        let uow: Arc<dyn IUnitOfWork> = r.get().unwrap();
-        Arc::new(OrderService::new(uow))
-    })
+    .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))    // 全局
+    .scoped::<dyn IUnitOfWork>(|r| __rdi_construct_UnitOfWork(r))   // 每作用域
+    .transient::<dyn IOrderService>(|r| __rdi_construct_OrderService(r)) // 每次都新建
     .build()
     .unwrap();
 ```

@@ -24,18 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`#[inject] Arc<ServiceProvider>`**: the container itself is resolvable as a
   built-in service (MEDI `IServiceProvider` parity) in addition to the dedicated
   `#[inject(provider)]` attribute.
+- **Constructor-time resolution is rejected**: resolving services through an
+  injected provider *inside* a build-time constructor returns a typed
+  `FactoryPanic` instead of silently building dependencies outside the
+  validation graph. Store the handle and resolve lazily in methods.
 
 #### Changed
 - **Built-in `ScopeFactory` is weak-backed**: it holds `Weak<ServiceProvider>`
   instead of `Arc`, so a singleton may store the factory without creating a
   `container → singleton → container` reference cycle. The container must outlive
   services created from it; `create_scope()` panics after the provider is dropped.
-- **`get_by_type_id` built-in fallback fixed**: the `ScopeFactory` fallback is no
-  longer short-circuited when the built-in type has no store entry.
-- Build-time validation runs against the real provider; resolutions performed
-  through an injected provider inside a constructor are dynamic and therefore not
-  part of the static captive-dependency chain (documented; prefer resolving in
-  methods).
+- **Built-in `ScopeFactory` is a singleton**: one factory instance is cached per
+  provider (MEDI parity); repeated `get::<dyn ScopeFactory>()` returns the same
+  `Arc`.
+- **`get_by_type_id` built-in fallback fixed**: the `ScopeFactory` / provider
+  fallback is no longer short-circuited when the built-in type has no store
+  entry.
 
 #### Migration from 0.7.0
 - Additive: no code changes required. Singleton constructors now receive a live
@@ -54,15 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   构建期校验同样可用；显式注册仍然优先。
 - **`#[inject] Arc<ServiceProvider>`**：容器自身作为内建服务可解析
   （对齐 MEDI `IServiceProvider`），与 `#[inject(provider)]` 并存。
+- **构造函数内动态解析被拒绝**：在 build 期的构造函数里通过注入的 provider
+  解析服务会返回类型化 `FactoryPanic`，而不是绕过校验图悄悄构建依赖；请保存
+  句柄、在方法中延迟解析。
 
 #### 变更
 - **内置 `ScopeFactory` 改为弱引用**：持有 `Weak<ServiceProvider>`，singleton
   保存它不会形成 `容器 → singleton → 容器` 的 Arc 环；容器必须先于其创建的服务
   存活（provider 释放后 `create_scope()` panic）。
+- **内置 `ScopeFactory` 为单例**：每个 provider 缓存一份实例（对齐 MEDI），
+  多次 `get::<dyn ScopeFactory>()` 返回同一 `Arc`。
 - **修复 `get_by_type_id` 内建回退**：内建类型在 store 无注册时不再被提前 `?`
   短路。
-- 构建期校验现在使用真实 provider；在构造函数内经注入 provider 发起的解析属于
-  动态解析，不进入静态囚徒依赖链（已在文档说明，推荐在方法内延迟解析）。
 
 #### 从 0.7.0 迁移
 - 纯增量，无需改代码；singleton 构造函数现在能拿到可用的 provider。singleton 内

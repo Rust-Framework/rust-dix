@@ -210,10 +210,13 @@ impl OrderService {
 ```
 
 Container injection also works **during `build()`**: eagerly built singletons
-may hold the provider or the built-in scope factory. The weak-backed
+may hold the provider or the built-in scope factory. The weak-backed, cached
 `ScopeFactory` is the recommended choice for singleton workers — it creates an
 independent scope per task without keeping the container alive through an `Arc`
-cycle:
+cycle. Prefer it over `#[inject(provider)]` in singletons (holding
+`Arc<ServiceProvider>` creates a strong cycle), and resolve lazily in methods:
+resolving through the injected provider inside a build-time constructor is
+rejected.
 
 ```rust
 #[derive(Inject)]
@@ -244,16 +247,22 @@ pub trait IUnitOfWork: Send + Sync {
     fn rollback(&self);
 }
 
+#[derive(Inject)]
+struct UnitOfWork {
+    #[inject]
+    db: Arc<dyn IDbPool>,
+}
+
+#[derive(Inject)]
+struct OrderService {
+    #[inject]
+    uow: Arc<dyn IUnitOfWork>,
+}
+
 let provider = ServiceCollection::new()
-    .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))   // global
-    .scoped::<dyn IUnitOfWork>(|r| {                          // per-scope
-        let db: Arc<dyn IDbPool> = r.get().unwrap();
-        Arc::new(UnitOfWork::new(db))
-    })
-    .transient::<dyn IOrderService>(|r| {                     // fresh each time
-        let uow: Arc<dyn IUnitOfWork> = r.get().unwrap();
-        Arc::new(OrderService::new(uow))
-    })
+    .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))    // global
+    .scoped::<dyn IUnitOfWork>(|r| __rdi_construct_UnitOfWork(r))   // per-scope
+    .transient::<dyn IOrderService>(|r| __rdi_construct_OrderService(r)) // fresh each time
     .build()
     .unwrap();
 ```

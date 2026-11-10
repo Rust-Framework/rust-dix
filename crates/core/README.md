@@ -39,11 +39,11 @@ let svc = MyService::new(
     Arc::new(Cache::new(1024)),
 );
 
-// With DI: declare once, resolve anywhere
+// With DI: declare once, resolve anywhere (`MyService` derives `Inject`)
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))
-    .transient(|p| Arc::new(MyService::new(p.get().unwrap(), p.get().unwrap())))
+    .transient(|p| __rdi_construct_MyService(p))
     .build()
     .unwrap();
 
@@ -60,7 +60,7 @@ service.
 fn test_provider() -> ServiceProvider {
     ServiceCollection::new()
         .singleton(|_| Arc::new(MockDatabase::new()))
-        .transient(|p| Arc::new(MyApi::new(p.get().unwrap())))
+        .transient(|p| __rdi_construct_MyApi(p))
         .build()
         .unwrap()
 }
@@ -247,16 +247,17 @@ build-time validation alike:
 
 | Field | Notes |
 |-------|-------|
-| `#[inject(provider)] provider: Arc<ServiceProvider>` | On-demand resolution; also available in eagerly built singletons |
-| `#[inject] provider: Arc<ServiceProvider>` | Same built-in, plain form (MEDI `IServiceProvider` parity) |
-| `#[inject] scope_factory: Arc<dyn ScopeFactory>` | Recommended for singleton workers: one scope per task. Weak-backed, so holding it does not create an `Arc` cycle |
+| `#[inject(provider)] provider: Arc<ServiceProvider>` | On-demand resolution; also available in eagerly built singletons. **Warning:** a singleton holding this creates a strong `container → singleton → container` cycle; prefer `ScopeFactory` |
+| `#[inject] provider: Arc<ServiceProvider>` | Same built-in, plain form (MEDI `IServiceProvider` parity); same strong-reference caveat |
+| `#[inject] scope_factory: Arc<dyn ScopeFactory>` | Recommended for singleton workers: one scope per task. Weak-backed singleton, so holding it does not create an `Arc` cycle |
 
-Explicit `singleton::<dyn ScopeFactory>(...)` / `instance(...)` registrations
-still take precedence over the built-ins.
+Explicit `singleton::<dyn ScopeFactory>(...)` registrations still take precedence
+over the built-in.
 
-> Resolution performed *through an injected provider* inside a singleton
-> constructor is dynamic: it bypasses build-time captive-dependency analysis.
-> Prefer resolving lazily in methods.
+> Resolving services *through an injected provider* inside a singleton
+> constructor is rejected at build time with a typed `FactoryPanic`: it would
+> bypass cycle/captive validation and make the result order-dependent. Store the
+> handle and resolve lazily in methods.
 
 ---
 

@@ -92,7 +92,7 @@ scope.dispose();  // 显式 dispose，不依赖 Drop
 - [ ] 确认 Singleton 不持有 `Scope` 或 `Scoped` 服务的 `Arc`（会延长 Scoped 生命周期）
 - [ ] 确认 Singleton 工厂内 `#[inject(provider)]` 拿到的是 root provider（非 scope）
 - [ ] 需要按任务建 scope 的 Singleton 优先注入 `Arc<dyn ScopeFactory>`（内置、弱引用，0.7.1+ 在 eager singleton 中可用）；仅确需容器自身时才用 `#[inject(provider)]`
-- [ ] 确认 Singleton 构造函数内不通过注入的 provider 做动态解析（该路径绕过构建期 captive dependency 校验）
+- [ ] 确认 Singleton 构造函数内不通过注入的 provider 做动态解析（框架会在 build 期返回 `FactoryPanic` 拒绝，避免绕过 captive dependency 校验）
 
 ---
 

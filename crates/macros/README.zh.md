@@ -171,8 +171,10 @@ let provider = ServiceCollection::new()
 
 内建容器服务无需注册，且在 eager singleton（0.7.1+）中同样可注入：
 `#[inject] scope_factory: Arc<dyn ScopeFactory>`、`#[inject] provider: Arc<ServiceProvider>`
-以及专用的 `#[inject(provider)]`。内置 `ScopeFactory` 为弱引用，singleton 持有它
-不会形成 `Arc` 环；容器必须先于其创建的服务存活。
+以及专用的 `#[inject(provider)]`。内置 `ScopeFactory` 为弱引用单例，singleton 持有它
+不会形成 `Arc` 环；容器必须先于其创建的服务存活。singleton 内优先用 `ScopeFactory`
+而非 `provider`（持有 `Arc<ServiceProvider>` 会形成强引用环），并在方法中延迟解析——
+在 build 期构造函数内经注入 provider 解析服务会被拒绝。
 
 ---
 

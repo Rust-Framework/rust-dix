@@ -357,7 +357,11 @@ let provider = ServiceCollection::new()
         })
     }))
     .scoped(|r| {
-        let tenant_pool: Arc<TenantDbPool> = r.get().unwrap();
+        let any = r
+            .get_any(std::any::type_name::<TenantDbPool>())
+            .expect("TenantDbPool must be registered");
+        let tenant_pool: Arc<TenantDbPool> =
+            Arc::clone(&*any.downcast::<Arc<TenantDbPool>>().expect("TenantDbPool downcast"));
         let tenant_id = "tenant_a".into();  // 实际从请求头解析
         Arc::new(TenantContext {
             tenant_db: tenant_pool.resolve(&tenant_id),
@@ -577,7 +581,9 @@ impl OutboxWorker {
         let scope = self.scope_factory.create_scope();
         let mut ctx: DbContext = scope.get_owned().unwrap(); // 每 tick 新实例
         // ... 处理一批消息 ...
-    } // scope drop → dispose 本 tick 的 scoped 资源
+        // scope 结束：scope.get() 缓存的 scoped 资源随 scope 释放；
+        // get_owned 绕过缓存、由调用方持有（本函数末尾 drop），不会进入 scope 缓存。
+    }
 }
 ```
 

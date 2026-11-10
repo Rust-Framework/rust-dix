@@ -185,8 +185,8 @@ pub struct CreateUserHandler {
 
 | 外层 | 可依赖 | 不可依赖 |
 |------|--------|---------|
-| Singleton | Singleton / 内建 `ScopeFactory`（弱引用） | Scoped / Transient |
-| Scoped | Singleton / Scoped | Transient |
+| Singleton | Singleton / Transient（二者都非 captive） / 内建 `ScopeFactory`（弱引用） | Scoped |
+| Scoped | Singleton / Scoped / Transient | 无限制 |
 | Transient | 所有 | 无限制 |
 
 ```rust

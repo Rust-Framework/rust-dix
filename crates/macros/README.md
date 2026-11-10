@@ -187,9 +187,12 @@ driven by the field type (`Option<...>`), not by a marker.
 Built-in container services need no registration and also resolve in eagerly
 built singletons (0.7.1+): `#[inject] scope_factory: Arc<dyn ScopeFactory>`,
 `#[inject] provider: Arc<ServiceProvider>`, and the dedicated
-`#[inject(provider)]`. The built-in `ScopeFactory` is weak-backed, so holding it
-in a singleton does not create an `Arc` cycle; the container must outlive the
-services created from it.
+`#[inject(provider)]`. The built-in `ScopeFactory` is weak-backed and cached as a
+singleton, so holding it in a singleton does not create an `Arc` cycle; the
+container must outlive the services created from it. Prefer `ScopeFactory` over
+`provider` in singletons (holding `Arc<ServiceProvider>` creates a strong cycle),
+and resolve lazily in methods — resolving through the injected provider inside a
+build-time constructor is rejected.
 
 ---
 
