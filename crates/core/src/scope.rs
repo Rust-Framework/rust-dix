@@ -1,21 +1,59 @@
+use crate::cache::AnyService;
 use crate::entry::IServiceResolver;
 use crate::error::RdiError;
 use crate::provider::ServiceProvider;
 use std::any::{Any, TypeId};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 /// 工厂 trait：创建独立 scope。可注入 singleton 服务按需创建 scope。
 ///
 /// 典型场景：后台 worker singleton 需要按请求创建独立 scope，
 /// 在 scope 内解析 Scoped 服务（如 request-scoped DbContext）。
 ///
-/// `ServiceProvider` 实现此 trait。从 0.7 起，built provider 可直接
-/// `get::<dyn ScopeFactory>()`，无需手动注册。若需自定义实现，仍可
-/// `singleton::<dyn ScopeFactory>(...)` 覆盖默认行为。
+/// built provider 内置此服务：`provider.get::<dyn ScopeFactory>()` 以及
+/// `#[inject] Arc<dyn ScopeFactory>` 字段都可用，无需手动注册，eager
+/// singleton 与懒解析服务一致。显式 `singleton::<dyn ScopeFactory>(...)`
+/// 注册仍然优先（覆盖内置实现）。
+///
+/// 内置实现持有 provider 的 [`Weak`] 引用，因此 singleton 持有它不会形成
+/// `容器 → singleton → 容器` 的 `Arc` 环；容器必须先于其创建的服务存活
+/// （`create_scope` 在 provider 已释放时会 panic，与 MEDI 的容器生命周期
+/// 约定一致）。若需要强引用语义，可自行注册实现。
 pub trait ScopeFactory: Send + Sync {
     /// 创建一个独立 scope，共享 root 的 store/singleton_cache/named，
     /// 独立 scoped_cache 和 disposables。
     fn create_scope(&self) -> Scope;
+}
+
+/// 内置 [`ScopeFactory`] 实现：按需 upgrade provider 的弱引用。
+///
+/// 使用 `Weak` 而非 `Arc` 是有意设计：singleton 会持有该工厂，强引用会形成
+/// `ServiceProvider::singleton_cache → singleton → ServiceProvider` 的引用环，
+/// 导致容器在外部句柄释放后仍无法回收。
+pub(crate) struct BuiltinScopeFactory {
+    provider: Weak<ServiceProvider>,
+}
+
+impl BuiltinScopeFactory {
+    pub(crate) fn new(provider: Weak<ServiceProvider>) -> Self {
+        Self { provider }
+    }
+}
+
+impl ScopeFactory for BuiltinScopeFactory {
+    fn create_scope(&self) -> Scope {
+        self.provider.upgrade().map(Scope::new).expect(
+            "ScopeFactory::create_scope: ServiceProvider has been dropped; \
+                 the DI container must outlive services created from it",
+        )
+    }
+}
+
+/// Build the built-in `dyn ScopeFactory` service in the `Arc<Arc<T>>`-style
+/// storage format used by [`IServiceResolver`] (`Arc::new(Arc<dyn T>)`).
+pub(crate) fn builtin_scope_factory_any(provider: Weak<ServiceProvider>) -> AnyService {
+    let sf: Arc<dyn ScopeFactory> = Arc::new(BuiltinScopeFactory::new(provider));
+    Arc::new(sf) as AnyService
 }
 
 /// A scoped service provider — created via [`ServiceProvider::scope`].
@@ -87,14 +125,15 @@ impl Scope {
         self.scope_provider.get_optional::<T>()
     }
 
-    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
+    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Arc<T>, RdiError> {
         self.scope_provider.get_keyed::<T>(key)
     }
 
     /// Resolve an async service (transient or scoped) within this scope.
-    pub async fn get_async<T: ?Sized + Send + Sync + 'static>(
-        &self,
-    ) -> Result<Arc<T>, RdiError> {
+    pub async fn get_async<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
         self.scope_provider.get_async::<T>().await
     }
 
@@ -163,11 +202,7 @@ impl IServiceResolver for Scope {
     fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_by_type_id(tid)
     }
-    fn get_keyed_by_type_id(
-        &self,
-        tid: TypeId,
-        key: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_by_type_id(&self, tid: TypeId, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_keyed_by_type_id(tid, key)
     }
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {

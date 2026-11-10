@@ -52,11 +52,7 @@ pub trait IServiceResolver: Send + Sync {
         None
     }
     /// TypeId 直查 keyed 版本（默认 `None`）。
-    fn get_keyed_by_type_id(
-        &self,
-        _tid: TypeId,
-        _key: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_by_type_id(&self, _tid: TypeId, _key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         None
     }
 
@@ -76,10 +72,13 @@ pub trait IServiceResolver: Send + Sync {
     ///
     /// Used by `#[inject(provider)]` to give a service access to the DI container
     /// so it can resolve scoped/owned instances on-demand (e.g., per-request
-    /// `DbContext` in a web handler).
+    /// `DbContext` in a web handler, or per-tick scopes in a singleton worker).
     ///
-    /// Returns `None` if the resolver is not backed by a `ServiceProvider`
-    /// (e.g., `ValidationResolver` during build-time validation).
+    /// Available during `build()` as well: validation executes singleton
+    /// factories against the real provider, so `#[inject(provider)]` works in
+    /// eagerly built singletons too.
+    ///
+    /// Returns `None` only for resolvers not backed by a `ServiceProvider`.
     ///
     /// Default `None` keeps external implementors backward-compatible.
     fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
@@ -116,7 +115,10 @@ pub trait IServiceResolver: Send + Sync {
     }
 
     /// Resolve a keyed service by type and key. Returns `Err` if not found.
-    fn get_keyed<T: ?Sized + Sync + Send + 'static>(&self, variant: &str) -> Result<Arc<T>, RdiError>
+    fn get_keyed<T: ?Sized + Sync + Send + 'static>(
+        &self,
+        variant: &str,
+    ) -> Result<Arc<T>, RdiError>
     where
         Self: Sized,
     {

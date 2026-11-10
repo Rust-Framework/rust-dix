@@ -152,6 +152,9 @@ pub fn resolve_option_keyed_owned<T: Send + Sync + 'static>(
 }
 
 /// `#[inject(provider)]` — requires a real [`ServiceProvider`] backing the resolver.
+///
+/// The build-time validation resolver is backed by the provider being built, so
+/// this works for both eagerly built singletons and lazily resolved services.
 #[doc(hidden)]
 pub fn resolve_provider(
     resolver: &dyn IServiceResolver,
@@ -171,7 +174,5 @@ pub fn resolve_provider(
 pub fn downcast_arc<T: ?Sized + Send + Sync + 'static>(
     a: Arc<dyn Any + Send + Sync>,
 ) -> Option<Arc<T>> {
-    a.downcast::<Arc<T>>()
-        .ok()
-        .map(|d| Arc::clone(&*d))
+    a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d))
 }

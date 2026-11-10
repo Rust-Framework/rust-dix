@@ -1,4 +1,4 @@
-﻿//! rust-dix — Rust Dependency Injection Framework
+//! rust-dix — Rust Dependency Injection Framework
 //!
 //! A dependency injection container for Rust inspired by
 //! Microsoft.Extensions.DependencyInjection (MEDI).
@@ -176,6 +176,9 @@ pub use collection::ServiceCollection;
 /// - 作为 root scope：从根直接解析 Scoped 服务时，实例在根内缓存复用，
 ///   语义等同于在根 scope 内单例化。通过 [`ServiceProvider::scope`] 创建的子 Scope
 ///   拥有独立的 scoped 缓存，不回退到根。
+/// - 与 MEDI 对齐，容器自身可作为内建服务解析：`provider.get::<ServiceProvider>()`
+///   与 `#[inject] Arc<ServiceProvider>`（或专用 `#[inject(provider)]`）均可用，
+///   eager singleton 与懒解析服务一致。
 ///
 /// Analogous to `IServiceProvider` in MEDI.
 pub use provider::ServiceProvider;
@@ -198,8 +201,18 @@ pub use scope::Scope;
 /// Alias for [`Scope`] with MEDI-inspired naming (`IServiceScope`).
 pub use scope::Scope as ServiceScope;
 
-/// Factory trait for creating independent scopes. Injectable into singleton
-/// services that need on-demand scope creation (e.g., background workers).
+/// Factory trait for creating independent scopes.
+///
+/// The built provider always offers an implementation (no manual registration
+/// required): `provider.get::<dyn ScopeFactory>()` and
+/// `#[inject] Arc<dyn ScopeFactory>` fields both work, including inside
+/// eagerly built singletons (e.g. background workers that need one scope per
+/// tick). Explicit `singleton::<dyn ScopeFactory>(...)` registrations take
+/// precedence.
+///
+/// The built-in implementation holds a `Weak` reference to the container, so a
+/// singleton may store it without creating an `Arc` cycle; the container must
+/// therefore outlive services created from it.
 pub use scope::ScopeFactory;
 
 /// Internal types used by the container.

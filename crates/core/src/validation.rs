@@ -1,6 +1,7 @@
 use crate::cache::LazyCache;
 use crate::entry::{IServiceResolver, ServiceEntry, ServiceLifetime, ServiceStore};
 use crate::error::RdiError;
+use crate::provider::ServiceProvider;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -8,9 +9,15 @@ use std::sync::{Arc, Mutex, RwLock};
 /// Validation resolver that tracks resolution chains for cycle detection
 /// and captive dependency detection (Singleton depending on Scoped).
 ///
-/// Both checks run during `build()` (Phase 0) by executing singleton factories
+/// Both checks run during `build()` by executing singleton factories
 /// through this resolver. Errors are stored in `last_error` instead of using
 /// `panic_any`, making the control flow explicit and idiomatic.
+///
+/// The provider `Arc` is available during validation (the container is created
+/// before validation runs), so factories may inject the container itself via
+/// `#[inject(provider)]` or the built-in [`crate::ScopeFactory`]. Resolutions
+/// performed *through that injected provider* are dynamic; they are not part of
+/// this resolver's static dependency chain (same caveat as runtime resolution).
 ///
 /// The `catch_unwind` in `validate_dependencies` only catches user factory
 /// panics (triggered by `None` returns from this resolver), not framework errors.
@@ -24,9 +31,12 @@ pub(crate) struct ValidationResolver<'a> {
     /// TypeId → type_name map for error messages
     type_names: &'a HashMap<TypeId, &'static str>,
     /// Reusable instance cache — populated as factories execute during
-    /// validation so that Phase 2 (eager singleton init) can reuse the
+    /// validation so that Phase 3 (eager singleton init) can reuse the
     /// results instead of re-executing factories.
     cache: &'a LazyCache,
+    /// The provider being validated. Available to factories through
+    /// `provider_arc()` / the built-in ScopeFactory.
+    provider: Arc<ServiceProvider>,
     /// Stores the first validation error (cycle or captive) encountered.
     /// Cleared by [`Self::take_error`] for consumption by the caller.
     last_error: Mutex<Option<RdiError>>,
@@ -37,6 +47,7 @@ impl<'a> ValidationResolver<'a> {
         store: &'a ServiceStore,
         type_names: &'a HashMap<TypeId, &'static str>,
         cache: &'a LazyCache,
+        provider: Arc<ServiceProvider>,
     ) -> Self {
         Self {
             store,
@@ -44,6 +55,7 @@ impl<'a> ValidationResolver<'a> {
             stack: RwLock::new(Vec::new()),
             type_names,
             cache,
+            provider,
             last_error: Mutex::new(None),
         }
     }
@@ -84,11 +96,10 @@ impl<'a> ValidationResolver<'a> {
             {
                 let singleton_name = self.get_type_name(ancestor_ck);
                 let scoped_name = self.get_type_name(entry.cache_key);
-                *self.last_error.lock().unwrap() =
-                    Some(RdiError::SingletonDependsOnScoped {
-                        singleton: singleton_name,
-                        scoped: scoped_name,
-                    });
+                *self.last_error.lock().unwrap() = Some(RdiError::SingletonDependsOnScoped {
+                    singleton: singleton_name,
+                    scoped: scoped_name,
+                });
                 return true;
             }
         }
@@ -104,10 +115,8 @@ impl<'a> ValidationResolver<'a> {
             let cycle_desc = if resolving.is_empty() {
                 type_name
             } else {
-                let chain: Vec<String> = resolving
-                    .iter()
-                    .map(|&ck| self.get_type_name(ck))
-                    .collect();
+                let chain: Vec<String> =
+                    resolving.iter().map(|&ck| self.get_type_name(ck)).collect();
                 format!("{} -> {}", chain.join(" -> "), type_name)
             };
             *self.last_error.lock().unwrap() = Some(RdiError::CircularDependency(cycle_desc));
@@ -118,10 +127,7 @@ impl<'a> ValidationResolver<'a> {
 
     /// Push entry onto resolution stack, execute factory, pop stack.
     /// Returns `None` if a validation error was detected.
-    fn resolve_via_factory(
-        &self,
-        entry: &ServiceEntry,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn resolve_via_factory(&self, entry: &ServiceEntry) -> Option<Arc<dyn Any + Send + Sync>> {
         // Captive check first.
         if self.check_captive_dependency(entry) {
             return None;
@@ -137,7 +143,21 @@ impl<'a> ValidationResolver<'a> {
             .unwrap()
             .push((entry.cache_key, entry.lifetime));
 
+        // Keep the runtime resolution stack in sync so a factory that resolves
+        // further services through an injected provider participates in cycle
+        // detection instead of recursing indefinitely.
+        let resolve_guard = match crate::provider::enter_resolve(entry.cache_key, entry.type_name) {
+            Ok(guard) => guard,
+            Err(err) => {
+                self.stack.write().unwrap().pop();
+                self.resolving.write().unwrap().pop();
+                *self.last_error.lock().unwrap() = Some(err);
+                return None;
+            }
+        };
+
         let result = (entry.factory)(self as &dyn IServiceResolver);
+        drop(resolve_guard);
 
         self.stack.write().unwrap().pop();
         self.resolving.write().unwrap().pop();
@@ -153,14 +173,36 @@ impl<'a> ValidationResolver<'a> {
 
 impl IServiceResolver for ValidationResolver<'_> {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
-
-        if let Some(cached) = self.cache.get(entry.cache_key) {
-            return Some(cached);
+        if let Some(tid) = self
+            .type_names
+            .iter()
+            .find(|(_, name)| **name == key)
+            .map(|(tid, _)| *tid)
+        {
+            if let Some(entry) = self
+                .store
+                .get(&tid)
+                .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
+            {
+                if let Some(cached) = self.cache.get(entry.cache_key) {
+                    return Some(cached);
+                }
+                return self.resolve_via_factory(entry);
+            }
         }
-
-        self.resolve_via_factory(entry)
+        // Built-in services available during validation too: eager singletons
+        // may inject `Arc<dyn ScopeFactory>` / `Arc<ServiceProvider>` through
+        // the macro string path.
+        if key == std::any::type_name::<dyn crate::scope::ScopeFactory>() {
+            return Some(crate::scope::builtin_scope_factory_any(Arc::downgrade(
+                &self.provider,
+            )));
+        }
+        if key == std::any::type_name::<ServiceProvider>() {
+            let provider: Arc<ServiceProvider> = Arc::clone(&self.provider);
+            return Some(Arc::new(provider) as Arc<dyn Any + Send + Sync>);
+        }
+        None
     }
 
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
@@ -199,5 +241,13 @@ impl IServiceResolver for ValidationResolver<'_> {
             return None;
         }
         self.resolve_via_factory(entry)
+    }
+
+    /// The real container is available during validation: eager singletons that
+    /// declare `#[inject(provider)]` receive it here (this is what makes
+    /// `ServiceProvider` / `ScopeFactory` injection work for build-time
+    /// singletons).
+    fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
+        Some(Arc::clone(&self.provider))
     }
 }
