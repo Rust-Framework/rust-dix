@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,7 +18,11 @@ struct Cache {
 async fn async_singleton_basic() {
     let provider = ServiceCollection::new()
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(DbPool { conn: "pg://host".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "pg://host".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -35,7 +39,11 @@ async fn async_singleton_caches() {
     let provider = ServiceCollection::new()
         .async_singleton(|_| {
             CNT.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Arc::new(DbPool { conn: "cached".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "cached".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -55,7 +63,11 @@ async fn async_transient_new_each_time() {
     let provider = ServiceCollection::new()
         .async_transient(|_| {
             CNT.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Arc::new(Cache { backend: "redis".into() }) })
+            Box::pin(async {
+                Arc::new(Cache {
+                    backend: "redis".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -70,10 +82,18 @@ async fn async_transient_new_each_time() {
 async fn async_keyed_singleton() {
     let provider = ServiceCollection::new()
         .async_keyed_singleton("a", |_| {
-            Box::pin(async { Arc::new(DbPool { conn: "db-a".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "db-a".into(),
+                })
+            })
         })
         .async_keyed_singleton("b", |_| {
-            Box::pin(async { Arc::new(DbPool { conn: "db-b".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "db-b".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -92,7 +112,11 @@ async fn async_keyed_transient() {
     let provider = ServiceCollection::new()
         .async_keyed_transient("t", |_| {
             CNT.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Arc::new(Cache { backend: "mem".into() }) })
+            Box::pin(async {
+                Arc::new(Cache {
+                    backend: "mem".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -106,9 +130,17 @@ async fn async_keyed_transient() {
 #[tokio::test]
 async fn async_mixed_sync_and_async() {
     let provider = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "sync".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "sync".into(),
+            })
+        })
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(DbPool { conn: "mixed".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "mixed".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -125,7 +157,11 @@ async fn async_mixed_sync_and_async() {
 async fn async_singleton_with_sync_dependency() {
     // Async singleton depends on a sync singleton via provider_arc.
     let provider = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "dep".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "dep".into(),
+            })
+        })
         .async_singleton(|p: Arc<ServiceProvider>| {
             Box::pin(async move {
                 let logger: Arc<common::Logger> = p.get().unwrap();
@@ -146,15 +182,16 @@ async fn async_singleton_with_sync_dependency() {
 async fn async_service_rejected_on_sync_build() {
     let result = ServiceCollection::new()
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(DbPool { conn: "nope".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "nope".into(),
+                })
+            })
         })
         .build();
 
     assert!(
-        matches!(
-            result,
-            Err(RdiError::AsyncServiceRequiresBuildAsync { .. })
-        ),
+        matches!(result, Err(RdiError::AsyncServiceRequiresBuildAsync { .. })),
         "build() must reject async registrations with a typed error"
     );
 }
@@ -163,9 +200,7 @@ async fn async_service_rejected_on_sync_build() {
 async fn async_with_owned_resolution() {
     // Owned resolution should work for async transient services.
     let provider = ServiceCollection::new()
-        .async_transient(|_| {
-            Box::pin(async { Arc::new(common::MyService { value: 99 }) })
-        })
+        .async_transient(|_| Box::pin(async { Arc::new(common::MyService { value: 99 }) }))
         .build_async()
         .await
         .unwrap();
@@ -181,10 +216,18 @@ async fn async_with_owned_resolution() {
 async fn async_multiple_async_singletons() {
     let provider = ServiceCollection::new()
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(DbPool { conn: "first".into() }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn: "first".into(),
+                })
+            })
         })
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(Cache { backend: "second".into() }) })
+            Box::pin(async {
+                Arc::new(Cache {
+                    backend: "second".into(),
+                })
+            })
         })
         .build_async()
         .await
@@ -198,7 +241,9 @@ async fn async_multiple_async_singletons() {
 
 #[tokio::test]
 async fn async_instance_works_with_build_async() {
-    let pool = Arc::new(DbPool { conn: "instance".into() });
+    let pool = Arc::new(DbPool {
+        conn: "instance".into(),
+    });
     let provider = ServiceCollection::new()
         .instance(pool.clone())
         .build_async()
@@ -218,9 +263,7 @@ async fn async_optional_missing() {
 #[tokio::test]
 async fn async_scoped_basic() {
     let provider = ServiceCollection::new()
-        .async_scoped(|_| {
-            Box::pin(async { Arc::new(common::MyService { value: 42 }) })
-        })
+        .async_scoped(|_| Box::pin(async { Arc::new(common::MyService { value: 42 }) }))
         .build_async()
         .await
         .unwrap();
@@ -266,14 +309,17 @@ async fn async_scoped_concurrent_factory_executes_once() {
     let s1 = scope.scope_provider().clone();
     let s2 = scope.scope_provider().clone();
 
-    let (r1, r2) = tokio::join!(
-        async { s1.get_async::<common::MyService>().await },
-        async { s2.get_async::<common::MyService>().await },
-    );
+    let (r1, r2) = tokio::join!(async { s1.get_async::<common::MyService>().await }, async {
+        s2.get_async::<common::MyService>().await
+    },);
 
     let v1 = r1.unwrap();
     let v2 = r2.unwrap();
     assert_eq!(v1.value, 99);
     assert_eq!(v2.value, 99);
-    assert_eq!(CALLS.load(Ordering::SeqCst), 1, "并发首次解析：async factory 应只执行一次");
+    assert_eq!(
+        CALLS.load(Ordering::SeqCst),
+        1,
+        "并发首次解析：async factory 应只执行一次"
+    );
 }

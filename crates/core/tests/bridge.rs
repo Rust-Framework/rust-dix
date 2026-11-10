@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::Arc;
@@ -10,8 +10,11 @@ fn iprovider_root_resolves() {
         .build()
         .unwrap();
     let rp: Arc<dyn IProvider> = p;
-    let any = rp.get_any(std::any::type_name::<common::MyService>()).unwrap();
-    let svc: Arc<common::MyService> = Arc::clone(&*any.downcast::<Arc<common::MyService>>().unwrap());
+    let any = rp
+        .get_any(std::any::type_name::<common::MyService>())
+        .unwrap();
+    let svc: Arc<common::MyService> =
+        Arc::clone(&*any.downcast::<Arc<common::MyService>>().unwrap());
     assert_eq!(svc.value, 100);
 }
 
@@ -24,8 +27,11 @@ fn iprovider_wrapped_resolves() {
     let child = ServiceCollection::new().build().unwrap();
     let wrapper = ServiceProviderWrapper::new(child, root);
     let rp: Arc<dyn IProvider> = wrapper;
-    let any = rp.get_any(std::any::type_name::<common::MyService>()).unwrap();
-    let svc: Arc<common::MyService> = Arc::clone(&*any.downcast::<Arc<common::MyService>>().unwrap());
+    let any = rp
+        .get_any(std::any::type_name::<common::MyService>())
+        .unwrap();
+    let svc: Arc<common::MyService> =
+        Arc::clone(&*any.downcast::<Arc<common::MyService>>().unwrap());
     assert_eq!(svc.value, 200);
 }
 

@@ -1,4 +1,4 @@
-﻿use crate::entry::{AsyncServiceFactory, ServiceDescriptor, ServiceFactory, ServiceLifetime};
+use crate::entry::{AsyncServiceFactory, ServiceDescriptor, ServiceFactory, ServiceLifetime};
 use crate::registration::ServiceRegistration;
 use std::any::{Any, TypeId};
 use std::future::Future;
@@ -76,7 +76,9 @@ impl ServiceCollection {
     /// Register an async singleton service (initialized once during `build_async`).
     pub fn async_singleton<T: ?Sized + Send + Sync + 'static>(
         mut self,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -88,7 +90,9 @@ impl ServiceCollection {
     /// Register an async transient service (new async instance each resolution).
     pub fn async_transient<T: ?Sized + Send + Sync + 'static>(
         mut self,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -100,7 +104,9 @@ impl ServiceCollection {
     /// Register an async scoped service (shared within a scope).
     pub fn async_scoped<T: ?Sized + Send + Sync + 'static>(
         mut self,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -113,7 +119,9 @@ impl ServiceCollection {
     pub fn async_keyed_singleton<T: ?Sized + Send + Sync + 'static>(
         mut self,
         k: impl Into<String>,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -126,7 +134,9 @@ impl ServiceCollection {
     pub fn async_keyed_transient<T: ?Sized + Send + Sync + 'static>(
         mut self,
         k: impl Into<String>,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -139,7 +149,9 @@ impl ServiceCollection {
     pub fn async_keyed_scoped<T: ?Sized + Send + Sync + 'static>(
         mut self,
         k: impl Into<String>,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -312,7 +324,9 @@ impl ServiceCollection {
         &mut self,
         lt: ServiceLifetime,
         key: Option<String>,
-        f: impl Fn(Arc<crate::provider::ServiceProvider>) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
+        f: impl Fn(
+                Arc<crate::provider::ServiceProvider>,
+            ) -> Pin<Box<dyn Future<Output = Arc<T>> + Send>>
             + Send
             + Sync
             + 'static,

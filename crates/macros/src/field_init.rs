@@ -73,10 +73,7 @@ pub(crate) fn single_generic_type(seg: &syn::PathSegment) -> Option<&Type> {
 ///
 /// Expressions are written for a `Result`-returning constructor body (`?` ok).
 /// Shared between `#[derive(Inject)]` and `#[inject]` on a struct.
-pub(crate) fn gen_field_init(
-    field: &Field,
-    consumer: &syn::Ident,
-) -> syn::Result<TokenStream> {
+pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Result<TokenStream> {
     let attrs = parse_ia(field);
     let fnm = field.ident.as_ref().unwrap();
     let (inner, kind) = classify_field(&field.ty);

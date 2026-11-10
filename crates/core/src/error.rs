@@ -77,7 +77,9 @@ impl RdiError {
 ///
 /// Used by generated `__rdi_construct_*` wrappers and inventory factories.
 #[doc(hidden)]
-pub fn inject_arc<T: Send + Sync + 'static>(result: Result<std::sync::Arc<T>, RdiError>) -> std::sync::Arc<T> {
+pub fn inject_arc<T: Send + Sync + 'static>(
+    result: Result<std::sync::Arc<T>, RdiError>,
+) -> std::sync::Arc<T> {
     match result {
         Ok(v) => v,
         Err(e) => std::panic::panic_any(e),

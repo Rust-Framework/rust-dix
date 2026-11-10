@@ -1,4 +1,4 @@
-﻿use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
@@ -30,10 +30,7 @@ impl Parse for InjectArgs {
     }
 }
 
-pub(crate) fn expand_inject(
-    args: InjectArgs,
-    item: syn::Item,
-) -> syn::Result<TokenStream2> {
+pub(crate) fn expand_inject(args: InjectArgs, item: syn::Item) -> syn::Result<TokenStream2> {
     let lifetime = args.lifetime.unwrap_or(LT::S);
     match &item {
         syn::Item::Struct(s) => expand_inject_struct(s, lifetime),
@@ -45,10 +42,7 @@ pub(crate) fn expand_inject(
     }
 }
 
-fn expand_inject_struct(
-    struct_item: &syn::ItemStruct,
-    lifetime: LT,
-) -> syn::Result<TokenStream2> {
+fn expand_inject_struct(struct_item: &syn::ItemStruct, lifetime: LT) -> syn::Result<TokenStream2> {
     let name = &struct_item.ident;
     let fn_name = format_ident!("__rdi_construct_{}", name);
     let try_fn_name = format_ident!("__rdi_try_construct_{}", name);
@@ -135,10 +129,7 @@ fn expand_inject_struct(
     })
 }
 
-fn expand_inject_impl(
-    impl_item: &ItemImpl,
-    lifetime: LT,
-) -> syn::Result<TokenStream2> {
+fn expand_inject_impl(impl_item: &ItemImpl, lifetime: LT) -> syn::Result<TokenStream2> {
     let (not, trait_path, _) = impl_item.trait_.as_ref().ok_or_else(|| {
         syn::Error::new_spanned(
             impl_item,

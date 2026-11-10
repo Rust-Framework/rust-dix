@@ -1,4 +1,4 @@
-﻿//! Tests for `#[inject(provider)]` — injecting `Arc<ServiceProvider>` for on-demand resolution.
+//! Tests for `#[inject(provider)]` — injecting `Arc<ServiceProvider>` for on-demand resolution.
 //!
 //! Verifies:
 //! - A service with `#[inject(provider)]` receives a usable `Arc<ServiceProvider>`.
@@ -52,7 +52,10 @@ fn provider_inject_field_is_some() {
     // provider_arc should return Some because build() returns Arc<ServiceProvider>
     assert!(IServiceResolver::provider_arc(&*p).is_some());
     // The field should be a valid Arc<ServiceProvider> — can resolve without panic
-    assert_eq!(h.provider.get_owned::<common::MyService>().unwrap().value, 0);
+    assert_eq!(
+        h.provider.get_owned::<common::MyService>().unwrap().value,
+        0
+    );
 }
 
 #[test]
@@ -141,7 +144,11 @@ struct MixedProviderHandler {
 #[test]
 fn provider_inject_mixed_with_regular_inject() {
     let p = ServiceCollection::new()
-        .singleton(|_| Arc::new(common::Logger { prefix: "log".into() }))
+        .singleton(|_| {
+            Arc::new(common::Logger {
+                prefix: "log".into(),
+            })
+        })
         .transient(|_| Arc::new(common::MyService { value: 7 }))
         .transient(|r| __rdi_construct_MixedProviderHandler(r))
         .build()
@@ -149,5 +156,8 @@ fn provider_inject_mixed_with_regular_inject() {
 
     let h = p.get_owned::<MixedProviderHandler>().unwrap();
     assert_eq!(h.logger.prefix, "log");
-    assert_eq!(h.provider.get_owned::<common::MyService>().unwrap().value, 7);
+    assert_eq!(
+        h.provider.get_owned::<common::MyService>().unwrap().value,
+        7
+    );
 }

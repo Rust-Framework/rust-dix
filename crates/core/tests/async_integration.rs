@@ -1,4 +1,4 @@
-﻿//! Complex async integration test — e-commerce order processing scenario.
+//! Complex async integration test — e-commerce order processing scenario.
 //!
 //! Models a realistic web application with:
 //! - Async infrastructure (DB pool, Redis cache, payment gateways)
@@ -139,13 +139,20 @@ async fn ecommerce_order_processing_full_lifecycle() {
         // Scoped: one UserRepository per request scope
         .scoped(|r| {
             REPO_BUILDS.fetch_add(1, Ordering::SeqCst);
-            let db: Arc<DbPool> = r.get_any(std::any::type_name::<DbPool>())
+            let db: Arc<DbPool> = r
+                .get_any(std::any::type_name::<DbPool>())
                 .and_then(|a| a.downcast::<Arc<DbPool>>().ok().map(|d| Arc::clone(&*d)))
                 .expect("DbPool not resolved");
-            let cache: Arc<RedisCache> = r.get_any(std::any::type_name::<RedisCache>())
-                .and_then(|a| a.downcast::<Arc<RedisCache>>().ok().map(|d| Arc::clone(&*d)))
+            let cache: Arc<RedisCache> = r
+                .get_any(std::any::type_name::<RedisCache>())
+                .and_then(|a| {
+                    a.downcast::<Arc<RedisCache>>()
+                        .ok()
+                        .map(|d| Arc::clone(&*d))
+                })
                 .expect("RedisCache not resolved");
-            let config: Arc<AppConfig> = r.get_any(std::any::type_name::<AppConfig>())
+            let config: Arc<AppConfig> = r
+                .get_any(std::any::type_name::<AppConfig>())
                 .and_then(|a| a.downcast::<Arc<AppConfig>>().ok().map(|d| Arc::clone(&*d)))
                 .expect("AppConfig not resolved");
             Arc::new(UserRepository { db, cache, config })
@@ -153,13 +160,19 @@ async fn ecommerce_order_processing_full_lifecycle() {
         // Transient: fresh OrderService each resolution
         .transient(|r| {
             ORDER_BUILDS.fetch_add(1, Ordering::SeqCst);
-            let repo: Arc<UserRepository> = r.get_any(std::any::type_name::<UserRepository>())
-                .and_then(|a| a.downcast::<Arc<UserRepository>>().ok().map(|d| Arc::clone(&*d)))
+            let repo: Arc<UserRepository> = r
+                .get_any(std::any::type_name::<UserRepository>())
+                .and_then(|a| {
+                    a.downcast::<Arc<UserRepository>>()
+                        .ok()
+                        .map(|d| Arc::clone(&*d))
+                })
                 .expect("UserRepository not resolved");
             Arc::new(OrderService { repo })
         })
         .transient(|r| {
-            let config: Arc<AppConfig> = r.get_any(std::any::type_name::<AppConfig>())
+            let config: Arc<AppConfig> = r
+                .get_any(std::any::type_name::<AppConfig>())
                 .and_then(|a| a.downcast::<Arc<AppConfig>>().ok().map(|d| Arc::clone(&*d)))
                 .expect("AppConfig not resolved");
             Arc::new(NotificationService { config })
@@ -207,8 +220,14 @@ async fn ecommerce_order_processing_full_lifecycle() {
     // Transient OrderService: fresh each resolution, but shares UserRepository
     let order1a: Arc<OrderService> = scope1.get().unwrap();
     let order1b: Arc<OrderService> = scope1.get().unwrap();
-    assert!(!Arc::ptr_eq(&order1a, &order1b), "OrderService must be fresh each resolution");
-    assert!(Arc::ptr_eq(&order1a.repo, &order1b.repo), "OrderService must share scoped UserRepository");
+    assert!(
+        !Arc::ptr_eq(&order1a, &order1b),
+        "OrderService must be fresh each resolution"
+    );
+    assert!(
+        Arc::ptr_eq(&order1a.repo, &order1b.repo),
+        "OrderService must share scoped UserRepository"
+    );
     assert_eq!(ORDER_BUILDS.load(Ordering::SeqCst), 2);
 
     // NotificationService: transient, depends on AppConfig
@@ -219,7 +238,10 @@ async fn ecommerce_order_processing_full_lifecycle() {
     let scope2 = provider.scope();
 
     let repo2: Arc<UserRepository> = scope2.get().unwrap();
-    assert!(!Arc::ptr_eq(&repo1, &repo2), "UserRepository must be independent across scopes");
+    assert!(
+        !Arc::ptr_eq(&repo1, &repo2),
+        "UserRepository must be independent across scopes"
+    );
     assert_eq!(REPO_BUILDS.load(Ordering::SeqCst), 2);
 
     // Scope2's UserRepository still sees the same singletons
@@ -241,8 +263,16 @@ async fn ecommerce_order_processing_full_lifecycle() {
 
     // ── Verify factory execution counts ──────────────────────────────
     // Async singletons: executed exactly once during build_async
-    assert_eq!(NEXT_POOL_ID.load(Ordering::SeqCst), 2, "DbPool factory should execute once");
-    assert_eq!(NEXT_CACHE_ID.load(Ordering::SeqCst), 2, "RedisCache factory should execute once");
+    assert_eq!(
+        NEXT_POOL_ID.load(Ordering::SeqCst),
+        2,
+        "DbPool factory should execute once"
+    );
+    assert_eq!(
+        NEXT_CACHE_ID.load(Ordering::SeqCst),
+        2,
+        "RedisCache factory should execute once"
+    );
 
     // Scoped UserRepository: once per scope (scope1, scope2, root) = 3 times
     assert_eq!(REPO_BUILDS.load(Ordering::SeqCst), 3);
@@ -269,7 +299,12 @@ async fn async_build_validates_sync_dependencies() {
             Arc::new(B)
         })
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(DbPool { conn_str: "ok".into(), pool_id: 0 }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn_str: "ok".into(),
+                    pool_id: 0,
+                })
+            })
         })
         .build_async()
         .await;
@@ -302,7 +337,12 @@ async fn async_captive_dependency_rejected() {
             Arc::new(BadSingleton { _scoped: dep })
         })
         .async_singleton(|_| {
-            Box::pin(async { Arc::new(DbPool { conn_str: "ok".into(), pool_id: 0 }) })
+            Box::pin(async {
+                Arc::new(DbPool {
+                    conn_str: "ok".into(),
+                    pool_id: 0,
+                })
+            })
         })
         .build_async()
         .await;

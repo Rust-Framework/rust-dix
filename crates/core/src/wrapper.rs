@@ -28,7 +28,10 @@ impl ServiceProviderWrapper {
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.try_get::<T>()
     }
-    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Result<Arc<T>, RdiError> {
+    pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Arc<T>, RdiError> {
         let type_name = std::any::type_name::<T>();
         self.try_get_keyed::<T>(key)
             .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))
@@ -58,10 +61,11 @@ impl ServiceProviderWrapper {
     }
     /// Resolve owned `T`, returning `None` if not registered or Singleton.
     pub fn try_get_owned<T: Send + Sync + 'static>(&self) -> Option<T> {
-        let arc_any = IServiceResolver::get_owned_any(self.child.as_ref(), std::any::type_name::<T>())
-            .or_else(|| {
-                IServiceResolver::get_owned_any(self.root.as_ref(), std::any::type_name::<T>())
-            })?;
+        let arc_any =
+            IServiceResolver::get_owned_any(self.child.as_ref(), std::any::type_name::<T>())
+                .or_else(|| {
+                    IServiceResolver::get_owned_any(self.root.as_ref(), std::any::type_name::<T>())
+                })?;
         let arc_t = crate::provider::ServiceProvider::extract::<T>(arc_any)?;
         Arc::try_unwrap(arc_t).ok()
     }
@@ -73,11 +77,18 @@ impl ServiceProviderWrapper {
     }
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
     pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
-        let arc_any =
-            IServiceResolver::get_keyed_owned_any(self.child.as_ref(), std::any::type_name::<T>(), key)
-                .or_else(|| {
-                    IServiceResolver::get_keyed_owned_any(self.root.as_ref(), std::any::type_name::<T>(), key)
-                })?;
+        let arc_any = IServiceResolver::get_keyed_owned_any(
+            self.child.as_ref(),
+            std::any::type_name::<T>(),
+            key,
+        )
+        .or_else(|| {
+            IServiceResolver::get_keyed_owned_any(
+                self.root.as_ref(),
+                std::any::type_name::<T>(),
+                key,
+            )
+        })?;
         let arc_t = crate::provider::ServiceProvider::extract::<T>(arc_any)?;
         Arc::try_unwrap(arc_t).ok()
     }
@@ -130,11 +141,7 @@ impl IServiceResolver for ServiceProviderWrapper {
             .get_by_type_id(tid)
             .or_else(|| self.root.get_by_type_id(tid))
     }
-    fn get_keyed_by_type_id(
-        &self,
-        tid: TypeId,
-        key: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_by_type_id(&self, tid: TypeId, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         self.child
             .get_keyed_by_type_id(tid, key)
             .or_else(|| self.root.get_keyed_by_type_id(tid, key))
@@ -149,11 +156,7 @@ impl IServiceResolver for ServiceProviderWrapper {
         IServiceResolver::get_owned_any(self.child.as_ref(), key)
             .or_else(|| IServiceResolver::get_owned_any(self.root.as_ref(), key))
     }
-    fn get_keyed_owned_any(
-        &self,
-        key: &str,
-        variant: &str,
-    ) -> Option<Arc<dyn Any + Send + Sync>> {
+    fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         IServiceResolver::get_keyed_owned_any(self.child.as_ref(), key, variant)
             .or_else(|| IServiceResolver::get_keyed_owned_any(self.root.as_ref(), key, variant))
     }

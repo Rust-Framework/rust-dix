@@ -1,4 +1,4 @@
-﻿//! async scoped 并发压力基准测试
+//! async scoped 并发压力基准测试
 //!
 //! 三级并发压力 + 延迟工厂 + 脏工厂场景，验证 FuturesMutex 性能边界。
 //! 运行方式：`cargo run --example bench_async_scoped --release`
@@ -18,7 +18,9 @@ struct Svc {
 async fn run_bench(
     name: &str,
     concurrency: usize,
-    factory: impl Fn(Arc<rust_dix::ServiceProvider>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<Svc>> + Send>>
+    factory: impl Fn(
+            Arc<rust_dix::ServiceProvider>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<Svc>> + Send>>
         + Send
         + Sync
         + 'static,
@@ -47,9 +49,9 @@ async fn run_bench(
     let mut handles = Vec::with_capacity(concurrency);
     for _ in 0..concurrency {
         let sp = scope.scope_provider().clone();
-        handles.push(tokio::spawn(async move {
-            sp.get_async::<Svc>().await.unwrap()
-        }));
+        handles.push(tokio::spawn(
+            async move { sp.get_async::<Svc>().await.unwrap() },
+        ));
     }
 
     let results: Vec<Arc<Svc>> = futures::future::join_all(handles)
@@ -73,7 +75,10 @@ async fn run_bench(
         calls,
         expected_serial_ms,
         speedup,
-        if all_same && calls == expected_factory_calls && elapsed < Duration::from_millis(max_parallel_ms) {
+        if all_same
+            && calls == expected_factory_calls
+            && elapsed < Duration::from_millis(max_parallel_ms)
+        {
             "OK"
         } else {
             "FAIL"
@@ -94,7 +99,10 @@ async fn run_bench(
 async fn main() {
     println!("{:->60}", "");
     println!("rust-dix async scoped 并发基准测试");
-    println!("rust-dix {} — 8 worker threads, release build", env!("CARGO_PKG_VERSION"));
+    println!(
+        "rust-dix {} — 8 worker threads, release build",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("{:->60}", "");
     println!(
         "{:<45} | {:>5} | {:>10} | {:>8} | {:>10} | {:>6} | {:>4}",
@@ -107,7 +115,9 @@ async fn main() {
         "空工厂 (FuturesMutex 纯开销)",
         100,
         |_| Box::pin(async { Arc::new(Svc { _value: 1 }) }),
-        1, 0, 500,
+        1,
+        0,
+        500,
     )
     .await;
 
@@ -115,7 +125,9 @@ async fn main() {
         "空工厂",
         500,
         |_| Box::pin(async { Arc::new(Svc { _value: 1 }) }),
-        1, 0, 1000,
+        1,
+        0,
+        1000,
     )
     .await;
 
@@ -123,7 +135,9 @@ async fn main() {
         "空工厂",
         1000,
         |_| Box::pin(async { Arc::new(Svc { _value: 1 }) }),
-        1, 0, 2000,
+        1,
+        0,
+        2000,
     )
     .await;
 
@@ -131,22 +145,30 @@ async fn main() {
     run_bench(
         "10ms 延迟工厂 (模拟 async I/O)",
         100,
-        |_| Box::pin(async {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            Arc::new(Svc { _value: 100 })
-        }),
-        1, 1000, 200,
+        |_| {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Arc::new(Svc { _value: 100 })
+            })
+        },
+        1,
+        1000,
+        200,
     )
     .await;
 
     run_bench(
         "10ms 延迟工厂",
         500,
-        |_| Box::pin(async {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            Arc::new(Svc { _value: 500 })
-        }),
-        1, 5000, 500,
+        |_| {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Arc::new(Svc { _value: 500 })
+            })
+        },
+        1,
+        5000,
+        500,
     )
     .await;
 
@@ -154,16 +176,20 @@ async fn main() {
     run_bench(
         "脏工厂 (1ms CPU + 5ms IO)",
         100,
-        |_| Box::pin(async {
-            // 模拟 CPU 密集计算
-            let mut sum: u64 = 0;
-            for i in 0..100_000 {
-                sum = sum.wrapping_add(i);
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-            Arc::new(Svc { _value: sum })
-        }),
-        1, 600, 150,
+        |_| {
+            Box::pin(async {
+                // 模拟 CPU 密集计算
+                let mut sum: u64 = 0;
+                for i in 0..100_000 {
+                    sum = sum.wrapping_add(i);
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Arc::new(Svc { _value: sum })
+            })
+        },
+        1,
+        600,
+        150,
     )
     .await;
 
