@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use crate::key::ServiceKey;
+
 /// 类型擦除的服务实例。
 pub(crate) type AnyService = Arc<dyn Any + Send + Sync>;
 
@@ -213,6 +215,128 @@ impl LazyCache {
 }
 
 impl Default for LazyCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct KeyedInner {
+    /// `(registration cache_key, requested key)` → instance cell.
+    ///
+    /// The registration dimension is required: two different `AnyKey` services
+    /// resolved with the same requested key must not share a cache slot.
+    cells: HashMap<(usize, ServiceKey), Arc<OnceLock<AnyService>>>,
+    /// 首次创建顺序（复合键去重，仅记录一次）。
+    order: Vec<(usize, ServiceKey)>,
+}
+
+/// Per-`(registration, requested key)` instance cache for `AnyKey` fallback
+/// registrations.
+///
+/// An `AnyKey` singleton/scoped registration produces one instance **per
+/// requested key**, and different `AnyKey` registrations are independent even
+/// for the same requested key. Instances are tracked in creation order so
+/// disposal can release them in reverse (LIFO) order.
+pub(crate) struct KeyedInstanceCache {
+    inner: RwLock<KeyedInner>,
+}
+
+impl KeyedInstanceCache {
+    pub fn new() -> Self {
+        Self {
+            inner: RwLock::new(KeyedInner {
+                cells: HashMap::new(),
+                order: Vec::new(),
+            }),
+        }
+    }
+
+    /// Cached instance for `(registration, key)`, without executing a factory.
+    pub(crate) fn get(&self, cache_key: usize, key: &ServiceKey) -> Option<AnyService> {
+        self.inner
+            .read()
+            .unwrap()
+            .cells
+            .get(&(cache_key, key.clone()))
+            .and_then(|cell| cell.get().cloned())
+    }
+
+    /// Pre-populate an instance (used by build-time validation so the instance
+    /// created while validating a dependent is reused at runtime).
+    pub(crate) fn prefill(&self, cache_key: usize, key: &ServiceKey, instance: AnyService) {
+        let composite = (cache_key, key.clone());
+        let cell = {
+            let mut inner = self.inner.write().unwrap();
+            let is_new = !inner.cells.contains_key(&composite);
+            let cell = inner
+                .cells
+                .entry(composite.clone())
+                .or_insert_with(|| Arc::new(OnceLock::new()))
+                .clone();
+            if is_new {
+                inner.order.push(composite);
+            }
+            cell
+        };
+        let _ = cell.set(instance);
+    }
+
+    /// Single-flight initialization for `(registration, key)`.
+    pub fn get_or_init_with<F>(&self, cache_key: usize, key: &ServiceKey, factory: F) -> AnyService
+    where
+        F: FnOnce() -> AnyService,
+    {
+        let composite = (cache_key, key.clone());
+        // Fast path: initialized cell.
+        {
+            let inner = self.inner.read().unwrap();
+            if let Some(cell) = inner.cells.get(&composite) {
+                if let Some(instance) = cell.get() {
+                    return instance.clone();
+                }
+                let cell = cell.clone();
+                drop(inner);
+                return cell.get_or_init(factory).clone();
+            }
+        }
+        // Slow path: create the cell (recording creation order) then init lock-free.
+        let cell = {
+            let mut inner = self.inner.write().unwrap();
+            let is_new = !inner.cells.contains_key(&composite);
+            let cell = inner
+                .cells
+                .entry(composite.clone())
+                .or_insert_with(|| Arc::new(OnceLock::new()))
+                .clone();
+            if is_new {
+                inner.order.push(composite);
+            }
+            cell
+        };
+        cell.get_or_init(factory).clone()
+    }
+
+    /// Drain instances in reverse creation order (used by container disposal).
+    pub(crate) fn drain_reverse(&self) -> Vec<AnyService> {
+        let (order, cells) = {
+            let mut inner = self.inner.write().unwrap();
+            let order = std::mem::take(&mut inner.order);
+            let cells = std::mem::take(&mut inner.cells);
+            (order, cells)
+        };
+        let mut drained = Vec::with_capacity(order.len());
+        for composite in order.into_iter().rev() {
+            if let Some(cell) = cells.get(&composite) {
+                if let Some(instance) = cell.get() {
+                    drained.push(instance.clone());
+                }
+            }
+        }
+        drained
+    }
+}
+
+impl Default for KeyedInstanceCache {
     fn default() -> Self {
         Self::new()
     }

@@ -134,27 +134,36 @@ if let Some(log) = logger {
 ### 键控解析
 
 ```rust
-// get_keyed()
+// get_keyed() —— 接受 impl Into<ServiceKey>：字符串或类型化键
 let wechat: Arc<dyn IPayGateway> = provider.get_keyed("wechat").unwrap();
+let typed: Arc<dyn IPayGateway> = provider.get_keyed(ServiceKey::new(GwKey::Wechat)).unwrap();
 
 // try_get_keyed()
 let maybe: Option<Arc<dyn IPayGateway>> = provider.try_get_keyed("unknown");
 ```
 
+> 精确 key 优先于 `keyed_any_*` 兜底；`ServiceKey::any_key()` 不是合法的单值 key
+> （`get_keyed(any_key())` → `Err`）。字符串键用 `"wechat".into()` / `ServiceKey::from("wechat")`；
+> `ServiceKey::new("wechat")` 是 `&str` typed key，与字符串注册的 `String` key **不相等**。
+> 详见 [多实现与键控服务](multiple-implementations.md#类型化键与-anykey-兜底090)。
+
 ### 批量解析
 
 ```rust
-// get_all() 只返回“非 keyed”注册，按注册顺序（0.8.0 起，对齐 MEDI GetServices）
+// get_all() 只返回“非 keyed”注册，按注册顺序（对齐 MEDI GetServices）
+// 含已初始化的 async singleton；同步枚举未初始化 async singleton/transient
+// 会得到 AsyncServiceRequiresGetAsync（get_all typed panic，Vec 注入 Err；
+// async scoped 在 root 被 scope 校验省略、Scope 内枚举才 panic）
 let all: Vec<Arc<dyn ILogger>> = provider.get_all();
 for logger in &all {
     logger.log("broadcast");
 }
 
-// keyed 多实现：用 get_all_keyed() 取该类型的全部 keyed 注册
+// keyed 多实现：用 get_all_keyed() 取该类型的显式 keyed 注册（不含 AnyKey 兜底）
 let keyed: Vec<Arc<dyn ILogger>> = provider.get_all_keyed();
 ```
 
-> 单服务解析（`get` / `get_keyed` 等）在 0.8.0 起为 MEDI 的"最后注册优先"：
+> 单服务解析（`get` / `get_keyed` 等）为 MEDI 的"最后注册优先"：
 > 同一类型（或同一 key）注册多次时，后注册生效。
 
 ## IServiceResolver trait
@@ -168,7 +177,7 @@ pub trait IServiceResolver: Send + Sync {
     // TypeId 直查（容器覆盖为 O(1)；外部实现默认 None → 回退字符串路径）
     fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>>;
     fn get_keyed_by_type_id(&self, tid: TypeId, key: &str) -> Option<Arc<dyn Any + Send + Sync>>;
-    // 类型擦除的批量解析：非 keyed / 全部 keyed（0.8.0+）
+    // 类型擦除的批量解析：非 keyed / 显式 keyed（不含 AnyKey 兜底）
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>>;
     fn get_all_keyed_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>>;
     // 可失败探测：容器覆盖为"不可解析 → None/Err"，不 panic（供 try_get）
@@ -185,16 +194,23 @@ pub trait IServiceResolver: Send + Sync {
 }
 ```
 
-> **失败语义契约（0.8.x，写自定义 `IServiceResolver` 实现时必读）**：
+> **失败语义契约（0.9.x，写自定义 `IServiceResolver` 实现时必读）**：
 > - **trait 层 Option 方法**（`get_any` / `get_keyed_any` / `get_by_type_id` /
 >   `get_keyed_by_type_id`）签名不可失败：**已注册但当前不可解析**（strict root scope
 >   校验、已 dispose、循环依赖、工厂 panic 等）时，必须以 **typed `RdiError` payload
 >   panic**；required API（`get` / `get_owned` / `get_async` / `get_keyed*`）会用
 >   `catch_unwind` 捕获并转为 `Err`，不要改为静默 `None`。
+> - **公开 keyed API 与 trait 层 key 表示**：`ServiceProvider` / `Scope` /
+>   `ServiceProviderWrapper` 的 keyed 方法接受 `impl Into<ServiceKey>`（typed keys）；
+>   本 trait 的类型擦除方法仍以 `&str` 表示 key（供宏生成代码的字符串路径使用），
+>   两者内部映射为同一 `ServiceKey`。
 > - **`try_get` / `try_get_keyed`**：容器实现下对"未注册 / strict root scope 校验 /
 >   已 dispose / 解析失败"统一返回 `None`，**不 panic**；失败原因需用 `get` 系列区分。
 > - **`get_all` / `get_all_keyed`**：签名不可失败；已 dispose 返回空、root scope 校验导致的
 >   不可解析被省略，但其它解析错误（如工厂 panic）仍以 typed `RdiError` payload panic 传播。
+> - **异步解析诊断**：同步 `get` / `get_optional` 解析 async 服务返回
+>   `RdiError::AsyncServiceRequiresGetAsync`（请用 `get_async`）；含 `async_*` 注册的集合
+>   调用 `build()` 仍返回 `AsyncServiceRequiresBuildAsync`。
 > - 需要"探测而不 panic"的外部实现请覆盖 `try_get_any_result` / `try_get_keyed_any_result`
 >   （默认实现会退回 `get_any`，可能继承其 panic 契约）。
 

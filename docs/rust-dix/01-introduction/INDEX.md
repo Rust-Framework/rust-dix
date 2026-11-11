@@ -33,11 +33,11 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 | **可扩展** | 增加新实现无需修改消费方 |
 | **开闭原则** | 对扩展开放，对修改关闭 |
 
-## 与 MEDI 对照（0.8.x 语义）
+## 与 MEDI 对照（0.9.x 语义）
 
 > 完整差异（含默认值、边界与迁移动作）见 [与 MEDI 的差异清单](medi-differences.md)。
 
-| MEDI (.NET) | rust-dix 0.8.x | 语义说明 |
+| MEDI (.NET) | rust-dix 0.9.x | 语义说明 |
 |-------------|----------------|----------|
 | `IServiceCollection` | `ServiceCollection` | 注册端 |
 | `IServiceProvider` | `ServiceProvider` | 解析端（root） |
@@ -50,24 +50,28 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 | `AddSingleton<T>()` | `.singleton::<T>(f)` | 工厂闭包式 |
 | `AddScoped<T>()` | `.scoped::<T>(f)` | |
 | `AddTransient<T>()` | `.transient::<T>(f)` | |
-| `AddKeyedSingleton<T>(key)` | `.keyed_singleton::<T>(key, f)` | key 为字符串 |
+| `AddKeyedSingleton<T>(key)` | `.keyed_singleton::<T>(key, f)` | `key: impl Into<ServiceKey>`（字符串或类型化键） |
+| `object` key（typed） | `ServiceKey::new(value)` | enum/整数等类型化键；类型参与相等 |
+| `KeyedService.AnyKey` 注册 | `keyed_any_singleton/scoped/transient` / `ServiceKey::any_key()` | 兜底：精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、validation 预填充复用、owned 例外、嵌套不同 key 合法 |
 | `GetRequiredService<T>()` | `.get::<T>()` | `Result`；**最后注册优先** |
 | `GetService<T>()` | `.get_optional::<T>()` | `Option` |
-| `GetServices<T>()` | `.get_all::<T>()` | **仅非 keyed**，按注册顺序 |
-| `GetKeyedServices<T>(key)` | `.get_keyed::<T>(key)` / `.get_all_keyed::<T>()` | 按 key 单实例解析；批量枚举全部 keyed（对应 `AnyKey`） |
+| `GetServices<T>()` | `.get_all::<T>()` | **仅非 keyed**，按注册顺序；含已初始化 async singleton（未初始化 async 同步枚举 → `AsyncServiceRequiresGetAsync`） |
+| `GetKeyedServices<T>(key)` | `.get_keyed::<T>(key)` / `.get_all_keyed::<T>()` | 按 key 单实例解析；批量枚举**显式 key**（不含 AnyKey 兜底） |
 | `TryAddSingleton` / `TryAddScoped` / `TryAddTransient` | `.try_add_singleton(...)`（别名 `.try_add`）/ `.try_add_scoped(...)` / `.try_add_transient(...)` | 未注册才添加 |
 | `ServiceProviderOptions.ValidateScopes` | `ServiceProviderOptions::validate_scopes` | 默认 `true`（严格）；`lenient()` 关闭 |
 | `BuildServiceProvider(options)` | `.build_with(options)` / `.build_async_with(options)` | `build()` == `build_with(Default)` |
 | `IServiceProviderIsService` | `.is_registered::<T>()` / `.is_registered_keyed::<T>(key)` | 只查询不实例化 |
 | `ServiceProvider.Dispose()` | `.dispose()` | 幂等；之后解析 `Err(ProviderDisposed)` |
 | `IServiceScope.Dispose()` | `.dispose()`（Drop 自动） | 逆序释放；之后解析 `Err(ScopeDisposed)` |
+| （无） | `.async_context()` / `AsyncFactoryContext` | Rust 扩展：跨任务异步环检测 |
+| （无） | `RdiError::is_circular()` / `SyncSingletonDependsOnAsyncService` / `AsyncServiceRequiresGetAsync` | Rust 扩展：环与异步诊断 |
 
 > 两处最容易被 .NET 经验误导的差异：
-> 1. **scope 校验默认开启**：rust-dix 0.8.x 默认拒绝从 root 解析 Scoped
+> 1. **scope 校验默认开启**：rust-dix 0.9.x 默认拒绝从 root 解析 Scoped
 >    （`Err(ScopedFromRootProvider)`），等价 ASP.NET Core 开发环境的 `ValidateScopes = true`；
 >    裸 MEDI `BuildServiceProvider()` 默认关闭。例外：`get_owned` / `try_get_owned`
 >    可从 root 取 Scoped（owned 不缓存、不跟踪，但其 Scoped 依赖仍受校验）。
-> 2. **`get_all` 不含 keyed**：keyed 多实现要用 `get_all_keyed::<T>()`。
+> 2. **`get_all` 不含 keyed**：keyed 多实现要用 `get_all_keyed::<T>()`（不含 AnyKey 兜底）。
 
 ## 下一步
 

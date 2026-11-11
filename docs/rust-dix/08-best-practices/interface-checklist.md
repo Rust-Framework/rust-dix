@@ -119,18 +119,23 @@ let logger: Arc<dyn ILogger> = provider.get()?;  // Err: TypeId 不匹配
 |------|---------|
 | 默认策略 | `.singleton::<dyn Trait>(...)` |
 | 替代策略 | `.keyed_singleton::<dyn Trait>("name", ...)` |
+| 类型化键 | `.keyed_singleton::<dyn Trait>(ServiceKey::new(EnumKey::A), ...)` |
+| 任意 key 兜底 | `.keyed_any_singleton::<dyn Trait>(\|_, key\| ...)`（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存） |
 | 批量获取（非 keyed） | `.get_all::<dyn Trait>()` |
-| 批量获取（全部 keyed） | `.get_all_keyed::<dyn Trait>()`（0.8.0+） |
+| 批量获取（显式 keyed） | `.get_all_keyed::<dyn Trait>()`（不含 AnyKey 兜底） |
 
 ```rust
-// ✅ 多实现注册
+// ✅ 多实现注册（字符串或类型化 ServiceKey 均可）
 ServiceCollection::new()
     .singleton::<dyn IPayGateway>(|_| Arc::new(WechatPay))  // 默认
     .keyed_singleton::<dyn IPayGateway>("wechat", |_| Arc::new(WechatPay))
-    .keyed_singleton::<dyn IPayGateway>("alipay", |_| Arc::new(Alipay))
+    .keyed_singleton::<dyn IPayGateway>(ServiceKey::new(PayKey::Alipay), |_| Arc::new(Alipay))
+    .keyed_any_singleton::<dyn IPayGateway>(|_, _key| Arc::new(DefaultGateway)) // 兜底
     .build()
     .unwrap();
 ```
+
+> 注意：`get_all_keyed` 不含 AnyKey 兜底；`get_keyed(ServiceKey::any_key())` 非法。
 
 ### 多接口注册
 
@@ -186,7 +191,8 @@ pub struct CreateUserHandler {
 
 | 外层 | 可依赖 | 不可依赖 |
 |------|--------|---------|
-| Singleton | Singleton / Transient（二者都非 captive） / 内建 `ScopeFactory`（弱引用） | Scoped |
+| Singleton（同步） | Singleton / Transient（二者都非 captive） / 内建 `ScopeFactory`（弱引用） | Scoped；**async 服务**（build 期 `SyncSingletonDependsOnAsyncService`） |
+| Singleton（async） | 其它 async singleton（依赖优先初始化） / 同步 singleton | — |
 | Scoped | Singleton / Scoped / Transient | — |
 | Transient | 所有 | 无限制 |
 
@@ -197,12 +203,28 @@ pub struct GlobalService {
     session: Arc<Session>,  // Session 注册为 Scoped → build 阶段拒绝
 }
 
+// ❌ 错误：同步 singleton 依赖 async 服务（build_async 返回 SyncSingletonDependsOnAsyncService）
+#[inject(singleton)]
+pub struct Repository {
+    db: Arc<AsyncDb>,       // async_singleton 注册 → 同步构造无法 await
+}
+
 // ✅ 正确：Scoped 依赖 Singleton
 #[inject(scoped)]
 pub struct RequestHandler {
     config: Arc<AppConfig>,  // Singleton → OK
 }
 ```
+
+### 异步解析规则
+
+| ✅ 应该 | ❌ 避免 |
+|--------|--------|
+| async 服务用 `get_async` / `get_keyed_async` 解析 | 同步 `get` 解析 async 服务（`AsyncServiceRequiresGetAsync`） |
+| async scoped/transient 用 `get_async` 逐项解析 | 同步 `get_all`/`Vec` 枚举未初始化 async（panic 或 Err；async scoped 在 root 被 scope 校验省略） |
+| async 工厂内需要 spawn 时传 `AsyncFactoryContext` | 完全不传 ctx 的跨任务解析（可能死锁） |
+| 用 `err.is_circular()` 判定直接/包裹的环（**启发式**） | 只匹配 `CircularDependency` 而漏掉 `FactoryPanic` 包裹；或仅凭启发式做精确分支 |
+| 含 `async_*` 注册时用 `build_async()` | 用 `build()`（`AsyncServiceRequiresBuildAsync`） |
 
 ## 四、容器使用规则
 
@@ -311,10 +333,21 @@ fn test_create_user() {
 | 依赖 | 字段是否都是 `Arc<dyn Trait>` |
 | 注册 | 是否在 `impl Trait for Type` 上加 `#[inject]` |
 | 放置位置 | struct 与 impl 是否同时用 `#[inject]`（应二选一；面向接口时 struct 用 `#[derive(Inject)]`） |
-| 多实现 | 是否用 keyed 注册替代实现 |
-| 生命周期 | Singleton 不依赖 Scoped（build 阶段自动检测） |
+| 多实现 | 是否用 keyed 注册替代实现；key 是否需要类型化（`ServiceKey::new`）或 AnyKey 兜底；字符串键是否用 `from/into`（`ServiceKey::new("x")` 与 `String` key 不等） |
+| 生命周期 | Singleton 不依赖 Scoped；同步 singleton 不依赖 async 服务（build 阶段自动检测） |
+| 异步 | async 服务用 `get_async`；跨任务解析是否传 `AsyncFactoryContext` |
+| 错误处理 | 环错误是否用 `RdiError::is_circular()` 判定（而非只匹配 `CircularDependency`） |
+| 工程基线 | 工具链 ≥ **1.95**；CI 的 fmt/clippy/doc/`cargo audit` 通过；无 `unsafe`；见 `SECURITY.md` |
 | 容器 | 是否只构建一次 |
 | 测试 | 是否可替换 mock |
+
+### 工程基线（0.9.0）
+
+| 项 | 要求 |
+|----|------|
+| MSRV | Rust **1.95**（`rust-version`），CI matrix 覆盖 1.95 / stable |
+| CI | `.github/workflows/ci.yml`：ubuntu+windows × 1.95/stable 测试；stable 跑 fmt/clippy/doc（`-D warnings`）+ RustSec `cargo audit` |
+| 安全 | 两个 crate `#![forbid(unsafe_code)]`；漏洞上报/支持版本/安全边界见 `SECURITY.md` |
 
 ---
 

@@ -473,6 +473,129 @@ struct OutboxWorker {
 }
 ```
 
+## 陷阱 12：AnyKey 兜底的常见误解
+
+### 现象
+
+- `get_all_keyed()` 列不出通过 `keyed_any_*` 注册的兜底实现；
+- 用 `ServiceKey::any_key()` 解析单个服务得到 `Err`；
+- 以为 AnyKey 兜底在多个请求 key 之间共享同一个实例。
+
+### 原因
+
+AnyKey 兜底（对齐 MEDI `KeyedService.AnyKey`）有以下语义（0.9.0）：
+
+1. `get_all_keyed` **只列显式 key**，不含 AnyKey 兜底；单值不能用 `any_key()` 哨兵
+   （`get_keyed(any_key())` → `Err`，`is_registered_keyed(any_key())` → `false`）。
+2. singleton/scoped 兜底实例**按 (服务注册/类型, 被请求 key) 分别缓存**（同一注册 + 同一 key
+   复用，不同 key 或不同 AnyKey 注册各自独立；scoped 每 scope 每 (注册, key) 一份），
+   transient 每次新建。
+3. AnyKey 注册仅同步（`get_keyed_async` 回退同步路径），build 期不做 eager 初始化/单独校验；
+   `keyed_any_scoped` 被同步 singleton 依赖时仍按 captive dependency 拒绝。
+4. **validation 预填充**：build 期同步 singleton 按某请求 key 消费 AnyKey singleton 后，该
+   实例会写入 **(注册, 请求 key) 缓存**，运行时同注册同 key 复用**同一实例**（单次初始化、
+   多消费者共享一次构造）；不要以为 validation 期创建后运行时会再构建一次。
+5. **owned 例外**：AnyKey 的 scoped/transient `get_keyed_owned` / `try_get_keyed_owned` 在
+   strict root 下**允许**（不进缓存/不跟踪，传递依赖仍受 scope 校验）；不要以为会报
+   `ScopedFromRootProvider`。
+6. **嵌套 key 合法**：AnyKey 工厂内嵌套解析**不同请求 key** 不会误报环；只有同一注册 +
+   同一请求 key 的重入才是环。
+7. 工厂里的 `&ServiceKey` 可 `Debug`/`Display`/`Eq`/`Hash`，但**没有** typed downcast
+   访问器（擦除表示私有，属有意设计）；按 key 分支请用相等/hash 或闭包捕获类型信息。
+
+### 排查
+
+```rust
+// ✅ 正确：精确 key + AnyKey 兜底
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IStorage>("admin", |_| Arc::new(AdminStore))
+    .keyed_any_singleton::<dyn IStorage>(|_, key| Arc::new(Store::for_key(key)))
+    .build()
+    .unwrap();
+
+let admin: Arc<dyn IStorage> = provider.get_keyed("admin").unwrap(); // 精确
+let other: Arc<dyn IStorage> = provider.get_keyed("tenant-1").unwrap(); // 兜底
+let all = provider.get_all_keyed::<dyn IStorage>(); // 只含 "admin"
+```
+
+## 陷阱 13：跨任务 async 环死锁（未传 `AsyncFactoryContext`）
+
+### 现象
+
+async 工厂里 `tokio::spawn` 一个任务去解析其它服务时，`build_async` 可能 hang（而不是返回
+`CircularDependency`）。
+
+### 原因
+
+async 环检测是**解析链**式的：链在 future 构造时捕获。完全脱离的任务没有继承链，跨任务
+自引用/交叉依赖可能重新在 per-key async 缓存锁上死锁。0.9.0 新增
+`AsyncFactoryContext` 用于把链显式传进任务。
+
+### 排查
+
+```rust
+.async_singleton(|sp| Box::pin(async move {
+    let ctx = sp.async_context().expect("built provider");
+    let dep = tokio::spawn({
+        let ctx = ctx.clone();
+        async move { ctx.get_async::<Dep>().await }
+    }).await.expect("task").expect("Dep");
+    Arc::new(Service { dep })
+}))
+```
+
+有环时 ctx 侧返回 `CircularDependency`；若工厂 `.unwrap()` 了该错误，顶层 `build_async`
+得到 `FactoryPanic`，可用 `RdiError::is_circular()` 判定；注意该方法是**启发式**（payload
+含 `CircularDependency` 文本即命中，自定义 payload 可能误判），精确形态优先匹配 typed 变体。
+
+## 陷阱 14：同步 singleton 依赖 async 服务 / 同步解析或枚举 async 服务
+
+### 现象
+
+- `build_async` 返回 `RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service }`；
+- 已构建容器上同步 `get::<异步服务>()` 返回 `RdiError::AsyncServiceRequiresGetAsync`；
+- `get_all` / `#[inject] Vec<Arc<T>>` 枚举时 panic（typed payload）或返回 `Err`。
+
+### 原因
+
+同步构造无法 `await`：同步 singleton 的校验/构建先于 async singleton 初始化。同步解析
+未初始化的 async 服务也不可用（`get_optional` 返回 `None`，`is_registered` 仍为 `true`）。
+枚举同理会包含**已初始化**的 async singleton；对**未初始化**的 async singleton/transient 同步枚举会得到 `AsyncServiceRequiresGetAsync`：`get_all` 签名不可失败，以 typed `RdiError` payload panic；async scoped 在 root 枚举会被严格 scope 校验省略（在 `Scope` 内枚举才 panic）；`get_all_any_result` / `Vec<Arc<T>>` 注入对任何未初始化 async 返回 `Err`。
+
+### 排查
+
+- 同步 singleton 不要依赖 async 服务：把依赖方也改为 async singleton，或在方法内用
+  `Arc<dyn ScopeFactory>` / `get_async` 延迟解析。
+- 解析 async 服务用 `get_async` / `get_keyed_async`；async scoped/transient 用 `get_async`
+  逐项解析；`AnyKey` 兜底为同步注册，异步解析会回退同步路径。
+- 含 `async_*` 注册的集合必须 `build_async()`（`build()` 返回
+  `AsyncServiceRequiresBuildAsync`）。
+
+## 陷阱 15：`ServiceKey::new("x")` 与字符串键不相等
+
+### 现象
+
+`keyed_singleton("x", …)` 注册后，`provider.get_keyed(ServiceKey::new("x"))` 返回
+`KeyedServiceNotFound`（或 `is_registered_keyed` 为 `false`）。
+
+### 原因
+
+key 相等包含值的类型：`ServiceKey::new("x")` 是 `&str` typed key，而字符串注册 API 把 key
+存为 `String`，两者不相等。这是 0.9.0 typed key 的 footgun。
+
+### 排查
+
+```rust
+// ✅ 字符串键：用 from/into（或直接传 "x"）
+provider.get_keyed::<dyn ITrait>("x")?;
+provider.get_keyed::<dyn ITrait>(ServiceKey::from("x"))?;
+provider.get_keyed::<dyn ITrait>("x".into())?;
+
+// ✅ 类型化键：两边都用 ServiceKey::new(同一类型值)
+.keyed_singleton::<dyn ITrait>(ServiceKey::new(EnumKey::X), ...)
+provider.get_keyed::<dyn ITrait>(ServiceKey::new(EnumKey::X))?;
+```
+
 ## 排查速查表
 
 | 现象 | 可能原因 | 排查方向 |
@@ -482,6 +605,17 @@ struct OutboxWorker {
 | `SingletonDependsOnScoped` | Singleton 依赖 Scoped | build 阶段已拒绝，改 Singleton 只依赖 Singleton |
 | `ScopedFromRootProvider` | 默认严格 scope 校验：从 root 解析 Scoped | 改用 `provider.scope()` 子 Scope 解析；确需旧行为用 `lenient()` 构建 |
 | `get_all` 拿不到某实现 | 该实现是 keyed 注册（`get_all` 只含非 keyed） | 改用 `get_all_keyed`，或把观察者/广播目标注册为非 keyed |
+| `get_all`/`Vec` 枚举 panic 或 `Err(AsyncServiceRequiresGetAsync)` | 同步枚举未初始化的 async singleton/transient（async scoped 在 root 被 scope 校验省略、Scope 内才 panic） | 用 `get_async` 逐项解析；已初始化 async singleton 会被包含 |
+| `get_all_keyed` 拿不到 AnyKey 兜底 | AnyKey 兜底不计入枚举（只列显式 key） | 用 `get_keyed(key)` 逐个解析；枚举语义对齐 MEDI |
+| `get_keyed(ServiceKey::new("x"))` 找不到已注册 `"x"` | `&str` typed key ≠ 字符串注册的 `String` key | 用 `ServiceKey::from("x")` / `"x".into()`；`ServiceKey::new` 只用于 typed 键 |
+| 以为 AnyKey scoped/transient owned 会被 root scope 拒绝 | owned 是例外，strict root 下允许 | 直接用 `get_keyed_owned`；不进缓存，传递依赖仍受校验 |
+| AnyKey 工厂按 key 分支时想 downcast | 有意不提供 typed downcast 访问器 | 用 `Debug`/`Display`/`Eq`/`Hash` 比较，或闭包捕获类型信息 |
+| `get_keyed(any_key())` 返回 Err | AnyKey 哨兵不能做单值解析 | 用具体 key（字符串/`ServiceKey::new`）解析 |
+| async 工厂 spawn 任务后 build hang | 未传 `AsyncFactoryContext`，解析链断开 | 工厂内 `sp.async_context()`，clone 进任务用 `ctx.get_async`；`is_circular()` 为启发式 |
+| `SyncSingletonDependsOnAsyncService` | 同步 singleton 依赖 async 服务 | 依赖方改 async singleton，或方法内 `ScopeFactory`/`get_async` 延迟解析 |
+| `AsyncServiceRequiresGetAsync` | 同步 `get`/`get_optional` 解析 async 服务 | 改用 `get_async`/`get_keyed_async` |
+| `AsyncServiceRequiresBuildAsync` | 含 `async_*` 注册却调 `build()` | 改用 `build_async()` |
+| 编译失败：工具链低于 MSRV | 0.9.0 MSRV 为 Rust **1.95** | 升级工具链；CI 覆盖 1.95/stable 并跑 `cargo audit`/clippy 零警告 |
 | 后注册的实现没生效 | 0.8.0 为最后注册优先，先注册的被后注册覆盖 | 检查注册顺序；需要"未注册才添加"用 `try_add*` |
 | dispose 后解析报 `ScopeDisposed` / `ProviderDisposed` | 容器/作用域已释放 | 不要把已 dispose 的 provider/scope 继续传递使用 |
 | 栈溢出 | 循环依赖 | 重构或延迟解析 |

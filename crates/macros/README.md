@@ -21,7 +21,7 @@ as possible.
 
 ```toml
 [dependencies]
-rust-dix = "0.8"       # re-exports all macros — you usually don't need rust-dix-macros directly
+rust-dix = "0.9"       # re-exports all macros — you usually don't need rust-dix-macros directly
 ```
 
 > **Note**: You rarely need to add `rust-dix-macros` as a direct dependency.
@@ -266,9 +266,9 @@ rust_dix::register!(singleton: MyService);
 
 ---
 
-### Behavior notes (0.8.x)
+### Behavior notes (0.9.x)
 
-The macros themselves are unchanged in 0.8.x, but the container semantics they
+The macros themselves are unchanged in 0.9.x, but the container semantics they
 feed into are:
 
 - **Single-service resolution is "last registration wins"** (MEDI parity). If the
@@ -276,7 +276,20 @@ feed into are:
   plus a manual `singleton` override — the *last* registration is what `get()`
   returns. Use `try_add*` when you want "only add if absent".
 - **`Vec<Arc<T>>` injection only collects non-keyed registrations** (registration
-  order). Keyed implementations are resolved explicitly with `get_all_keyed::<T>()`.
+  order; `AnyKey` fallbacks excluded). It includes **already-initialized** async
+  singletons; synchronously injecting `Vec` while an async singleton is uninitialized
+  (or for async scoped/transient) returns `Err(AsyncServiceRequiresGetAsync)` — resolve
+  async scoped/transient services with `get_async` instead.
+- **Keyed registration stays manual**: `#[inject]` does not express keys. Use
+  `keyed_*` / `keyed_any_*` with `impl Into<ServiceKey>` (strings or typed
+  `ServiceKey` values). `get_all_keyed` lists explicit keys only; `AnyKey`
+  fallbacks are excluded. For string keys use `"x".into()` / `ServiceKey::from("x")`
+  (`ServiceKey::new("x")` is a `&str`-typed key and is *not* the `String` key stored
+  by `keyed_singleton("x", …)`).
+- **Async diagnostics**: types with `async_*` registrations must be resolved with
+  `get_async` (`AsyncServiceRequiresGetAsync` for sync resolution); sync singletons
+  must not depend on async services (`SyncSingletonDependsOnAsyncService` at build).
+  Propagate `AsyncFactoryContext` into spawned tasks for cross-task cycle detection.
 - **Strict scope validation is the default**: resolving a Scoped service from the
   root provider returns `Err(RdiError::ScopedFromRootProvider)`. Annotate
   request-scoped services with `#[inject(scoped)]` and resolve them inside
@@ -285,6 +298,9 @@ feed into are:
   instances in reverse creation order; `ServiceProvider::dispose()` releases
   singletons and root-scoped instances. Constructor-time resolution through an
   injected provider is rejected with a typed `FactoryPanic`.
+
+> **MSRV**: Rust 1.95. Both crates are `#![forbid(unsafe_code)]`; CI runs tests plus
+> RustSec `cargo audit` — see `SECURITY.md`.
 
 ---
 

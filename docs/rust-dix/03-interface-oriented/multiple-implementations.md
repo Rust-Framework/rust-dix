@@ -70,15 +70,18 @@ if let Some(gateway) = provider.try_get_keyed::<dyn IPaymentGateway>("credit") {
 
 ### 批量获取：get_all / get_all_keyed
 
-`get_all` **只返回非 keyed 注册**（0.8.0 起，对齐 MEDI `GetServices`）；keyed 实现
-要用 `get_all_keyed`：
+`get_all` **只返回非 keyed 注册**（对齐 MEDI `GetServices`）；keyed 实现要用
+`get_all_keyed`（0.9.0 起只列**显式 key**，不含 `AnyKey` 兜底）。两者都含**已初始化**的
+async singleton；同步枚举**未初始化** async singleton/transient → `AsyncServiceRequiresGetAsync`
+（`get_all` typed panic），async scoped 在 root 被 scope 校验省略（Scope 内枚举才 panic），
+`Vec` 注入对任何未初始化 async 返回 `Err`。
 
 ```rust
 // 非 keyed 实现：上面的例子只注册了 1 个默认实现（WechatPay）
 let all: Vec<Arc<dyn IPaymentGateway>> = provider.get_all();
 assert_eq!(all.len(), 1);
 
-// keyed 实现：一次取该类型的全部 keyed 注册（按注册顺序）
+// keyed 实现：一次取该类型的显式 keyed 注册（按注册顺序；不含 AnyKey 兜底）
 let keyed: Vec<Arc<dyn IPaymentGateway>> = provider.get_all_keyed();
 assert_eq!(keyed.len(), 3);  // wechat + alipay + credit
 
@@ -163,6 +166,8 @@ let outputs: Vec<Arc<dyn ILogOutput>> = provider.get_all_keyed();
 for output in &outputs {
     output.write(LogLevel::Info, "服务启动");
 }
+
+// 注意（0.9.0）：AnyKey 兜底注册不计入 get_all_keyed（只列显式 key）
 ```
 
 ### 场景：多租户存储后端
@@ -199,13 +204,77 @@ storage.save(tenant_id, data);
 .keyed_scoped::<dyn ICache>("session", |_| Arc::new(SessionCache))
 ```
 
+## 类型化键与 AnyKey 兜底（0.9.0）
+
+所有 keyed API 接受 `impl Into<ServiceKey>`：字符串调用保持兼容，也可用 enum/整数等
+**类型化键**（键相等包含值的类型，`ServiceKey::new(1u32) != "1"`）。
+
+> **字符串键易错点**：`ServiceKey::new("x")` 是 `&str` typed key，与
+> `keyed_singleton("x", …)` 存储的 `String` key **不相等**。字符串键请用 `"x".into()` /
+> `ServiceKey::from("x")`；`ServiceKey::new` 只用于有意的 typed 键（enum/整数/`&'static str`）。
+
+```rust
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum StorageKey { TenantA, TenantB }
+
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IStorage>(ServiceKey::new(StorageKey::TenantA), |_| Arc::new(PostgresStorage))
+    .keyed_singleton::<dyn IStorage>(ServiceKey::new(StorageKey::TenantB), |_| Arc::new(MysqlStorage))
+    .build()
+    .unwrap();
+
+let storage: Arc<dyn IStorage> =
+    provider.get_keyed(ServiceKey::new(StorageKey::TenantA)).unwrap();
+```
+
+**AnyKey 兜底**（对齐 MEDI `KeyedService.AnyKey`）：`keyed_any_singleton` /
+`keyed_any_scoped` / `keyed_any_transient` 注册一个"没有精确 key 时使用"的实现，工厂接收
+被请求的 key，singleton/scoped 实例**按 (服务注册/类型, 请求 key) 分别缓存**——同一注册 +
+同一 key 复用，不同 key 或不同 AnyKey 注册各自独立（不会串缓存）：
+
+```rust
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IStorage>("admin", |_| Arc::new(AdminStorage)) // 精确 key 优先
+    .keyed_any_singleton::<dyn IStorage>(|_, key| {
+        // key: &ServiceKey —— 按请求 key 选择租户
+        Arc::new(TenantStorage::new(&format!("{key:?}")))
+    })
+    .build()
+    .unwrap();
+
+let admin: Arc<dyn IStorage> = provider.get_keyed("admin").unwrap();     // 精确
+let tenant: Arc<dyn IStorage> = provider.get_keyed("tenant-42").unwrap(); // 兜底，按注册+key 缓存
+```
+
+> 注意：
+> - `get_all_keyed` **不包含** AnyKey 兜底（只列显式 key）；枚举还包含**已初始化**的
+>   async singleton，同步枚举未初始化 async singleton/transient 会得到
+>   `AsyncServiceRequiresGetAsync`（`get_all` typed panic；`Vec` 注入 `Err`），async scoped
+>   在 root 被 scope 校验省略（Scope 内枚举才 panic），async scoped/transient 请用
+>   `get_async` 逐项解析。
+> - 用 `ServiceKey::any_key()` 做**单值解析**非法（`get_keyed(any_key())` → `Err`；
+>   `is_registered_keyed(any_key())` → `false`）。
+> - AnyKey 注册仅同步（`get_keyed_async` 回退同步路径），build 期不做 eager 初始化/单独校验；
+>   `keyed_any_scoped` 被同步 singleton 依赖时仍按 captive dependency 拒绝。
+> - **validation 预填充**：build 期同步 singleton 按某请求 key 消费 AnyKey singleton 时，
+>   实例写入 **(注册, 请求 key) 缓存**，运行时同一注册 + 同一 key 复用**同一实例**（单次初始化、
+>   多消费者共享一次构造）。
+> - **owned 例外**：AnyKey 的 scoped/transient `get_keyed_owned` / `try_get_keyed_owned` 在
+>   strict root 下允许（不进缓存/不跟踪，传递依赖仍受 scope 校验）。
+> - **嵌套 key 合法**：AnyKey 工厂内嵌套解析**不同请求 key** 不会误报环；只有同一注册 +
+>   同一请求 key 的重入才是环。
+> - `&ServiceKey` 可 `Debug`/`Display`/`Eq`/`Hash`，但**没有** typed downcast 访问器
+>   （擦除表示私有，属有意设计）；按 key 分支请用相等/hash 或闭包捕获类型信息。
+
 ## 最佳实践
 
 | ✅ 推荐 | ❌ 避免 |
 |--------|--------|
 | 默认 + keyed 组合 | 只 keyed 无默认导致 `get()` 返回 `Err(ServiceNotFound)` |
 | key 名称语义明确（如 "wechat"） | key 名称模糊（如 "impl1"） |
+| 语义稳定的 key 用类型化 `ServiceKey::new(enum)` | 用字符串近似替代类型（`1u32` 与 `"1"` 不相等） |
 | 用 `get_all` / `get_all_keyed` 批量处理观察者 | 手动逐个 `get_keyed` 或误以为 `get_all` 含 keyed |
+| 需要"任意 key 兜底"时用 `keyed_any_*` | 用默认实现 + 手写回退（重复且易漏） |
 | 策略选择逻辑集中封装 | 分散在各处的 if/else |
 
 ## 下一步

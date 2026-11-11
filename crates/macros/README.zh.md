@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.8"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
+rust-dix = "0.9"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
 ```
 
 > **注意**：你很少需要直接添加 `rust-dix-macros` 依赖。`rust-dix` crate 已经重新导出了
@@ -241,21 +241,35 @@ rust_dix::register!(singleton: MyService);
 
 ---
 
-### 行为说明（0.8.x）
+### 行为说明（0.9.x）
 
-宏本身在 0.8.x 没有变化，但它们接入的容器语义变了：
+宏本身在 0.9.x 没有变化，但它们接入的容器语义变了：
 
 - **单服务解析为"最后注册优先"**（对齐 MEDI）。同一类型注册两次（例如
   `#[rust_dix::inject]` 自动注册 + 手动 `singleton` 覆盖）时，`get()` 返回
   **后注册**的实现；需要"未注册才添加"请用 `try_add*`。
-- **`Vec<Arc<T>>` 注入只收集非 keyed 注册**（按注册顺序）。keyed 实现需显式调用
-  `get_all_keyed::<T>()`。
+- **`Vec<Arc<T>>` 注入只收集非 keyed 注册**（按注册顺序；不含 `AnyKey` 兜底）。它包含
+  **已初始化**的 async singleton；同步注入 `Vec` 时若 async singleton 未初始化（或服务是
+  async scoped/transient）返回 `Err(AsyncServiceRequiresGetAsync)`——async scoped/transient
+  请改用 `get_async` 逐项解析。
+- **keyed 注册仍需手动**：`#[inject]` 不表达 key。用 `keyed_*` / `keyed_any_*` +
+  `impl Into<ServiceKey>`（字符串或类型化 `ServiceKey`）。`get_all_keyed` 只列显式 key，
+  不含 `AnyKey` 兜底。字符串键用 `"x".into()` / `ServiceKey::from("x")`
+  （`ServiceKey::new("x")` 是 `&str` typed key，与 `keyed_singleton("x", …)` 的 `String`
+  key 不相等）。
+- **异步诊断**：含 `async_*` 注册的服务必须用 `get_async` 解析（同步解析返回
+  `AsyncServiceRequiresGetAsync`）；同步 singleton 不能依赖 async 服务（build 期
+  `SyncSingletonDependsOnAsyncService`）。脱离任务请传 `AsyncFactoryContext` 以获得跨任务
+  环检测。
 - **默认严格 scope 校验**：从 root provider 解析 Scoped 服务返回
   `Err(RdiError::ScopedFromRootProvider)`。请求级服务标注 `#[inject(scoped)]`，
   并在 `provider.scope()` 内解析。
 - **dispose 显式且有序**：`Scope::dispose()` / Drop 按创建逆序释放 scoped 实例；
   `ServiceProvider::dispose()` 释放 singleton 与 root scoped 实例。构造期通过注入
   provider 解析服务会返回类型化 `FactoryPanic`。
+
+> **MSRV**：Rust 1.95。两个 crate 均 `#![forbid(unsafe_code)]`；CI 跑测试 + RustSec
+> `cargo audit`，详见 `SECURITY.md`。
 
 ---
 

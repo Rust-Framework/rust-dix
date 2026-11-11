@@ -5,6 +5,221 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-11
+
+> **English** · **简体中文**
+
+### English
+
+#### Added
+- **Typed service keys (`ServiceKey`)**: keyed registrations/resolution now accept
+  `impl Into<ServiceKey>`. `ServiceKey::new(value)` wraps any
+  `Any + Send + Sync + Eq + Hash + Debug` value (enum, integer, …); `From<&str>` /
+  `From<String>` / `From<&String>` keep string keys source-compatible.
+  `ServiceKey::any_key()` / `KeyedService::any_key()` provide the `AnyKey` sentinel, and
+  `ServiceKey::is_any()` detects it. Key equality includes the value's type
+  (`ServiceKey::new(1u32) != ServiceKey::from("1")`).
+- **`AnyKey` fallback registrations (MEDI `KeyedService.AnyKey`)**:
+  `keyed_any_singleton` / `keyed_any_scoped` / `keyed_any_transient`. The factory receives
+  the requested key (`Fn(&dyn IServiceResolver, &ServiceKey) -> Arc<T>`). Exact-key
+  registrations take precedence; Otherwise the fallback is used. Singleton/scoped
+  fallback instances are cached **per (registration/type, requested key)** — the same
+  registration + key reuses one instance, different keys or different `AnyKey`
+  registrations get independent instances; scoped: one per scope per (registration, key).
+  Transient instances are created per resolution. `get_all_keyed()` does **not** include
+  `AnyKey` fallbacks (MEDI `GetKeyedServices(AnyKey)` parity). Resolving a single service
+  **with** the `AnyKey` sentinel is invalid (`get_keyed(any_key())` → `Err`;
+  `is_registered_keyed(any_key())` → `false`). `AnyKey` registrations are not eagerly
+  initialized/validated at build (they need a requested key); async resolution of a
+  fallback falls back to the synchronous path.
+  - **Validation cache prefill**: when a sync singleton depends on an `AnyKey` fallback
+    during build-time validation, the resolved singleton is written into the
+    `(registration, requested key)` cache, so runtime resolution with the same key reuses
+    the **same instance** (single initialization; multiple consumers share one
+    construction — no double construction). It is not re-created for that key.
+  - **Owned resolution**: `get_keyed_owned` / `try_get_keyed_owned` for an `AnyKey`
+    scoped/transient fallback is allowed at the strict root (same caller-owned exception as
+    exact-key owned; the instance is not cached or tracked, while its transitive
+    dependencies still obey scope validation).
+  - **Nested keys**: an `AnyKey` factory may nested-resolve a **different** requested key
+    (legal, no false cycle); only re-entering the same registration **with the same
+    requested key** is a dependency cycle (`CircularDependency`).
+  - **Key access**: the factory receives `&ServiceKey`, which exposes `Debug` / `Display`
+    / `Eq` / `Hash` (the erased representation is private). There is intentionally **no**
+    typed downcast accessor; branch with equality/hash or capture type information in the
+    closure.
+- **Enumeration and async services**: `get_all` / `get_all_keyed` / `#[inject]
+  Vec<Arc<T>>` now include **already-initialized** async singletons (cached by
+  `build_async`). Synchronously enumerating an **uninitialized** async service yields
+  `RdiError::AsyncServiceRequiresGetAsync`: `get_all` / `get_all_keyed` (infallible
+  signatures) panic with a typed `RdiError` payload for async singleton/transient
+  services (an async **scoped** service enumerated at the root is instead omitted by
+  strict scope validation; inside a `Scope` it panics), while `get_all_any_result` /
+  `Vec<Arc<T>>` injection return `Err` for any uninitialized async service. Resolve
+  async scoped/transient services item by item with `get_async`.
+- **String-key footgun**: `ServiceKey::new("x")` is a `&str`-typed key and is **not**
+  equal to the `String` key stored by `keyed_singleton("x", …)`. For string keys use
+  `"x".into()` / `ServiceKey::from("x")`; `ServiceKey::new` is only for typed
+  (`&'static str` / enum / integer) keys.
+- **`AsyncFactoryContext` for cross-task async cycle detection**:
+  `ServiceProvider::async_context()` / `Scope::async_context()` return a `Clone` handle
+  (`get_async`, `get_keyed_async`, `provider()`). Capture it inside an async factory and
+  move clones into `tokio::spawn`-like tasks: self/cross cycles across tasks return
+  `RdiError::CircularDependency` instead of dead-locking. Async cycle detection is now
+  **chain-based**: each `get_async`/`get_keyed_async` future captures the current
+  resolution chain when constructed (`.await` usage unchanged), covering direct
+  self/cross recursion and context-propagated cross-task recursion without misreporting
+  legitimate concurrent resolution.
+- **Diagnostics**: `RdiError::SyncSingletonDependsOnAsyncService { singleton,
+  async_service }` for a synchronous singleton depending on an async service at build
+  time, `RdiError::AsyncServiceRequiresGetAsync { service }` for synchronous resolution of
+  an async service, and `RdiError::is_circular()` to recognise both a direct
+  `CircularDependency` and one wrapped in a `FactoryPanic` payload. `is_circular()` is a
+  **heuristic** (it also matches a `FactoryPanic` payload containing the text
+  `CircularDependency`, so custom payloads can false-positive); prefer matching the typed
+  variant when the exact error shape matters.
+- **Engineering/security baseline**: MSRV **1.95** (`rust-version` in `Cargo.toml`,
+  verified in CI); new CI workflow (`.github/workflows/ci.yml`) runs
+  ubuntu + windows × Rust 1.95/stable tests, with fmt / clippy `-D warnings` / rustdoc
+  `-D warnings` on stable and a RustSec `cargo audit` job; both crates opt into
+  `#![forbid(unsafe_code)]`; new `SECURITY.md` documenting vulnerability reporting,
+  supported versions and security design/boundaries.
+
+#### Changed
+- Keyed APIs (`keyed_*` builders, `get_keyed*`, `is_registered_keyed`, and the matching
+  `Scope` / `ServiceProviderWrapper` methods) now take `impl Into<ServiceKey>`; existing
+  `&str` / `String` calls are source-compatible. Explicit function pointers or type
+  annotations over keyed APIs may need adjustment.
+- `get_async` / `get_keyed_async` now return `impl Future` instead of `async fn` (the
+  captured resolution chain is built at call time); `.await` usage is unchanged.
+- Async cycle detection upgraded from "single poll" markers to a per-resolution chain
+  (including `AsyncFactoryContext` across tasks); self/cross cycles still return
+  `CircularDependency` and legitimate concurrency is still not misreported.
+- `AnyKey` fallbacks add "cache per (registration, requested key)" and "not part of eager
+  initialization/enumeration" semantics.
+
+#### Fixed
+- Sync-singleton → async dependency is now reported as a precise
+  `SyncSingletonDependsOnAsyncService` diagnostic (instead of a generic panic/typed error),
+  with hints to make the dependent async or resolve lazily via `ScopeFactory` /
+  `get_async`.
+- Synchronous resolution of an uninitialized async service now reports
+  `AsyncServiceRequiresGetAsync` (previously described as
+  `AsyncServiceRequiresBuildAsync`); `build()` still reports
+  `AsyncServiceRequiresBuildAsync` for collections containing async registrations.
+- Cross-task async dependency cycles no longer rely on single-poll markers: propagate an
+  `AsyncFactoryContext` into detached tasks to get `CircularDependency` instead of a
+  possible deadlock.
+
+#### Migration from 0.8.x
+- Source-compatible for typical code: string keyed calls and `.await` on async resolution
+  keep working. Recompile against MSRV 1.95.
+- If you pass keyed APIs as function pointers or annotate their parameter types, update
+  them for the new `impl Into<ServiceKey>` signatures. `RdiError` remains
+  `#[non_exhaustive]`; the new variants need no match changes.
+- Async factories that resolve services from detached tasks should capture
+  `sp.async_context()` and use the context (otherwise cross-task cycles may still
+  deadlock). Sync singletons must not depend on async services; make the dependent async
+  or resolve lazily.
+
+#### Notes
+- **No `try_get_all` series was added on purpose.** The API surface stays at
+  `get_all` / `get_all_keyed` (infallible signatures; MEDI enumeration parity), with
+  `get_optional` / `try_get` / `try_get_keyed` for probing. Adding fallible enumeration
+  would duplicate `get_all` without a clear MEDI counterpart.
+
+### 简体中文
+
+#### 新增
+- **类型化服务键（`ServiceKey`）**：keyed 注册/解析现在接受 `impl Into<ServiceKey>`。
+  `ServiceKey::new(value)` 可包装任意 `Any + Send + Sync + Eq + Hash + Debug` 值
+  （enum、整数等）；`From<&str>` / `From<String>` / `From<&String>` 使字符串键源码兼容。
+  `ServiceKey::any_key()` / `KeyedService::any_key()` 提供 `AnyKey` 哨兵，
+  `ServiceKey::is_any()` 可识别。键相等包含值的类型
+  （`ServiceKey::new(1u32) != ServiceKey::from("1")`）。
+- **`AnyKey` 兜底注册（对齐 MEDI `KeyedService.AnyKey`）**：
+  `keyed_any_singleton` / `keyed_any_scoped` / `keyed_any_transient`。工厂签名接收被请求的
+  key（`Fn(&dyn IServiceResolver, &ServiceKey) -> Arc<T>`）。精确 key 注册优先，否则使用
+  兜底；singleton/scoped 的兜底实例**按 (服务注册/类型, 被请求 key) 分别缓存**（同一注册 + 同一
+  key 复用、不同 key 或不同 AnyKey 注册各自独立；scoped 为每 scope 每 (注册, key) 一份），
+  transient 每次解析新建。
+  `get_all_keyed()` **不包含** `AnyKey` 兜底注册（对齐 MEDI
+  `GetKeyedServices(AnyKey)`）。用 `AnyKey` 哨兵做**单值解析**非法
+  （`get_keyed(any_key())` → `Err`；`is_registered_keyed(any_key())` → `false`）。
+  `AnyKey` 注册在 build 期不做 eager 初始化/单独校验（需要请求 key）；异步解析兜底会回退
+  到同步路径。
+  - **validation 预填充缓存**：build 期同步 singleton 依赖 `AnyKey` 兜底并按某请求 key
+    解析时，该 singleton 实例会写入 **(注册, 请求 key) 缓存**；运行时同一注册 + 同一请求 key
+    复用**同一实例**（单次初始化；多消费者共享一次构造，不会双构建）。
+  - **owned 解析**：`AnyKey` 兜底（scoped/transient）的 `get_keyed_owned` /
+    `try_get_keyed_owned` 在 strict root 下**允许**（与 exact-key owned 相同的调用方持有
+    例外；不进缓存/不跟踪，但其传递依赖仍受 scope 校验）。
+  - **嵌套 key**：`AnyKey` 工厂内嵌套解析**不同请求 key** 合法（不会误报环）；只有同一注册
+    + 同一请求 key 的重入才是环（`CircularDependency`）。
+  - **key 读取**：工厂接收 `&ServiceKey`，可 `Debug` / `Display` / `Eq` / `Hash`（擦除表示
+    私有，**有意不提供** typed downcast 访问器）；需要按 key 分支时用相等/hash，或在闭包中
+    自行捕获类型信息。
+- **枚举与 async 服务**：`get_all` / `get_all_keyed` / `#[inject] Vec<Arc<T>>` 现在**包含
+  已初始化**的 async singleton（`build_async` 已构建并缓存）。同步枚举**未初始化**的
+  async 服务会得到 `RdiError::AsyncServiceRequiresGetAsync`：`get_all`/`get_all_keyed`
+  （签名不可失败）对 async singleton/transient 以 typed `RdiError` payload panic；async
+  **scoped** 在 root provider 上会被严格 scope 校验静默省略（在 `Scope` 内枚举才 panic）；
+  `get_all_any_result` / `Vec<Arc<T>>` 注入对任何未初始化 async 服务返回 `Err`。
+  async scoped/transient 请用 `get_async` 逐项解析。
+- **字符串 key 易错点**：`ServiceKey::new("x")` 是 `&str` typed key，与
+  `keyed_singleton("x", …)` 存储的 `String` key **不相等**。字符串键请用 `"x".into()` /
+  `ServiceKey::from("x")`；`ServiceKey::new` 只用于有意使用 typed（`&'static str` / enum /
+  整数）键的场景。
+- **`AsyncFactoryContext`（跨任务异步环检测）**：
+  `ServiceProvider::async_context()` / `Scope::async_context()` 返回可 `Clone` 的句柄
+  （`get_async`、`get_keyed_async`、`provider()`）。在 async 工厂内捕获后 clone 进
+  `tokio::spawn` 等任务，自/交叉环会返回 `RdiError::CircularDependency` 而不是死锁。
+  async 环检测升级为**链式**：`get_async`/`get_keyed_async` 返回的 future 在构造时捕获当前
+  解析链（`.await` 用法不变），覆盖自引用/交叉递归与 ctx 跨任务递归，且不误报合法并发。
+- **诊断**：`RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service }`
+  （build 期同步 singleton 依赖 async 服务）、
+  `RdiError::AsyncServiceRequiresGetAsync { service }`（同步解析 async 服务）、
+  `RdiError::is_circular()`（识别直接 `CircularDependency` 与 `FactoryPanic` payload 中
+  包裹的环）。`is_circular()` 是**启发式**（`FactoryPanic` payload 含该文本也会命中，
+  用户自定义 payload 可能误判）；需要精确错误形态时优先匹配 typed 变体。
+- **工程/安全基线**：MSRV **1.95**（`Cargo.toml` 的 `rust-version`，CI 实测）；新增 CI
+  workflow（`.github/workflows/ci.yml`）：ubuntu + windows × Rust 1.95/stable 跑测试，
+  stable 跑 fmt / clippy `-D warnings` / rustdoc `-D warnings`，另有 RustSec `cargo audit`
+  job；两个 crate 均 `#![forbid(unsafe_code)]`；新增 `SECURITY.md`（漏洞上报、支持版本、
+  安全设计与边界）。
+
+#### 变更
+- keyed API（`keyed_*` 注册、`get_keyed*`、`is_registered_keyed` 及 `Scope` /
+  `ServiceProviderWrapper` 同名方法）改为接受 `impl Into<ServiceKey>`；现有 `&str` /
+  `String` 调用源码兼容。若把 keyed API 当作函数指针或显式标注参数类型，可能需要调整。
+- `get_async` / `get_keyed_async` 由 `async fn` 改为返回 `impl Future`（在调用时捕获解析
+  链）；`.await` 用法不变。
+- async 环检测由"单次 poll"标记升级为**解析链**（含 `AsyncFactoryContext` 跨任务）；
+  自引用/交叉环仍返回 `CircularDependency`，合法并发仍不误报。
+- **`AnyKey` 兜底**引入"按 (服务注册/类型, 请求 key) 缓存"与"不参与 eager 初始化/枚举"语义。
+
+#### 修复
+- 同步 singleton 依赖 async 服务现在给出精确
+  `SyncSingletonDependsOnAsyncService` 诊断（而非泛化 panic/typed 错误），并提示把依赖方
+  改为 async 或在方法内用 `ScopeFactory` / `get_async` 延迟解析。
+- 同步解析未初始化的 async 服务现在报 `AsyncServiceRequiresGetAsync`（此前文档常写成
+  `AsyncServiceRequiresBuildAsync`）；含 async 注册的集合调用 `build()` 仍报
+  `AsyncServiceRequiresBuildAsync`。
+- 跨任务 async 依赖环不再依赖单 poll 标记：把 `AsyncFactoryContext` 传入脱离任务可获得
+  `CircularDependency`，而不是潜在死锁。
+
+#### 从 0.8.x 迁移
+- 典型代码源码兼容：字符串 keyed 调用与 `.await` 异步解析保持可用；按 MSRV 1.95 重新编译。
+- 若把 keyed API 作为函数指针传递或标注其参数类型，请按新的 `impl Into<ServiceKey>` 签名
+  调整。`RdiError` 仍为 `#[non_exhaustive]`，新变体无需改 match 结构。
+- 在脱离任务中解析服务的 async 工厂应捕获 `sp.async_context()` 并经 ctx 解析（否则跨任务环
+  仍可能死锁）。同步 singleton 不能依赖 async 服务；把依赖方改为 async 或延迟解析。
+
+#### 说明
+- **刻意未新增 `try_get_all` 系列**：API 面保持 `get_all` / `get_all_keyed`（签名不可失败，
+  对齐 MEDI 枚举语义），探测用 `get_optional` / `try_get` / `try_get_keyed`。增加可失败枚举
+  会与 `get_all` 重复且缺少清晰 MEDI 对应。
+
 ## [0.8.1] - 2026-11-11
 
 > **English** · **简体中文**
@@ -105,7 +320,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ServiceNotFound`).
 - Async Scoped/Transient resolution detects self/cross recursion per-poll and returns
   `RdiError::CircularDependency` instead of dead-locking on the per-key async cache lock;
-  legitimate concurrent resolution is not misreported.
+  legitimate concurrent resolution is not misreported. *(0.9.0 supersedes the per-poll
+  scheme with chain-based detection, including cross-task via `AsyncFactoryContext`.)*
 - New infallible trait helpers `IServiceResolver::try_get_any_result` /
   `try_get_keyed_any_result` (used by `try_get` / `try_get_keyed`, so strict-root scope
   violations and disposed containers return `None` instead of panicking); plus
@@ -187,7 +403,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   注册的服务，异步解析会回退到同步解析路径（此前返回 `ServiceNotFound`）。
 - **async 递归检测**：Scoped/Transient 的异步解析按"单次 poll"检测自引用/交叉递归，
   返回 `RdiError::CircularDependency`，而不是在 per-key async 缓存锁上死锁；合法的并发
-  解析不会被误报。
+  解析不会被误报。*（0.9.0 已升级为解析链检测，跨任务经 `AsyncFactoryContext`。）*
 - **新增不失败的 trait 辅助方法**：`IServiceResolver::try_get_any_result` /
   `try_get_keyed_any_result`（供 `try_get` / `try_get_keyed` 使用，使 strict-root
   scope 校验与已 dispose 容器返回 `None` 而不 panic）；以及 `get_all_keyed_any` /
@@ -484,6 +700,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.9.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.9.0
 [0.8.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.0
 [0.7.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.1

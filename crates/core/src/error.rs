@@ -31,6 +31,24 @@ pub enum RdiError {
         "async service '{service}' cannot be built with build(); use ServiceCollection::build_async() instead"
     )]
     AsyncServiceRequiresBuildAsync { service: String },
+    #[error(
+        "async service '{service}' must be resolved with get_async()/get_keyed_async(); \
+         synchronous resolution is not available before its async initialization completes"
+    )]
+    AsyncServiceRequiresGetAsync { service: String },
+    /// 同步 singleton 依赖 async singleton（build 期检测）。
+    ///
+    /// 同步构造函数无法 `await`，因此该依赖方向在架构上不成立：请把依赖方也改为
+    /// async singleton，或在方法内用 `ScopeFactory` / `get_async` 延迟解析。
+    #[error(
+        "synchronous singleton '{singleton}' depends on async service '{async_service}': \
+         a sync constructor cannot await; make '{singleton}' an async singleton or resolve \
+         '{async_service}' lazily in a method (ScopeFactory / get_async)"
+    )]
+    SyncSingletonDependsOnAsyncService {
+        singleton: String,
+        async_service: String,
+    },
     /// 严格 scope 校验下从 root provider 解析 Scoped 服务。
     ///
     /// 等价于 MEDI `ValidateScopes` 的
@@ -75,6 +93,22 @@ impl RdiError {
     pub fn scoped_from_root(service: &'static str) -> Self {
         Self::ScopedFromRootProvider {
             service: service.to_string(),
+        }
+    }
+
+    /// Whether this error (or a wrapping [`FactoryPanic`](Self::FactoryPanic))
+    /// represents a dependency cycle.
+    ///
+    /// When a user factory `unwrap()`s a nested `CircularDependency`, the
+    /// top-level build error is a `FactoryPanic` whose payload contains the
+    /// `CircularDependency` rendering. This helper is a **heuristic**: it also
+    /// matches a `FactoryPanic` whose (user-provided) payload happens to contain
+    /// that text. Prefer matching the typed variants directly when available.
+    pub fn is_circular(&self) -> bool {
+        match self {
+            Self::CircularDependency(_) => true,
+            Self::FactoryPanic { payload, .. } => payload.contains("CircularDependency"),
+            _ => false,
         }
     }
 

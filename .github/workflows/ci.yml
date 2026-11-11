@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        rust: ["1.95", stable]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - name: Formatting
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Documentation (deny warnings)
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
+      - name: Test workspace
+        run: cargo test --workspace
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run RustSec audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

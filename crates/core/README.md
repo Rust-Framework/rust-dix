@@ -19,8 +19,11 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dix = "0.8"
+rust-dix = "0.9"
 ```
+
+> **MSRV**: Rust **1.95**. Both crates are `#![forbid(unsafe_code)]`; CI runs a
+> test matrix plus RustSec `cargo audit`. See `SECURITY.md` at the repository root.
 
 ---
 
@@ -92,7 +95,8 @@ let provider = ServiceCollection::new()
 **4. You want multiple instances of the same type**
 
 Keyed services let you register several implementations of the same trait,
-each distinguished by a string key. All three lifetimes are supported:
+each distinguished by a key — a string or a typed `ServiceKey` value. All three
+lifetimes are supported:
 
 ```rust
 // Keyed with different lifetimes
@@ -103,13 +107,16 @@ let provider = ServiceCollection::new()
     .keyed_scoped::<dyn Strategy>("session", |_| Arc::new(SessionStrategy))
     // Transient keyed - new instance each time
     .keyed_transient::<dyn Strategy>("fresh", |_| Arc::new(FreshStrategy))
+    // AnyKey fallback: used when no exact key is registered (cached per (registration, requested key))
+    .keyed_any_singleton::<dyn Strategy>(|_, _key| Arc::new(DefaultStrategy))
     .build()
     .unwrap();
 
 let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
-	let session: Arc<dyn Strategy> = provider.scope().get_keyed("session").unwrap();
-	let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();
-	let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // different instance
+let session: Arc<dyn Strategy> = provider.scope().get_keyed("session").unwrap();
+let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();
+let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // different instance
+// Typed keys work too: provider.get_keyed(ServiceKey::new(StrategyKey::Fast))
 ```
 
 **5. You are building a plugin / modular system**
@@ -134,9 +141,12 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 | `.singleton(f)` | Singleton | You need exactly one instance shared globally |
 | `.scoped(f)` | Scoped | You need one instance per scope (request/transaction) |
 | `.transient(f)` | Transient | You need a new instance every time |
-| `.keyed_singleton(k, f)` | Singleton | Multiple named instances (strategy pattern) |
-| `.keyed_scoped(k, f)` | Scoped | Named instances scoped per request |
-| `.keyed_transient(k, f)` | Transient | Named instances created fresh each time |
+| `.keyed_singleton(k, f)` | Singleton | Multiple keyed instances (strategy pattern); `k: impl Into<ServiceKey>` |
+| `.keyed_scoped(k, f)` | Scoped | Keyed instances scoped per request |
+| `.keyed_transient(k, f)` | Transient | Keyed instances created fresh each time |
+| `.keyed_any_singleton(f)` | Singleton | `AnyKey` fallback (MEDI parity); `f: Fn(&dyn IServiceResolver, &ServiceKey) -> Arc<T>`, cached per (registration, requested key) |
+| `.keyed_any_scoped(f)` | Scoped | `AnyKey` fallback, one instance per scope per (registration, requested key) |
+| `.keyed_any_transient(f)` | Transient | `AnyKey` fallback, fresh per resolution |
 | `.instance(arc)` | Singleton | You already have a built `Arc<T>` |
 | `.try_add(f)` | Singleton | Only register if not already present (MEDI `TryAdd`) |
 | `.try_add_scoped(f)` | Scoped | Only register if not already present |
@@ -146,6 +156,61 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 | `.build()` | — | Build the provider with default (strict) scope validation |
 | `.build_with(options)` | — | Build with explicit `ServiceProviderOptions` (`lenient()` restores 0.7.x root-scope behavior) |
 | `.build_async()` / `.build_async_with(options)` | — | Async build; required when any `async_*` registration exists |
+
+#### Typed keys (`ServiceKey`) and `AnyKey` fallback
+
+Keyed APIs accept `impl Into<ServiceKey>`: strings (`&str` / `String`) keep working, and
+`ServiceKey::new(value)` supports enum/integer/custom keys. Key equality includes the
+value's type — `ServiceKey::new(1u32) != ServiceKey::from("1")`. **String-key footgun**:
+`ServiceKey::new("x")` is a `&str`-typed key and is *not* equal to the `String` key stored
+by `keyed_singleton("x", …)`; use `"x".into()` / `ServiceKey::from("x")` for string keys
+and `ServiceKey::new` only for typed (`&'static str` / enum / integer) keys.
+
+```rust
+use rust_dix::*;
+use std::sync::Arc;
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum DbKey { Read, Write }
+
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IDbConnection>(ServiceKey::new(DbKey::Read), |_| Arc::new(ReadPool))
+    .keyed_any_singleton::<dyn IDbConnection>(|_, key| {
+        // `key` is the requested ServiceKey (exact keys win over this fallback).
+        Arc::new(Pool::connect(&format!("{key:?}")))
+    })
+    .build()
+    .unwrap();
+
+let read: Arc<dyn IDbConnection> = provider.get_keyed(ServiceKey::new(DbKey::Read)).unwrap();
+```
+
+`AnyKey` semantics (MEDI `KeyedService.AnyKey` parity):
+- exact-key registrations take precedence over the fallback;
+- singleton/scoped fallback instances are cached **per (registration/type, requested
+  key)** — different `AnyKey` registrations stay independent even for the same requested
+  key; scoped: per scope per (registration, key). Transient creates a fresh instance per
+  resolution;
+- `get_all_keyed` returns explicit keys only — the fallback is excluded;
+- resolving a single service **with** the any-key sentinel is invalid
+  (`get_keyed(ServiceKey::any_key())` → `Err`; `KeyedService::any_key()` is the same
+  sentinel; `is_registered_keyed(any_key())` → `false`);
+- `AnyKey` registrations are sync-only (async resolution falls back to the sync path),
+  are not eagerly initialized/validated at build (they need a requested key), and a
+  scoped fallback captured by a sync singleton is still a captive dependency. During
+  build-time validation a sync singleton factory may resolve an `AnyKey` dependency by
+  passing the requested key via `get_keyed_any`;
+- a singleton fallback consumed during build-time validation is **written into the
+  (registration, requested key) cache**, so runtime resolution with the same registration
+  + key reuses the same instance (single initialization; multiple consumers share one
+  construction — no double construction);
+- `get_keyed_owned` / `try_get_keyed_owned` for an `AnyKey` **scoped/transient** fallback
+  is allowed at the strict root (same caller-owned exception as exact-key owned; not
+  cached/tracked, transitive dependencies still validated);
+- an `AnyKey` factory may nested-resolve a **different** requested key (legal); only
+  re-entering the same registration with the same requested key is a cycle;
+- the factory receives `&ServiceKey` with `Debug` / `Display` / `Eq` / `Hash`; there is
+  intentionally **no** typed downcast accessor (the erased representation is private).
 
 The factory closure `f` receives `&dyn IServiceResolver`. Generic `get::<T>()`
 requires `Self: Sized`, so it cannot be called on that trait object: let the
@@ -232,28 +297,47 @@ For trait-oriented services (handlers, services, repositories), prefer
 |--------|---------|----------|
 | `.get::<T>()` | `Result<Arc<T>, RdiError>` | Returns Err if not registered; **last registration wins** |
 | `.get_optional::<T>()` | `Option<Arc<T>>` | Returns `None` if not registered |
-| `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | Returns Err if key not found; use `.unwrap()` for required keys |
-| `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | Returns `None` if key not found |
+| `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | `key: impl Into<ServiceKey>`; exact key wins over an `AnyKey` fallback; `any_key()` is not a valid single-service key |
+| `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | Returns `None` if key not found/unresolvable |
 | `.get_all::<T>()` | `Vec<Arc<T>>` | All **non-keyed** registrations, in registration order (keyed excluded) |
-| `.get_all_keyed::<T>()` | `Vec<Arc<T>>` | All **keyed** registrations of `T`, in registration order (0.8.0+) |
+| `.get_all_keyed::<T>()` | `Vec<Arc<T>>` | All **explicitly keyed** registrations of `T`, in registration order (`AnyKey` fallbacks excluded) |
 | `.get_named::<T>(name)` | `Option<Arc<T>>` | Named resolution (cross-DLL), returns `None` if missing |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | Named, returns `None` if missing |
 | `.get_owned::<T>()` | `Result<T, RdiError>` | Owned instance; Singleton returns Err; **Scoped is allowed from the root** (caller-owned, never cached — its Scoped dependencies still obey scope validation) |
 | `.try_get_owned::<T>()` | `Option<T>` | `None` if unregistered or Singleton |
 | `.get_keyed_owned::<T>(key)` | `Result<T, RdiError>` | Owned keyed instance; Singleton returns Err |
 | `.is_registered::<T>()` | `bool` | Whether `T` has a non-keyed registration (does not instantiate) |
-| `.is_registered_keyed::<T>(key)` | `bool` | Whether `T` is registered under `key` |
+| `.is_registered_keyed::<T>(key)` | `bool` | Whether `T` has an exact keyed registration or an `AnyKey` fallback (`any_key()` → `false`) |
 | `.scope()` | `Scope` | New scope for scoped services |
+| `.async_context()` | `Option<AsyncFactoryContext>` | Capture the current async chain for detached tasks (cross-task cycle detection) |
 | `.dispose()` | `()` | Idempotent; releases instances in reverse creation order, later resolution returns `Err(ProviderDisposed)` (0.8.0+) |
 
-> **0.8.x semantics**: single-service resolution is MEDI-style "last registration
-> wins"; `get_all` is unkeyed-only (use `get_all_keyed` for keyed); and scope
-> validation is **strict by default** — resolving a Scoped service from the root
-> provider returns `Err(RdiError::ScopedFromRootProvider)` (the exception is
-> `get_owned` / `try_get_owned`: the owned instance is caller-owned and not cached,
-> while its Scoped dependencies still obey validation).
+> **0.9.x semantics**: single-service resolution is MEDI-style "last registration
+> wins"; `get_all` is unkeyed-only (`get_all_keyed` lists explicit keyed registrations
+> only); keys may be typed; and scope validation is **strict by default** — resolving a
+> Scoped service from the root provider returns `Err(RdiError::ScopedFromRootProvider)`
+> (the exception is `get_owned` / `try_get_owned`: the owned instance is caller-owned and
+> not cached, while its Scoped dependencies still obey validation).
 > Build with `build_with(ServiceProviderOptions::lenient())` to keep the 0.7.x
 > root-scope behavior. See the [MEDI differences page](../../docs/rust-dix/01-introduction/medi-differences.md).
+
+> **Enumeration and async**: `get_all` / `get_all_keyed` / `#[inject] Vec<Arc<T>>` include
+> **already-initialized** async singletons. Synchronously enumerating an uninitialized
+> async singleton/transient yields `RdiError::AsyncServiceRequiresGetAsync` (the
+> infallible `get_all` / `get_all_keyed` panic with a typed `RdiError` payload); an async
+> **scoped** service enumerated at the root is omitted by strict scope validation (it
+> panics only inside a `Scope`), while `get_all_any_result` / `Vec<Arc<T>>` injection
+> return `Err` for any uninitialized async service. Resolve async scoped/transient
+> services item by item with `get_async`.
+
+#### Diagnostics
+
+| Error | When |
+|-------|------|
+| `RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service }` | a sync singleton depends on an async service (build time); make the dependent async or resolve lazily |
+| `RdiError::AsyncServiceRequiresGetAsync { service }` | synchronous `get` of an async service (`get_optional` returns `None`), or synchronous enumeration of an uninitialized async service; use `get_async` |
+| `RdiError::AsyncServiceRequiresBuildAsync { service }` | `build()` used on a collection containing `async_*` registrations; use `build_async()` |
+| `RdiError::is_circular()` | **heuristic** helper: `true` for a direct `CircularDependency` or a `FactoryPanic` payload containing `CircularDependency` (custom payloads may false-positive; prefer matching the typed variant) |
 
 `T` can be a concrete type or `dyn Trait`:
 
@@ -357,9 +441,9 @@ loading), use `build_async()` and the `async_*` registration methods.
 | `.async_singleton(f)` | Singleton | Async init, shared globally (DB pool, Redis) |
 | `.async_scoped(f)` | Scoped | Async init, per scope (request-scoped resources) |
 | `.async_transient(f)` | Transient | Async init, fresh each time |
-| `.async_keyed_singleton(k, f)` | Singleton keyed | Async init, named instance |
-| `.async_keyed_scoped(k, f)` | Scoped keyed | Async init, per-scope named instance |
-| `.async_keyed_transient(k, f)` | Transient keyed | Async init, fresh named instance |
+| `.async_keyed_singleton(k, f)` | Singleton keyed | Async init, keyed instance (`k: impl Into<ServiceKey>`) |
+| `.async_keyed_scoped(k, f)` | Scoped keyed | Async init, per-scope keyed instance |
+| `.async_keyed_transient(k, f)` | Transient keyed | Async init, fresh keyed instance |
 
 The async factory receives `Arc<ServiceProvider>` and returns a pinned future:
 
@@ -379,7 +463,9 @@ let provider = ServiceCollection::new()
 
 #### Resolution
 
-Use `get_async()` / `get_keyed_async()` when resolving async-registered services:
+Use `get_async()` / `get_keyed_async()` when resolving async-registered services
+(both accept string or typed `ServiceKey` keys and return `impl Future`; `.await` usage is
+unchanged):
 
 ```rust
 let pool: Arc<DbPool> = provider.get_async().await.unwrap();
@@ -388,13 +474,45 @@ let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await
 
 For sync-registered services you can use either `get()` or `get_async()`: `get_async()`
 falls back to the synchronous resolution path for services registered with the sync
-`scoped` / `transient` builders (0.8.0+). Async registration (`async_*`) is only needed
-for services that require **asynchronous initialization**.
+`scoped` / `transient` builders. Async registration (`async_*`) is only needed
+for services that require **asynchronous initialization**. Synchronous `get` of an
+async service reports `RdiError::AsyncServiceRequiresGetAsync`; `AnyKey` fallbacks are
+sync-only and are also resolved through the synchronous path.
 
-Async singleton initialization is **dependency-first and registration-order independent**
-(0.8.1+): a factory may `await` any async singleton, and `build_async()` recursively
+Async singleton initialization is **dependency-first and registration-order independent**:
+a factory may `await` any async singleton, and `build_async()` recursively
 initializes dependencies first (deterministic dependency-first topological order, eager and
-fail-fast). Dependency cycles return `RdiError::CircularDependency` instead of dead-locking.
+fail-fast). A sync singleton depending on an async service is rejected at build time with
+`RdiError::SyncSingletonDependsOnAsyncService` — make the dependent async or resolve
+lazily.
+
+#### Cross-task cycle detection (`AsyncFactoryContext`)
+
+Async cycle detection is chain-based: each resolution future captures the current chain
+when constructed, so self/cross recursion returns `RdiError::CircularDependency`. For
+detached tasks, capture `sp.async_context()` inside the factory and resolve through the
+cloned context; without the context a fully detached task may still dead-lock:
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|sp| Box::pin(async move {
+        let ctx = sp.async_context().expect("built provider");
+        let dep = tokio::spawn({
+            let ctx = ctx.clone();
+            async move { ctx.get_async::<DbPool>().await }
+        })
+        .await
+        .expect("task")
+        .expect("DbPool must resolve");
+        Arc::new(Service { dep })
+    }))
+    .build_async()
+    .await
+    .unwrap();
+```
+
+`AsyncFactoryContext` exposes `get_async`, `get_keyed_async` and `provider()`, is `Clone`,
+and can also be obtained from a `Scope` (`scope.async_context()`).
 
 #### Mixing sync and async
 

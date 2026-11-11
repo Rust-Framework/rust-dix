@@ -96,10 +96,13 @@ composition_root/   # 组合根：基础设施配置
 
 ## 版本说明
 
-本书基于 rust-dix **0.8.1** 版本编写。0.8.x 的核心语义（单服务解析最后注册优先、
-`get_all` 不含 keyed、默认严格 scope 校验、确定性 dispose）已同步到全书；**0.8.1** 为
-patch：async singleton 初始化改为**依赖驱动、注册顺序无关**（有环返回
-`CircularDependency`，不 hang），无 API 变更。与 MEDI 的逐条差异见
+本书基于 rust-dix **0.9.0** 版本编写。0.9.0 新增：**类型化 keyed 键**（`ServiceKey`）、
+**`AnyKey` 兜底注册**（对齐 MEDI `KeyedService.AnyKey`）、**`AsyncFactoryContext`**
+（跨任务异步环检测，环检测升级为解析链）、精确诊断
+（`SyncSingletonDependsOnAsyncService` / `AsyncServiceRequiresGetAsync` / `RdiError::is_circular()`），
+并将 MSRV 提升到 **1.95**、CI 增加测试矩阵与 RustSec `cargo audit`、提供 `SECURITY.md`。
+0.8.x 的核心语义（最后注册优先、`get_all` 不含 keyed、严格 scope 校验、确定性 dispose）
+继续有效。与 MEDI 的逐条差异见
 [与 MEDI 的差异清单](01-introduction/medi-differences.md)。
 
 ---

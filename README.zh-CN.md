@@ -29,7 +29,7 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 ```toml
 [dependencies]
-rust-dix = "0.8"
+rust-dix = "0.9"
 ```
 
 ### 同步应用
@@ -79,33 +79,42 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | `#[derive(Inject)]` | 结构体构造函数注入的派生宏 |
 | `#[rust_dix::module]` | 通过 `register!(...)` 实现编译期模块扫描 |
 | **三种生命周期** | Singleton、Scoped、Transient |
-| **键控服务** | 同一 trait 可通过字符串键注册多个实现 |
+| **键控服务** | 同一 trait 可通过字符串键或**类型化键**（`ServiceKey`）注册多个实现 |
+| **`AnyKey` 兜底** | `keyed_any_singleton` / `keyed_any_scoped` / `keyed_any_transient`：对齐 MEDI `KeyedService.AnyKey`，按 (服务注册/类型, 请求 key) 缓存 |
 | **异步支持** | `build_async()` + `async_*` 注册，用于需要异步初始化的服务 |
+| **异步上下文** | `provider.async_context()` 把解析链传入 spawn 任务 → 跨任务环检测 |
+| **精确诊断** | `SyncSingletonDependsOnAsyncService`、`AsyncServiceRequiresGetAsync`、`RdiError::is_circular()` |
 | **构建期校验** | 循环依赖检测、受控依赖（captive dependency）拒绝、构造期解析拒绝 |
 | **容器注入** | `#[inject(provider)]`、`Arc<dyn ScopeFactory>`、`Arc<ServiceProvider>` —— eager singleton 与懒解析服务均可用 |
 | **跨 DLL 支持** | 面向 cdylib 插件系统的具名服务注册表 |
 | **分层容器** | 通过 `ServiceProviderWrapper` 实现子容器优先解析 |
 | **拥有式解析** | `get_owned::<T>()` 为 `&mut self` 返回拥有型 `T` —— 无需内部可变性 |
 | **确定性释放** | `Scope::dispose()` / `ServiceProvider::dispose()` 按创建逆序释放实例 |
+| **内存安全** | 两个 crate 均 `#![forbid(unsafe_code)]`；MSRV **1.95**；CI matrix + RustSec `cargo audit`；见 [SECURITY.md](SECURITY.md) |
 
-## 容器语义（0.8.x）
+## 容器语义（0.9.x）
 
-rust-dix 0.8.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下是最容易踩坑的语义规则：
+rust-dix 0.9.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下是最容易踩坑的语义规则：
 
 | 规则 | 行为 |
 |------|------|
 | **最后注册优先** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 返回该服务**最后注册**的实现（keyed 同 key 也是后注册生效）。`try_add*` 仍是"未注册才添加"。 |
-| **`get_all` 不含 keyed** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册，按注册顺序。keyed 实现用新增的 `get_all_keyed::<T>()`。 |
+| **类型化键与 `AnyKey`** | keyed API 接受 `impl Into<ServiceKey>`；`ServiceKey::new(value)` 支持 enum/整数键（`ServiceKey::new(1u32) != "1"`）。精确 key 注册优先；`keyed_any_*` 兜底覆盖其它 key 并按 (服务注册/类型, 请求 key) 缓存。`get_all_keyed()` 不含兜底，且用 `ServiceKey::any_key()` 做单值解析非法。 |
+| **`get_all` 不含 keyed** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册，按注册顺序。keyed 实现用 `get_all_keyed::<T>()`（仅显式 key，不含 AnyKey 兜底）。两者都包含**已初始化**的 async singleton；同步枚举**未初始化**的 async singleton/transient 返回/触发 `AsyncServiceRequiresGetAsync`（`get_all` 以 typed payload panic；`Vec` 注入返回 `Err`）；async **scoped** 在 root 上会被严格 scope 校验静默省略（在 `Scope` 内枚举才 panic）。 |
 | **默认严格 scope 校验** | 从 root `ServiceProvider` 解析 Scoped 服务（直接、或经 Transient 链间接）返回 `Err(RdiError::ScopedFromRootProvider)`；应在 `provider.scope()` 内解析 Scoped。不可返回错误的 API（`get_optional`、`get_all`、`get_all_keyed`、`try_*`）把该服务视为不可解析（`None`/空）。**例外**：`get_owned` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped —— 实例归调用方、不进缓存/不被跟踪；但其构造函数内部解析的 Scoped 依赖仍受校验。 |
 | **回到 0.7.x 的 root-scope 行为** | `build_with(ServiceProviderOptions::lenient())`（即 `validate_scopes: false`）允许 root 解析 Scoped 并缓存为根内单例。 |
 | **dispose 契约** | `Scope::dispose()` / Drop 按**创建逆序**释放 scope 内实例，再按**注册逆序**执行清理闭包；之后解析返回 `Err(RdiError::ScopeDisposed)`。`ServiceProvider::dispose()` 对 singleton 与 root scoped 实例做同样处理、清空 named 注册，之后解析返回 `Err(RdiError::ProviderDisposed)`。两者均幂等。 |
-| **确定性构建顺序** | build 期**同步 singleton 按注册顺序创建**、**async singleton 按依赖优先拓扑序递归初始化**（0.8.1+），两者均确定、不依赖 `HashMap` 迭代顺序；构建与释放顺序可复现。 |
+| **确定性构建顺序** | build 期**同步 singleton 按注册顺序创建**、**async singleton 按依赖优先拓扑序递归初始化**，两者均确定、不依赖 `HashMap` 迭代顺序；构建与释放顺序可复现。 |
+| **async 环检测** | 无上下文的自引用/交叉递归按解析链检测；跨任务请把 `sp.async_context()` 捕获后 clone 进 spawned task 并经 ctx 解析——有环返回 `CircularDependency` 而不是死锁。 |
+| **async 依赖方向** | 同步 singleton 不能依赖 async 服务（build 期 `SyncSingletonDependsOnAsyncService`）；用 `get_async` 解析 async 服务，并让依赖方也保持 async。 |
 | **构造期解析被拒绝** | 在 build 期构造函数内通过注入的 provider 解析服务会返回类型化 `FactoryPanic`；请保存句柄、在方法中延迟解析。 |
 
-0.8.0 新增：`ServiceProviderOptions`（`validate_scopes`、`with_validate_scopes`、`lenient`）、
-`build_with` / `build_async_with`、`is_registered::<T>()` / `is_registered_keyed::<T>(key)`、
-`get_all_keyed::<T>()`、`RdiError::{ScopedFromRootProvider, ProviderDisposed, ScopeDisposed}`。
-与 MEDI 的逐条差异见
+0.9.0 新增：`ServiceKey` / `KeyedService::any_key()`（类型化键 + `AnyKey` 兜底）、
+`keyed_any_*` 注册、`AsyncFactoryContext`（`provider.async_context()`）、
+`RdiError::{SyncSingletonDependsOnAsyncService, AsyncServiceRequiresGetAsync}` 与
+`is_circular()`（**启发式**；需要精确形态时优先匹配 typed 变体）、MSRV 1.95、
+`#![forbid(unsafe_code)]`、CI matrix + RustSec audit 与
+[SECURITY.md](SECURITY.md)。与 MEDI 的逐条差异见
 [docs/rust-dix/01-introduction/medi-differences.md](docs/rust-dix/01-introduction/medi-differences.md)。
 
 ## 什么时候应该使用 rust-dix？
@@ -176,7 +185,8 @@ for channel in all.iter().chain(keyed.iter()) {
 
 ### 键控服务：运行时策略路由
 
-键控服务让你可以在运行时按名称选择实现 —— 这正是策略（Strategy）模式的基础。
+键控服务让你可以在运行时按 key（字符串或类型化 `ServiceKey` 值）选择实现 —— 这正是
+策略（Strategy）模式的基础。
 
 **注册端：**
 
@@ -225,6 +235,94 @@ impl OrderService {
         gateway.charge(amount).unwrap();
     }
 }
+```
+
+#### 类型化键（`ServiceKey`）
+
+keyed API 接受 `impl Into<ServiceKey>`，因此除字符串外还可用 enum/整数等类型化键
+（字符串调用源码兼容）。键相等包含值的类型。**字符串键易错点**：`ServiceKey::new("x")`
+是 `&str` typed key，与 `keyed_singleton("x", …)` 存储的 `String` key **不相等**；
+字符串键请用 `"x".into()` / `ServiceKey::from("x")`。
+
+```rust
+use rust_dix::*;
+use std::sync::Arc;
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum DbKey { Read, Write }
+
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IDbConnection>(ServiceKey::new(DbKey::Read), |_| Arc::new(ReadPool))
+    .keyed_singleton::<dyn IDbConnection>(ServiceKey::new(DbKey::Write), |_| Arc::new(WritePool))
+    .build()
+    .unwrap();
+
+let read: Arc<dyn IDbConnection> =
+    provider.get_keyed(ServiceKey::new(DbKey::Read)).unwrap();
+
+// 值的类型参与比较：1u32 不是字符串 "1"。
+assert!(!provider.is_registered_keyed::<dyn IDbConnection>(ServiceKey::new(1u32)));
+assert!(provider.get_keyed::<dyn IDbConnection>(ServiceKey::from("1")).is_err());
+```
+
+#### `AnyKey` 兜底（对齐 MEDI `KeyedService.AnyKey`）
+
+`keyed_any_*` 注册一个"无精确 key 时使用"的兜底实现；工厂接收被请求的 key，且
+singleton/scoped 兜底实例**按 (服务注册/类型, 请求 key) 分别缓存**——同一注册 + 同一 key 复用
+同一实例，不同 key 或不同 AnyKey 注册各自独立（scoped：每 scope 每 (注册, key) 一份）：
+
+```rust
+let provider = ServiceCollection::new()
+    // 精确 key 优先
+    .keyed_singleton::<dyn IDbConnection>("admin", |_| Arc::new(AdminPool))
+    // 其它 key 使用兜底；`key` 是请求的 ServiceKey
+    .keyed_any_singleton::<dyn IDbConnection>(|_, key| {
+        // `key: &ServiceKey` —— 可用于选择/记录租户
+        Arc::new(Pool::connect(&format!("{key:?}")))
+    })
+    .build()
+    .unwrap();
+
+let admin: Arc<dyn IDbConnection> = provider.get_keyed("admin").unwrap();   // 精确
+let t1: Arc<dyn IDbConnection> = provider.get_keyed("tenant-1").unwrap();  // 兜底，按注册+key 缓存
+let t1_again = provider.get_keyed::<dyn IDbConnection>("tenant-1").unwrap();
+assert!(Arc::ptr_eq(&t1, &t1_again));
+
+// AnyKey 兜底不进入 get_all_keyed；哨兵本身不能做单值解析：
+assert!(provider.get_keyed::<dyn IDbConnection>(ServiceKey::any_key()).is_err());
+let explicit = provider.get_all_keyed::<dyn IDbConnection>(); // 只有 "admin"
+```
+
+> `keyed_any_*` 仅支持同步注册（异步解析会回退同步路径）；build 期不做 eager 初始化/
+> 单独校验（需要请求 key）；`keyed_any_scoped` 被同步 singleton 依赖时仍会按 captive
+> dependency 拒绝。build 期被同步 singleton 按某请求 key 解析的 AnyKey singleton 会写入
+> **(注册, 请求 key) 缓存**（运行时同一注册 + 同一 key 复用**同一实例**；多消费者共享一次
+> 构造）；`AnyKey` 的 scoped/transient 兜底支持
+> strict root 下的 `get_keyed_owned`（owned 例外）；工厂内嵌套解析**不同请求 key** 合法
+> （只有同一注册 + 同一 key 才是环）；`&ServiceKey` 无 typed downcast 访问器（用
+> `Debug`/`Display`/`Eq`/`Hash`，擦除表示私有）。
+
+#### 跨任务异步解析（`AsyncFactoryContext`）
+
+在 async 工厂内捕获 `sp.async_context()`，clone 进 spawned task，可让**跨任务**依赖环
+返回 `CircularDependency` 而不是死锁：
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|sp| Box::pin(async move {
+        let ctx = sp.async_context().expect("built provider");
+        let dep = tokio::spawn({
+            let ctx = ctx.clone();
+            async move { ctx.get_async::<DbPool>().await }
+        })
+        .await
+        .expect("task")
+        .expect("DbPool must resolve");
+        Arc::new(Service { dep })
+    }))
+    .build_async()
+    .await
+    .unwrap();
 ```
 
 容器注入在 **`build()` 期间**同样成立：eager singleton 可以持有 provider 或内置
@@ -468,6 +566,8 @@ async fn main() {
 - [crates/macros —— 过程宏文档](./crates/macros/README.md)
 - [与 MEDI 的差异清单（scope 校验、dispose、keyed、get_all）](docs/rust-dix/01-introduction/medi-differences.md) —— .NET 迁移必读
 - [业务场景教程](docs/rust-dix/08-best-practices/business-scenarios.md) —— 真实模式
+- [安全策略](./SECURITY.md) —— 漏洞上报、支持版本与安全边界
+- [变更日志](./CHANGELOG.md) —— 发布历史
 - [集成测试](crates/core/tests/) —— 真实用法范例
 
 ## 许可证

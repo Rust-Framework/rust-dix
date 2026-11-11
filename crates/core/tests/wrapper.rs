@@ -95,6 +95,36 @@ fn wrapper_propagates_root_scope_validation_error() {
 }
 
 #[test]
+fn wrapper_keyed_owned_uses_original_key() {
+    #[derive(Debug, PartialEq, Eq, Hash)]
+    enum Kind {
+        A,
+    }
+    let root = ServiceCollection::new()
+        .keyed_transient("plain", |_| Arc::new(common::MyService { value: 1 }))
+        .keyed_transient(ServiceKey::new(Kind::A), |_| {
+            Arc::new(common::MyService { value: 2 })
+        })
+        .build()
+        .unwrap();
+    let child = ServiceCollection::new().build().unwrap();
+    let w = ServiceProviderWrapper::new(child, root);
+
+    assert_eq!(
+        w.get_keyed_owned::<common::MyService>("plain")
+            .unwrap()
+            .value,
+        1
+    );
+    assert_eq!(
+        w.get_keyed_owned::<common::MyService>(ServiceKey::new(Kind::A))
+            .unwrap()
+            .value,
+        2
+    );
+}
+
+#[test]
 fn wrapper_owned_resolution_child_first() {
     // Owned 解析：child 注册 Transient，wrapper.get_owned() 成功
     let root = ServiceCollection::new().build().unwrap();

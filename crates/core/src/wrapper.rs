@@ -34,11 +34,12 @@ impl ServiceProviderWrapper {
     }
     pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(
         &self,
-        key: &str,
+        key: impl Into<crate::key::ServiceKey>,
     ) -> Result<Arc<T>, RdiError> {
-        match self.child.get_keyed::<T>(key) {
+        let key = key.into();
+        match self.child.get_keyed::<T>(&key) {
             Ok(v) => Ok(v),
-            Err(RdiError::KeyedServiceNotFound { .. }) => self.root.get_keyed::<T>(key),
+            Err(RdiError::KeyedServiceNotFound { .. }) => self.root.get_keyed::<T>(&key),
             Err(err) => Err(err),
         }
     }
@@ -60,8 +61,12 @@ impl ServiceProviderWrapper {
         self.child.is_registered::<T>() || self.root.is_registered::<T>()
     }
     /// Whether `T` is registered under `key` in the child or the root.
-    pub fn is_registered_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> bool {
-        self.child.is_registered_keyed::<T>(key) || self.root.is_registered_keyed::<T>(key)
+    pub fn is_registered_keyed<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: impl Into<crate::key::ServiceKey>,
+    ) -> bool {
+        let key = key.into();
+        self.child.is_registered_keyed::<T>(&key) || self.root.is_registered_keyed::<T>(&key)
     }
     pub fn get_named<T: Send + Sync + 'static>(&self, name: &str) -> Option<Arc<T>> {
         self.child
@@ -92,27 +97,23 @@ impl ServiceProviderWrapper {
         Arc::try_unwrap(arc_t).ok()
     }
     /// Resolve owned keyed `T`. Child-first, root-fallback.
-    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Result<T, RdiError> {
-        let type_name = std::any::type_name::<T>();
-        self.try_get_keyed_owned::<T>(key)
-            .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))
+    pub fn get_keyed_owned<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<crate::key::ServiceKey>,
+    ) -> Result<T, RdiError> {
+        let key = key.into();
+        match self.child.get_keyed_owned::<T>(&key) {
+            Ok(value) => Ok(value),
+            Err(RdiError::KeyedServiceNotFound { .. }) => self.root.get_keyed_owned::<T>(&key),
+            Err(err) => Err(err),
+        }
     }
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
-    pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
-        let arc_any = IServiceResolver::get_keyed_owned_any(
-            self.child.as_ref(),
-            std::any::type_name::<T>(),
-            key,
-        )
-        .or_else(|| {
-            IServiceResolver::get_keyed_owned_any(
-                self.root.as_ref(),
-                std::any::type_name::<T>(),
-                key,
-            )
-        })?;
-        let arc_t = crate::provider::ServiceProvider::extract::<T>(arc_any)?;
-        Arc::try_unwrap(arc_t).ok()
+    pub fn try_get_keyed_owned<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<crate::key::ServiceKey>,
+    ) -> Option<T> {
+        self.get_keyed_owned(key).ok()
     }
 
     /// Resolve an async service by type. Child-first, root-fallback.
@@ -125,9 +126,10 @@ impl ServiceProviderWrapper {
     /// Resolve an async keyed service. Child-first, root-fallback.
     pub async fn get_keyed_async<T: ?Sized + Send + Sync + 'static>(
         &self,
-        key: &str,
+        key: impl Into<crate::key::ServiceKey> + Send,
     ) -> Result<Arc<T>, RdiError> {
-        match self.child.get_keyed_async::<T>(key).await {
+        let key = key.into();
+        match self.child.get_keyed_async::<T>(&key).await {
             Ok(svc) => Ok(svc),
             Err(_) => self.root.get_keyed_async::<T>(key).await,
         }

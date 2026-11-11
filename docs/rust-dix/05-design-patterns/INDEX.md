@@ -21,8 +21,8 @@
 
 | 设计模式 | rust-dix 实现 |
 |---------|-----------------|
-| 策略模式 | keyed + get_keyed |
-| 工厂模式 | 闭包工厂或 keyed 工厂 |
+| 策略模式 | keyed（字符串或类型化 `ServiceKey`）+ get_keyed |
+| 工厂模式 | 闭包工厂或 keyed 工厂；任意 key 场景用 `keyed_any_*` 兜底 |
 | 装饰器模式 | 工厂闭包链式包装 |
 | 观察者模式 | 非 keyed 多实现 + `get_all`（keyed 实现用 `get_all_keyed`） |
 | 责任链模式 | keyed + 配置驱动顺序 |
@@ -50,8 +50,9 @@ let last: Arc<dyn Handler> = provider.get().unwrap();
 let all: Vec<Arc<dyn Handler>> = provider.get_all();
 ```
 
-> keyed 服务（如策略/责任链处理器）不会出现在 `get_all` 中：按名称用 `get_keyed`，
-> 批量取全部 keyed 用 `get_all_keyed`。
+> keyed 服务（如策略/责任链处理器）不会出现在 `get_all` 中：按 key 用 `get_keyed`
+> （字符串或 `ServiceKey::new(enum)`），批量取显式 keyed 用 `get_all_keyed`（不含
+> `AnyKey` 兜底）。需要"任意 key 兜底"时用 `keyed_any_*`。
 
 ## 下一步
 

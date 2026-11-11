@@ -117,22 +117,24 @@ impl Scope {
 
     pub fn get_keyed<T: ?Sized + Send + Sync + 'static>(
         &self,
-        key: &str,
+        key: impl Into<crate::key::ServiceKey>,
     ) -> Result<Arc<T>, RdiError> {
         self.scope_provider.get_keyed::<T>(key)
     }
 
     /// Resolve an async service (transient or scoped) within this scope.
-    pub async fn get_async<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
-        self.scope_provider.get_async::<T>().await
+    pub fn get_async<T: ?Sized + Send + Sync + 'static>(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Arc<T>, RdiError>> + Send + '_ {
+        self.scope_provider.get_async::<T>()
     }
 
     /// Resolve an async keyed service within this scope.
-    pub async fn get_keyed_async<T: ?Sized + Send + Sync + 'static>(
+    pub fn get_keyed_async<T: ?Sized + Send + Sync + 'static>(
         &self,
-        key: &str,
-    ) -> Result<Arc<T>, RdiError> {
-        self.scope_provider.get_keyed_async::<T>(key).await
+        key: impl Into<crate::key::ServiceKey> + Send,
+    ) -> impl std::future::Future<Output = Result<Arc<T>, RdiError>> + Send + '_ {
+        self.scope_provider.get_keyed_async::<T>(key)
     }
 
     /// Resolve owned `T` within this scope (bypass cache, fresh each call).
@@ -148,12 +150,18 @@ impl Scope {
 
     /// Resolve owned keyed `T`.
     /// Returns `Err` if not found or Singleton.
-    pub fn get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Result<T, RdiError> {
+    pub fn get_keyed_owned<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<crate::key::ServiceKey>,
+    ) -> Result<T, RdiError> {
         self.scope_provider.get_keyed_owned::<T>(key)
     }
 
     /// Resolve owned keyed `T`, returning `None` if not found or Singleton.
-    pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
+    pub fn try_get_keyed_owned<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<crate::key::ServiceKey>,
+    ) -> Option<T> {
         self.scope_provider.try_get_keyed_owned::<T>(key)
     }
     /// Return all **unkeyed** registered instances (MEDI `GetServices<T>()`).
@@ -172,8 +180,18 @@ impl Scope {
     }
 
     /// Whether `T` has a registration under `key`.
-    pub fn is_registered_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> bool {
+    /// Whether `T` has a registration under `key` (exact or `AnyKey` fallback).
+    pub fn is_registered_keyed<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: impl Into<crate::key::ServiceKey>,
+    ) -> bool {
         self.scope_provider.is_registered_keyed::<T>(key)
+    }
+
+    /// Create an [`AsyncFactoryContext`](crate::AsyncFactoryContext) bound to
+    /// the current async resolution chain (for detached task propagation).
+    pub fn async_context(&self) -> Option<crate::AsyncFactoryContext> {
+        self.scope_provider.async_context()
     }
 
     pub fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {

@@ -1,6 +1,7 @@
 use crate::cache::LazyCache;
 use crate::entry::{IServiceResolver, ServiceEntry, ServiceLifetime, ServiceStore};
 use crate::error::RdiError;
+use crate::key::ServiceKey;
 use crate::provider::ServiceProvider;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -24,6 +25,15 @@ use std::sync::{Arc, Mutex, RwLock};
 /// Single-service lookups follow the runtime contract: **last registration
 /// wins** (MEDI semantics).
 ///
+/// A synchronous singleton factory cannot await an async service. When such a
+/// resolution is attempted during validation the resolver reports a precise
+/// [`RdiError::SyncSingletonDependsOnAsyncService`] instead of the generic
+/// async-build error.
+///
+/// `AnyKey` fallback registrations are not eagerly validated (they need a
+/// requested key); when a validated factory requests one, the keyed factory is
+/// executed for that key without being cached.
+///
 /// The `catch_unwind` in `validate_dependencies` only catches user factory
 /// panics (triggered by `None` returns from this resolver), not framework errors.
 pub(crate) struct ValidationResolver<'a> {
@@ -42,6 +52,8 @@ pub(crate) struct ValidationResolver<'a> {
     /// The provider being validated. Available to factories through
     /// `provider_arc()` / the built-in ScopeFactory.
     provider: Arc<ServiceProvider>,
+    /// The sync singleton currently being validated (for precise async diagnostics).
+    consumer: &'static str,
     /// Stores the first validation error (cycle or captive) encountered.
     /// Cleared by [`Self::take_error`] for consumption by the caller.
     last_error: Mutex<Option<RdiError>>,
@@ -53,6 +65,7 @@ impl<'a> ValidationResolver<'a> {
         type_names: &'a HashMap<TypeId, &'static str>,
         cache: &'a LazyCache,
         provider: Arc<ServiceProvider>,
+        consumer: &'static str,
     ) -> Self {
         Self {
             store,
@@ -61,6 +74,7 @@ impl<'a> ValidationResolver<'a> {
             type_names,
             cache,
             provider,
+            consumer,
             last_error: Mutex::new(None),
         }
     }
@@ -91,13 +105,19 @@ impl<'a> ValidationResolver<'a> {
         self.store.get(&tid)?.iter().rev().find(|e| e.key.is_none())
     }
 
-    /// Last registration for `tid` + `variant`.
-    fn keyed_entry(&self, tid: TypeId, variant: &str) -> Option<&ServiceEntry> {
-        self.store
-            .get(&tid)?
+    /// Last registration for `tid` + `key`; falls back to the `AnyKey` entry.
+    fn keyed_entry(&self, tid: TypeId, key: &ServiceKey) -> Option<&ServiceEntry> {
+        let entries = self.store.get(&tid)?;
+        entries
             .iter()
             .rev()
-            .find(|e| e.key.as_deref() == Some(variant))
+            .find(|e| e.key.as_ref() == Some(key))
+            .or_else(|| {
+                entries
+                    .iter()
+                    .rev()
+                    .find(|e| e.key.as_ref().is_some_and(ServiceKey::is_any))
+            })
     }
 
     fn tid_by_name(&self, key: &str) -> Option<TypeId> {
@@ -105,6 +125,19 @@ impl<'a> ValidationResolver<'a> {
             .iter()
             .find(|(_, name)| **name == key)
             .map(|(tid, _)| *tid)
+    }
+
+    /// Precisely report "sync singleton depends on async service" (including
+    /// transitive dependencies).
+    fn reject_async_dependency(&self, entry: &ServiceEntry) -> bool {
+        if entry.is_async() {
+            *self.last_error.lock().unwrap() = Some(RdiError::SyncSingletonDependsOnAsyncService {
+                singleton: self.consumer.to_string(),
+                async_service: entry.type_name.to_string(),
+            });
+            return true;
+        }
+        false
     }
 
     /// Captive dependency（囚徒依赖）检测。
@@ -200,9 +233,74 @@ impl<'a> ValidationResolver<'a> {
         Some(result)
     }
 
+    /// Resolve an `AnyKey` fallback entry for a concrete requested key.
+    ///
+    /// Captive-dependency checks use the validation stack; re-entrancy is
+    /// tracked per `(entry, requested key)` so nested resolution of a different
+    /// key is legitimate.
+    fn resolve_any_keyed(
+        &self,
+        entry: &ServiceEntry,
+        requested: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        if self.reject_async_dependency(entry) {
+            return None;
+        }
+        if self.check_captive_dependency(entry) {
+            return None;
+        }
+        // A sibling consumer may already have initialized this requested-key
+        // singleton during the same validation pass: reuse it (single
+        // initialization, identity preserved) instead of constructing another.
+        if entry.lifetime == ServiceLifetime::Singleton {
+            if let Some(cached) = self
+                .provider
+                .cached_any_singleton(entry.cache_key, requested)
+            {
+                return Some(cached);
+            }
+        }
+        let token = crate::provider::ResolveToken::AnyKey(entry.cache_key, requested.stable_hash());
+        let resolve_guard = match crate::provider::enter_resolve_token(token, entry.type_name) {
+            Ok(guard) => guard,
+            Err(err) => {
+                *self.last_error.lock().unwrap() = Some(err);
+                return None;
+            }
+        };
+        let factory = entry.keyed_factory.as_ref()?;
+        let result = {
+            let _build_guard = crate::provider::BuildFactoryGuard::enter();
+            (factory)(self as &dyn IServiceResolver, requested)
+        };
+        drop(resolve_guard);
+
+        // A singleton fallback consumed during validation must be cached so the
+        // runtime picks up the same instance (single initialization, identity).
+        if entry.lifetime == ServiceLifetime::Singleton {
+            self.provider
+                .prefill_any_keyed_singleton(entry.cache_key, requested, result.clone());
+        }
+        Some(result)
+    }
+
     /// Resolve an entry, consulting the cache first (singletons built earlier in
-    /// the validation pass).
-    fn resolve_entry_cached(&self, entry: &ServiceEntry) -> Option<Arc<dyn Any + Send + Sync>> {
+    /// the validation pass); `AnyKey` fallbacks are resolved for `requested`.
+    fn resolve_entry_for(
+        &self,
+        entry: &ServiceEntry,
+        requested: Option<&ServiceKey>,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        if entry.is_async() {
+            self.reject_async_dependency(entry);
+            return None;
+        }
+        if entry.is_any_key() {
+            return match requested {
+                Some(key) => self.resolve_any_keyed(entry, key),
+                None => None,
+            };
+        }
         if let Some(cached) = self.cache.get(entry.cache_key) {
             return Some(cached);
         }
@@ -218,7 +316,7 @@ impl<'a> ValidationResolver<'a> {
         &self,
         entry: &ServiceEntry,
     ) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.resolve_entry_cached(entry)
+        self.resolve_entry_for(entry, None)
     }
 }
 
@@ -226,10 +324,7 @@ impl IServiceResolver for ValidationResolver<'_> {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         if let Some(tid) = self.tid_by_name(key) {
             if let Some(entry) = self.unkeyed_entry(tid) {
-                if let Some(cached) = self.cache.get(entry.cache_key) {
-                    return Some(cached);
-                }
-                return self.resolve_via_factory(entry);
+                return self.resolve_entry_for(entry, None);
             }
         }
         // Built-in services available during validation too: eager singletons
@@ -248,8 +343,9 @@ impl IServiceResolver for ValidationResolver<'_> {
 
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let tid = self.tid_by_name(key)?;
-        let entry = self.keyed_entry(tid, variant)?;
-        self.resolve_entry_cached(entry)
+        let requested = ServiceKey::from(variant);
+        let entry = self.keyed_entry(tid, &requested)?;
+        self.resolve_entry_for(entry, Some(&requested))
     }
 
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
@@ -262,7 +358,7 @@ impl IServiceResolver for ValidationResolver<'_> {
         entries
             .iter()
             .filter(|e| e.key.is_none())
-            .filter_map(|entry| self.resolve_entry_cached(entry))
+            .filter_map(|entry| self.resolve_entry_for(entry, None))
             .collect()
     }
 
@@ -275,8 +371,8 @@ impl IServiceResolver for ValidationResolver<'_> {
         };
         entries
             .iter()
-            .filter(|e| e.key.is_some())
-            .filter_map(|entry| self.resolve_entry_cached(entry))
+            .filter(|e| e.key.is_some() && !e.is_any_key())
+            .filter_map(|entry| self.resolve_entry_for(entry, None))
             .collect()
     }
 
@@ -289,7 +385,7 @@ impl IServiceResolver for ValidationResolver<'_> {
             return Ok(out);
         };
         for entry in entries.iter().filter(|e| e.key.is_none()) {
-            match self.resolve_entry_cached(entry) {
+            match self.resolve_entry_for(entry, None) {
                 Some(v) => out.push(v),
                 None => {
                     return Err(self
@@ -304,20 +400,20 @@ impl IServiceResolver for ValidationResolver<'_> {
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let tid = self.tid_by_name(key)?;
         let entry = self.unkeyed_entry(tid)?;
-        // 与运行时一致：Singleton 不能 owned（create_owned_any_by_entry 返回 None）
         if entry.lifetime == ServiceLifetime::Singleton {
             return None;
         }
-        self.resolve_entry_cached(entry)
+        self.resolve_entry_for(entry, None)
     }
 
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         let tid = self.tid_by_name(key)?;
-        let entry = self.keyed_entry(tid, variant)?;
+        let requested = ServiceKey::from(variant);
+        let entry = self.keyed_entry(tid, &requested)?;
         if entry.lifetime == ServiceLifetime::Singleton {
             return None;
         }
-        self.resolve_entry_cached(entry)
+        self.resolve_entry_for(entry, Some(&requested))
     }
 
     /// The real container is available during validation: eager singletons that

@@ -2,6 +2,7 @@
 name = "rust-dix-macros"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Procedural macros for rust-dix — a Rust dependency injection framework"
 license.workspace = true
 repository.workspace = true

@@ -1,18 +1,23 @@
 # 生产环境部署检查清单
 
-> 适用于 `rust-dix` **v0.8.x**（0.8.0 起；当前 0.8.1）。基于源码静态分析 + 运行时行为验证编写。
-> 文中标注"0.8.0+"的条目是 0.8.0 新行为；0.8.1 为 patch（async singleton 初始化改为依赖驱动、
-> 注册顺序无关），无 API 变更；需要兼容 0.7.x 的地方会注明。
+> 适用于 `rust-dix` **v0.9.x**（当前 0.9.0）。基于源码静态分析 + 运行时行为验证编写。
+> 0.9.0 新增类型化 keyed 键 / `AnyKey` 兜底 / `AsyncFactoryContext`（跨任务环检测）/
+> 精确诊断，并把 async 环检测升级为解析链；MSRV **1.95**，两个 crate 均
+> `#![forbid(unsafe_code)]`，CI 含 RustSec `cargo audit`，安全策略见 `SECURITY.md`。
+> 需要兼容 0.7.x / 0.8.x 的地方会注明。
 
-## 0. 0.8.x 语义变更摘要（0.8.0 起；0.8.1 patch 见 §2.1；部署前必读）
+## 0. 0.9.x 语义变更摘要（0.8.0 起；0.9.0 新增项见下行标注；部署前必读）
 
 | 变更 | 生产影响 |
 |------|----------|
 | 单服务解析改为**最后注册优先**（MEDI 语义） | 覆盖关系依赖"先注册优先"的代码要调整注册顺序或用 `try_add*` |
-| `get_all` / `#[inject] Vec<Arc<T>>` **只含非 keyed** | 观察者/广播逻辑若依赖 keyed 实现，改用 `get_all_keyed` |
+| `get_all` / `#[inject] Vec<Arc<T>>` **只含非 keyed** | 观察者/广播逻辑若依赖 keyed 实现，改用 `get_all_keyed`（不含 AnyKey 兜底） |
 | 默认**严格 scope 校验** | root provider 解析 Scoped 返回 `Err(ScopedFromRootProvider)`；请求级服务必须在 `provider.scope()` 内解析；旧行为需显式 `ServiceProviderOptions::lenient()`。例外：`get_owned`/`try_get_owned` 可从 root 取 Scoped（owned 不缓存），其 Scoped 依赖仍受校验 |
 | 新增 `Scope::dispose()` / `ServiceProvider::dispose()` | Scope 逆序释放 Scoped 实例；provider 逆序释放 singleton/root scoped 并清空 named 注册；dispose 后解析分别返回 `ScopeDisposed` / `ProviderDisposed` |
-| 构建顺序确定 | **同步 singleton 按注册顺序创建；async singleton 按依赖优先拓扑序递归初始化（0.8.1+）**，两者均确定、不依赖 `HashMap` 迭代顺序；初始化/释放顺序可复现 |
+| 构建顺序确定 | **同步 singleton 按注册顺序创建；async singleton 按依赖优先拓扑序递归初始化**，两者均确定、不依赖 `HashMap` 迭代顺序；初始化/释放顺序可复现 |
+| **0.9.0：类型化键 / AnyKey** | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 兜底（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、枚举不含兜底、单值 `any_key()` 非法、仅同步） |
+| **0.9.0：async 解析/诊断** | 同步解析 async 服务返回 `AsyncServiceRequiresGetAsync`；同步 singleton 不能依赖 async 服务（`SyncSingletonDependsOnAsyncService`）；跨任务需传 `AsyncFactoryContext`，环错误用 `RdiError::is_circular()` 判定 |
+| **0.9.0：供应链/安全** | MSRV 1.95、`#![forbid(unsafe_code)]`、CI matrix（ubuntu/windows × 1.95/stable）+ fmt/clippy/doc + RustSec `cargo audit`、`SECURITY.md` |
 
 ---
 
@@ -106,11 +111,12 @@ scope.dispose();  // 显式 dispose：逆序释放 scoped 实例 + 逆序执行�
 | 缓存位置 | `singleton_cache`（全局唯一，`OnceLock` 保护） |
 | 初始化时机 | 同步 singleton：`build()` / `build_async()` 时 eager init（工厂执行一次，**按注册顺序创建**，0.8.0 起顺序确定）；async singleton：`build_async()` 时**依赖驱动递归初始化**（0.8.1 起注册顺序无关，最终为依赖优先拓扑序）。此时 provider `Arc` 已创建，工厂内可解析 `#[inject(provider)]` / 内置 `ScopeFactory`（0.7.1+） |
 | async 初始化约束 | async singleton 可 `await` 任意（含后注册的）async singleton，会先递归初始化依赖；**依赖图必须无环**——自引用/交叉依赖返回 `RdiError::CircularDependency`（不会 hang）；`build_async` 返回时所有 async singleton 均已初始化 |
-| build 期 async 解析 | async singleton **初始化完成前只能用 `get_async` 解析**（工厂内 `sp.get_async::<T>()` 会递归初始化依赖）；此时同步 `get` 返回 `Err(AsyncServiceRequiresBuildAsync)`、`get_optional` 为 `None`，但 `is_registered` 仍为 `true`。`build_async` 返回后已缓存的 async singleton 可直接 `get` |
+| build 期 async 解析 | async singleton **初始化完成前只能用 `get_async` 解析**（工厂内 `sp.get_async::<T>()` 会递归初始化依赖）；此时同步 `get` 返回 `Err(RdiError::AsyncServiceRequiresGetAsync)`、`get_optional` 为 `None`，但 `is_registered` 仍为 `true`。`build_async` 返回后已缓存的 async singleton 可直接 `get` |
 | 生命周期 | = `ServiceProvider` 生命周期，直到 `provider.dispose()` |
 | 释放顺序 | `dispose()` 按**创建逆序**释放；`register_disposable` 清理闭包按**注册逆序**执行 |
 | 线程安全 | `OnceLock::get_or_init` 保证工厂只执行一次 |
-| 依赖约束 | 不能依赖 Scoped（captive dependency 检测）；**同步 singleton 的依赖图里不能出现 async singleton**——`build_async` 会返回 `Err(RdiError::AsyncServiceRequiresBuildAsync { service })`（不 hang），因为同步 singleton 的校验/构建（Phase 2/3）先于 async 初始化（Phase 4） |
+| 依赖约束 | 不能依赖 Scoped（captive dependency 检测）；**同步 singleton 的依赖图里不能出现 async singleton**——`build_async` 返回精确诊断 `Err(RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service })`（不 hang），因为同步 singleton 的校验/构建（Phase 2/3）先于 async 初始化（Phase 4） |
+| AnyKey 兜底 | `keyed_any_*` 注册**不做 eager 初始化/单独校验**（需要请求 key；build 期校验中同步 singleton 工厂可经 `get_keyed_any` 按请求 key 解析，结果预填充到 **(注册, key) 缓存**、运行时同注册同 key 复用同一实例、多消费者只构造一次）；singleton/scoped 兜底按 (服务注册/类型, 请求 key) 缓存（不同注册同 key 独立）；`get_all_keyed` 不含兜底；仅同步注册；scoped/transient 的 `get_keyed_owned` 在 strict root 允许（owned 例外） |
 
 **检查项**：
 - [ ] 确认所有 Singleton 工厂是幂等的（虽然只执行一次，但工厂内不应有副作用依赖）
@@ -120,8 +126,10 @@ scope.dispose();  // 显式 dispose：逆序释放 scoped 实例 + 逆序执行�
 - [ ] 确认 Singleton 构造函数内不通过注入的 provider 做动态解析（框架会在 build 期返回 `FactoryPanic` 拒绝，避免绕过 captive dependency 校验）
 - [ ] 确认依赖构建顺序的初始化逻辑基于"**同步 singleton 按注册顺序 / async singleton 依赖优先拓扑序**"设计（两者均确定，不依赖 `HashMap`）
 - [ ] 确认 async singleton 依赖图**无环**（自引用/交叉依赖会返回 `RdiError::CircularDependency`，不会死锁/挂起；注册顺序无关）
-- [ ] 确认同步 singleton 的依赖图**不含 async singleton**（含则 `build_async` 返回 `AsyncServiceRequiresBuildAsync`）；需要时把依赖方也改为 async singleton，或在方法内用 `Arc<dyn ScopeFactory>` / `get_async` 延迟解析
-- [ ] 确认 build 期解析 async singleton 只用 `get_async`（初始化完成前同步 `get` 会返回 `AsyncServiceRequiresBuildAsync`、`get_optional` 为 `None`；`is_registered` 仍为 `true`）
+- [ ] 确认同步 singleton 的依赖图**不含 async singleton**（含则 `build_async` 返回 `SyncSingletonDependsOnAsyncService`）；需要时把依赖方也改为 async singleton，或在方法内用 `Arc<dyn ScopeFactory>` / `get_async` 延迟解析
+- [ ] 确认 build 期解析 async singleton 只用 `get_async`（初始化完成前同步 `get` 会返回 `AsyncServiceRequiresGetAsync`、`get_optional` 为 `None`；`is_registered` 仍为 `true`）
+- [ ] 确认 async 工厂在 spawned task 中解析依赖时传 `AsyncFactoryContext`（否则跨任务环可能死锁；环错误用 `is_circular()` 判定，启发式）
+- [ ] 确认启动期没有同步枚举未初始化的 async 服务（`get_all` 对未初始化 async singleton/transient typed panic；async scoped 在 root 被 scope 校验省略；`Vec` 注入对任何未初始化 async 返回 `Err`；async scoped/transient 用 `get_async` 逐项解析）
 
 ---
 
@@ -211,7 +219,7 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ## 三、异常处理机制
 
-### 3.1 sync 工厂 panic / 失败（0.8.x 语义）
+### 3.1 sync 工厂 panic / 失败（0.9.x 语义）
 
 **机制**：0.8.0 起同步解析路径不再把工厂 panic 直接抛给业务调用方，而是统一转成类型化
 `RdiError`。`OnceLock` 类缓存在工厂 panic 时不会写入（cell 保持未初始化），下次解析会重试。
@@ -264,24 +272,27 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 **检测范围**：
 - ✅ Singleton 依赖图（build 时执行工厂检测；含经 Transient 中间节点的间接环）
 - ✅ Scoped / Transient 的同步循环依赖（运行时线程局部解析栈 → `RdiError::CircularDependency`，不再静默栈溢出）
-- ✅ **async 解析链**：`async_scoped` / `async_transient` 的**自引用/交叉递归**，以及
-  **async singleton 的依赖环**，都在**同一 poll 链路**内检测
-  （`AsyncPollGuardFuture` 只在单次 poll 期间把"正在解析"标记暴露给嵌套解析），返回
-  `RdiError::CircularDependency`，从而**避免在自有的 per-key async 缓存锁上死锁**。
-- ✅ 通过注入 provider 发起的动态解析同样参与解析栈/poll 链检测
+- ✅ **async 解析链**：`get_async` / `get_keyed_async` 的 future 在构造时捕获**解析链**
+  （0.9.0 由"单次 poll"升级为链式），`async_scoped` / `async_transient` 的自引用/交叉递归、
+  **async singleton 的依赖环** 均返回 `RdiError::CircularDependency`，从而**避免在自有的
+  per-key async 缓存锁上死锁**。
+- ✅ **跨任务**：在 async 工厂内捕获 `sp.async_context()` 并 clone 进 spawned task，经 ctx
+  解析会继承链——跨任务环同样返回 `CircularDependency`；完全不传 ctx 的完全脱离任务仍可能死锁。
+- ✅ 通过注入 provider 发起的动态解析同样参与解析栈/链检测
 - ❌ 构造函数内动态解析被直接拒绝（`FactoryPanic`），因此无法借它绕过循环检测
 
-> **不会误报**：跨 `await` 的合法并发解析（不同任务、甚至同一线程交替 poll）看不到彼此的
-> 单次 poll 标记，因此正常并发不会被判成循环；async 工厂内也**不得**递归 `await` 自身正在
-> 构建的服务（会得到 `CircularDependency`，而不是挂死）。
+> **不会误报**：链式检测只沿解析链传播，跨 `await` 的合法并发解析（不同任务、甚至同一线程
+> 交替 poll）不属于同一条链，因此正常并发不会被判成循环；async 工厂内也**不得**递归
+> `await` 自身正在构建的服务（会得到 `CircularDependency`，而不是挂死）。
 
-> **错误形态（0.8.1）**：嵌套解析本身得到 `RdiError::CircularDependency(_)`；若用户 async 工厂
+> **错误形态（0.9.0）**：嵌套解析得到 `RdiError::CircularDependency(_)`；若用户 async 工厂
 > 对该错误 `.unwrap()` / `.expect()`，panic 会被捕获并转为**顶层** `RdiError::FactoryPanic { payload }`，
-> 其中 `payload` 含 `"CircularDependency(...)"`。因此：
-> - `get_async` 侧可直接 `matches!(err, RdiError::CircularDependency(_))`；
+> 其中 `payload` 含 `"CircularDependency(...)"`。推荐用 `RdiError::is_circular()` 判定；注意它是
+> **启发式**（payload 含该文本即命中，自定义 payload 可能误判），精确形态时优先匹配 typed 变体：
+> - `get_async` 侧可用 `matches!(err, RdiError::CircularDependency(_))`；
 > - `build_async` 顶层可用
 >   `matches!(err, RdiError::FactoryPanic { ref payload, .. } if payload.contains("CircularDependency"))`
->   判定"环被工厂 unwrap 后转成了 FactoryPanic"。
+>   或 `err.is_circular()`（启发式）。
 
 **检查项**：
 - [ ] 确认所有 Singleton 的循环依赖在 build 时被检测
@@ -289,7 +300,9 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 - [ ] 确认 async singleton 依赖图无环（`build_async` 依赖驱动初始化，有环返回 `CircularDependency`、不 hang；注册顺序无关）
 - [ ] 确认 async 工厂不会递归 `await` 自身正在构建的服务（应得到 `CircularDependency` 而非死锁）
 - [ ] 确认跨 `await` 的合法并发解析不被误报为循环依赖
-- [ ] 确认环错误形态：`get_async` 侧为 `CircularDependency`；工厂 `.unwrap()` 后 `build_async` 顶层为 `FactoryPanic`（payload 含 `CircularDependency`）
+- [ ] 确认 cross-task 场景传 `AsyncFactoryContext`（否则可能死锁）
+- [ ] 确认环错误形态：`get_async` 侧为 `CircularDependency`；工厂 `.unwrap()` 后 `build_async` 顶层为 `FactoryPanic`（payload 含 `CircularDependency`），用 `RdiError::is_circular()`（**启发式**）或 typed 匹配判定
+- [ ] 确认 `get_all` / `#[inject] Vec<Arc<T>>` 的消费方不依赖"同步枚举 async"（已初始化 async singleton 会包含；未初始化 async singleton/transient typed panic 或 Err；async scoped 在 root 被 scope 校验省略）
 - [ ] 确认 `RdiError::CircularDependency` 的路径信息用于调试日志
 
 ---
@@ -314,10 +327,13 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 **机制**：
 - `get::<T>()` / `get_keyed::<T>(key)` 返回 `Result<Arc<T>, RdiError>`：
   未注册为 `ServiceNotFound` / `KeyedServiceNotFound`；另可能是
-  `ScopedFromRootProvider` / `ScopeDisposed` / `ProviderDisposed` 等 typed 错误
+  `ScopedFromRootProvider` / `ScopeDisposed` / `ProviderDisposed` 等 typed 错误；
+  **同步解析 async 服务**为 `AsyncServiceRequiresGetAsync`（0.9.0 新增精确错误）
 - `try_get::<T>()` / `try_get_keyed::<T>(key)` 返回 `Option<Arc<T>>`：未注册、
   strict root scope 校验不可解析、已 dispose 或解析失败时均为 `None`（**不 panic**）
 - `get_owned::<T>()` 返回 `Result<T, RdiError>`（Singleton 为 `OwnedNotSupported`）
+- `get_keyed::<T>(key)` 的 key 为 `impl Into<ServiceKey>`（字符串或类型化键）；
+  单值不能用 `ServiceKey::any_key()`
 
 **检查项**：
 - [ ] 确认 `get()` 调用方处理 `Err`（不要无脑 `.unwrap()`）
@@ -327,18 +343,42 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ---
 
-### 3.6 key 冲突与多实现
+### 3.6 key 冲突、类型化键与 AnyKey
 
 **机制**：
-- 非 keyed：同类型多次注册，**最后注册生效**（0.8.0 起，MEDI 语义；0.7.x 为"先注册优先"）
+- 非 keyed：同类型多次注册，**最后注册生效**（MEDI 语义；0.7.x 为"先注册优先"）
 - keyed：同 key 重复注册同样最后注册生效；`#[module]` 内重复 key 仍是编译期错误（`rdi-E004`）
-- `get_all::<T>()` **只返回非 keyed** 实现（按注册顺序）；keyed 实现用 `get_all_keyed::<T>()`
+- **类型化键（0.9.0）**：keyed API 接受 `impl Into<ServiceKey>`；`ServiceKey::new(value)` 支持
+  enum/整数等，键相等包含值的类型（`ServiceKey::new(1u32) != "1"`）。**字符串 footgun**：
+  `ServiceKey::new("x")` 是 `&str` key，与字符串注册的 `String` key 不等，字符串键用
+  `ServiceKey::from("x")` / `"x".into()`
+- **AnyKey 兜底（0.9.0）**：`keyed_any_singleton/scoped/transient`；精确 key 优先；singleton/scoped
+  兜底**按 (服务注册/类型, 请求 key) 分别缓存**（同一注册 + 同一 key 复用；不同 AnyKey 注册即使
+  同 key 也各自独立；scoped 每 scope 每 (注册, key) 一份），transient 每次新建；仅同步注册
+  （`get_keyed_async` 回退同步）；build 期不做 eager 初始化/单独校验；`keyed_any_scoped` 被同步
+  singleton 依赖时仍按 captive dependency 拒绝
+- **AnyKey 补充语义（0.9.0）**：validation 期被同步 singleton 按请求 key 消费的 singleton
+  会写入 **(注册, 请求 key) 缓存**（运行时同注册同 key 复用**同一实例**、单次初始化、多消费者
+  共享一次构造）；scoped/transient AnyKey
+  的 `get_keyed_owned` 在 strict root 下允许（owned 例外、不进缓存/不跟踪）；工厂内嵌套解析
+  **不同请求 key** 合法（同注册 + 同 key 才是环）；`&ServiceKey` 无 typed downcast 访问器
+- `get_all::<T>()` **只返回非 keyed**；`get_all_keyed::<T>()` 只列**显式 key**（不含 AnyKey 兜底）；
+  两者都含**已初始化** async singleton，同步枚举未初始化 async singleton/transient
+  → `AsyncServiceRequiresGetAsync`（`get_all` typed panic，`Vec` 注入 `Err`；async scoped
+  在 root 被 scope 校验省略、Scope 内枚举才 panic）
+- 单值不能用 AnyKey 哨兵：`get_keyed(any_key())` → `Err`，`is_registered_keyed(any_key())` → `false`
 
 **检查项**：
 - [ ] 确认非 keyed 服务的注册顺序（**最后注册优先**；需要"未注册才添加"用 `try_add*`）
 - [ ] 确认 keyed 服务的 key 唯一性（无拼写错误；同 key 重复注册会静默覆盖）
-- [ ] 确认 `get_all::<T>()` 的消费方不假设包含 keyed 实现（广播/观察者场景改用 `get_all_keyed` 或把目标注册为非 keyed）
-- [ ] 0.7.x 升级：确认没有依赖"先注册优先"的覆盖逻辑
+- [ ] 确认类型化 key 的相等语义（不同类型/值不相等，`1u32` 与 `"1"` 不等；字符串键不用 `ServiceKey::new`）
+- [ ] 确认 AnyKey 兜底的精确-key 优先与"按 (服务注册/类型, 请求 key) 缓存"符合预期；validation 预填充实例运行时复用
+- [ ] 确认 AnyKey 的 scoped/transient owned 解析按 owned 例外处理（不进缓存）
+- [ ] 确认 AnyKey 工厂内嵌套解析不同请求 key 不会被误判为环
+- [ ] 确认 `get_all_keyed` 的消费方不假设包含 AnyKey 兜底/非 keyed 注册
+- [ ] 确认同步枚举的消费方不会遇到未初始化 async 服务（否则用 `get_async` 逐项解析）
+- [ ] 确认没有用 `ServiceKey::any_key()` 做单值解析
+- [ ] 0.7.x/0.8.x 升级：确认没有依赖"先注册优先"的覆盖逻辑
 
 ---
 
@@ -439,9 +479,12 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 ## 六、部署前最终检查
 
 ### 6.1 编译验证
-- [ ] `cargo clippy --all-targets -- -D warnings` 零警告
-- [ ] `cargo test --all` 全量通过
-- [ ] `cargo doc --no-deps` 零警告
+- [ ] 工具链 **Rust ≥ 1.95**（`Cargo.toml` 的 `rust-version`；CI matrix 覆盖 1.95 与 stable）
+- [ ] `cargo fmt --all -- --check` 零差异
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` 零警告
+- [ ] `cargo test --workspace` 全量通过
+- [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` 零警告
+- [ ] `cargo audit`（RustSec）无未处理漏洞
 
 ### 6.2 运行时验证
 - [ ] 应用启动时无 `RdiError`（循环依赖、captive dependency、服务未找到、`ScopedFromRootProvider`）
@@ -451,10 +494,34 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ### 6.3 日志验证
 - [ ] 工厂 panic 记录到日志（`RdiError::FactoryPanic` 的 `payload` 字段）
-- [ ] 循环依赖路径记录到日志（`RdiError::CircularDependency` 的路径信息）
+- [ ] 循环依赖路径记录到日志（`RdiError::CircularDependency` 的路径信息；包裹形态用 `RdiError::is_circular()` 判定，可结合 typed 变体避免启发式误判）
 - [ ] captive dependency 记录到日志（`RdiError::SingletonDependsOnScoped` 的 singleton/scoped 名称）
+- [ ] 同步→async 依赖、同步解析/枚举 async 服务记录日志（`SyncSingletonDependsOnAsyncService` / `AsyncServiceRequiresGetAsync`）
 
 ### 6.4 跨 DLL 验证（如适用）
 - [ ] DLL 卸载前 `remove_named()` 清理注册项
 - [ ] 跨 DLL 传递 `Arc<dyn IProvider>` 而非裸指针
 - [ ] DLL 的 `#[module]` 生成代码在卸载后不被调用
+
+---
+
+## 七、供应链与安全（0.9.0）
+
+**机制**：
+- **MSRV 1.95**：`Cargo.toml` 的 `rust-version = "1.95"`，CI matrix（ubuntu/windows × 1.95/stable）
+  实测；发布工具链不得低于该版本。
+- **CI（`.github/workflows/ci.yml`）**：测试矩阵跑 `cargo test --workspace`；stable 额外跑
+  `cargo fmt --check`、`cargo clippy -D warnings`、`RUSTDOCFLAGS=-D warnings cargo doc`；
+  另有 RustSec `cargo audit` job（`rustsec/audit-check`）。发布由 `publish.yml` 在 `v*` tag 触发。
+- **`#![forbid(unsafe_code)]`**：两个 crate 均禁止 `unsafe`；同步使用 std 的
+  `Mutex` / `RwLock` / `OnceLock`。
+- **`SECURITY.md`**：漏洞通过 GitHub 私密 advisories 上报（目标 72h 内响应、30 天内修复），
+  声明支持版本（0.9.x；0.8.x 仅安全修复）与安全设计/边界（无网络/文件访问、panic containment、
+  dispose 契约、环安全、供应链审计）。
+
+**检查项**：
+- [ ] 确认构建/发布环境 Rust ≥ 1.95
+- [ ] 确认 CI 的 fmt / clippy / doc / `cargo audit` 全部通过
+- [ ] 确认部署锁文件（`Cargo.lock`）经过 `cargo audit`，无未处理漏洞
+- [ ] 确认漏洞上报与响应流程按 `SECURITY.md` 执行
+- [ ] 确认没有引入 `unsafe`（两 crate `#![forbid(unsafe_code)]`，新增依赖需复核其 unsafe 使用）

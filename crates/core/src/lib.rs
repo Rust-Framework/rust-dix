@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! rust-dix — Rust Dependency Injection Framework
 //!
 //! A dependency injection container for Rust inspired by
@@ -163,6 +165,7 @@ mod cache;
 pub mod collection;
 pub mod entry;
 pub mod error;
+pub mod key;
 #[doc(hidden)]
 pub mod macros_support;
 pub mod provider;
@@ -199,6 +202,13 @@ pub use collection::ServiceCollection;
 ///
 /// Analogous to `IServiceProvider` in MEDI.
 pub use provider::ServiceProvider;
+
+/// Key used by keyed registrations, including the `AnyKey` fallback sentinel.
+pub use key::{KeyedService, ServiceKey};
+
+/// Handle for propagating the async resolution chain into detached tasks
+/// (enables cross-task dependency cycle detection).
+pub use provider::AsyncFactoryContext;
 
 /// Options for [`ServiceCollection::build_with`] /
 /// [`ServiceCollection::build_async_with`].

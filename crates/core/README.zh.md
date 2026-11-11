@@ -19,8 +19,11 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.8"
+rust-dix = "0.9"
 ```
+
+> **MSRV**：Rust **1.95**。两个 crate 均 `#![forbid(unsafe_code)]`；CI 跑测试矩阵 +
+> RustSec `cargo audit`；详见仓库根目录 `SECURITY.md`。
 
 ---
 
@@ -87,7 +90,8 @@ let provider = ServiceCollection::new()
 
 **4. 你需要同类型的多个实例**
 
-键控服务让你为同一个 trait 注册多个实现，用字符串键区分。支持所有三种生命周期：
+键控服务让你为同一个 trait 注册多个实现，用 key（字符串或类型化 `ServiceKey`）区分。
+支持所有三种生命周期：
 
 ```rust
 // 键控服务支持三种生命周期
@@ -98,6 +102,8 @@ let provider = ServiceCollection::new()
     .keyed_scoped::<dyn Strategy>("session", |_| Arc::new(SessionStrategy))
     // Transient keyed - 每次新建
     .keyed_transient::<dyn Strategy>("fresh", |_| Arc::new(FreshStrategy))
+    // AnyKey 兜底：没有精确 key 时使用（按 (服务注册/类型, 请求 key) 缓存）
+    .keyed_any_singleton::<dyn Strategy>(|_, _key| Arc::new(DefaultStrategy))
     .build()
     .unwrap();
 
@@ -105,6 +111,7 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 let session: Arc<dyn Strategy> = provider.scope().get_keyed("session").unwrap();
 let fresh1: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();
 let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同实例
+// 类型化键同样可用：provider.get_keyed(ServiceKey::new(StrategyKey::Fast))
 ```
 
 **5. 你在构建插件 / 模块化系统**
@@ -128,9 +135,12 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
 | `.singleton(f)` | Singleton | 全局唯一实例（配置、连接池） |
 | `.scoped(f)` | Scoped | 每个 Scope 一个实例（请求上下文、事务） |
 | `.transient(f)` | Transient | 每次解析新建（轻量无状态服务） |
-| `.keyed_singleton(k, f)` | Singleton | 策略模式命名实例 |
-| `.keyed_scoped(k, f)` | Scoped | Scope 内策略实例 |
-| `.keyed_transient(k, f)` | Transient | 每次新建策略实例 |
+| `.keyed_singleton(k, f)` | Singleton | 策略模式键控实例；`k: impl Into<ServiceKey>` |
+| `.keyed_scoped(k, f)` | Scoped | Scope 内键控实例 |
+| `.keyed_transient(k, f)` | Transient | 每次新建键控实例 |
+| `.keyed_any_singleton(f)` | Singleton | `AnyKey` 兜底（对齐 MEDI）；`f: Fn(&dyn IServiceResolver, &ServiceKey) -> Arc<T>`，按 (服务注册/类型, 请求 key) 缓存 |
+| `.keyed_any_scoped(f)` | Scoped | `AnyKey` 兜底，每 scope 每请求 key 一份 |
+| `.keyed_any_transient(f)` | Transient | `AnyKey` 兜底，每次解析新建 |
 | `.instance(arc)` | Singleton | 已有构建好的 `Arc<T>` |
 | `.try_add(f)` | Singleton | 只注册不存在的类型（MEDI `TryAdd`） |
 | `.try_add_scoped(f)` | Scoped | 只注册不存在的类型 |
@@ -140,6 +150,54 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
 | `.build()` | — | 用默认（严格）scope 校验构建 provider |
 | `.build_with(options)` | — | 用显式 `ServiceProviderOptions` 构建（`lenient()` 恢复 0.7.x root-scope 行为） |
 | `.build_async()` / `.build_async_with(options)` | — | 异步构建；存在任何 `async_*` 注册时必须使用 |
+
+#### 类型化键（`ServiceKey`）与 `AnyKey` 兜底
+
+keyed API 接受 `impl Into<ServiceKey>`：字符串（`&str` / `String`）保持兼容，
+`ServiceKey::new(value)` 支持 enum/整数/自定义键。键相等包含值的类型——
+`ServiceKey::new(1u32) != ServiceKey::from("1")`。**字符串键易错点**：
+`ServiceKey::new("x")` 是 `&str` typed key，与 `keyed_singleton("x", …)` 存储的
+`String` key **不相等**；字符串键请用 `"x".into()` / `ServiceKey::from("x")`，
+`ServiceKey::new` 只用于有意使用 typed（`&'static str` / enum / 整数）键的场景。
+
+```rust
+use rust_dix::*;
+use std::sync::Arc;
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum DbKey { Read, Write }
+
+let provider = ServiceCollection::new()
+    .keyed_singleton::<dyn IDbConnection>(ServiceKey::new(DbKey::Read), |_| Arc::new(ReadPool))
+    .keyed_any_singleton::<dyn IDbConnection>(|_, key| {
+        // `key` 是请求的 ServiceKey（精确 key 优先于该兜底）
+        Arc::new(Pool::connect(&format!("{key:?}")))
+    })
+    .build()
+    .unwrap();
+
+let read: Arc<dyn IDbConnection> = provider.get_keyed(ServiceKey::new(DbKey::Read)).unwrap();
+```
+
+`AnyKey` 语义（对齐 MEDI `KeyedService.AnyKey`）：
+- 精确 key 注册优先于兜底；
+- singleton/scoped 兜底实例**按 (服务注册/类型, 请求 key) 分别缓存**（不同 AnyKey 注册即使
+  请求 key 相同也各自独立；scoped：每 scope 每 (注册, key) 一份）；transient 每次解析新建；
+- `get_all_keyed` 只返回显式 key，**不含**兜底；
+- 用任意 key 哨兵做单值解析非法（`get_keyed(ServiceKey::any_key())` → `Err`；
+  `KeyedService::any_key()` 是同一哨兵；`is_registered_keyed(any_key())` → `false`）；
+- `AnyKey` 仅支持同步注册（异步解析回退同步路径），build 期不做 eager 初始化/单独校验
+  （需要请求 key）；被同步 singleton 捕获的 scoped 兜底仍按 captive dependency 拒绝。
+  build 期校验时，同步 singleton 工厂可通过 `get_keyed_any` 传入请求 key 解析 AnyKey 依赖；
+- **validation 预填充缓存**：build 期被同步 singleton 按某请求 key 解析的 AnyKey singleton
+  会写入 **(注册, 请求 key) 缓存**，运行时同一注册 + 同一 key 复用**同一实例**（单次初始化；
+  多消费者共享一次构造，不会双构建）；
+- `AnyKey` 兜底（scoped/transient）的 `get_keyed_owned` / `try_get_keyed_owned` 在 strict
+  root 下**允许**（与 exact-key owned 相同的调用方持有例外；不进缓存/不跟踪，传递依赖仍受
+  scope 校验）；
+- AnyKey 工厂内嵌套解析**不同请求 key** 合法；只有同一注册 + 同一请求 key 的重入才是环；
+- 工厂接收 `&ServiceKey`，可 `Debug` / `Display` / `Eq` / `Hash`；**有意不提供** typed
+  downcast 访问器（擦除表示私有）。
 
 工厂闭包 `f` 接收 `&dyn IServiceResolver`。泛型 `get::<T>()` 带 `Self: Sized`
 约束，不能直接在 trait object 上调用：请让注入宏生成构造函数（内部
@@ -216,27 +274,44 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 |--------|---------|------|
 | `.get::<T>()` | `Result<Arc<T>, RdiError>` | 未注册返回 Err；**最后注册优先** |
 | `.get_optional::<T>()` | `Option<Arc<T>>` | 未注册返回 `None` |
-| `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | 找不到 key 返回 Err；必选 key 用 `.unwrap()` |
-| `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | 找不到 key 返回 `None` |
+| `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | `key: impl Into<ServiceKey>`；精确 key 优先于 `AnyKey` 兜底；`any_key()` 不是合法单值 key |
+| `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | 找不到/不可解析返回 `None` |
 | `.get_all::<T>()` | `Vec<Arc<T>>` | 仅**非 keyed** 注册，按注册顺序（不含 keyed） |
-| `.get_all_keyed::<T>()` | `Vec<Arc<T>>` | 该类型**全部 keyed** 注册，按注册顺序（0.8.0+） |
+| `.get_all_keyed::<T>()` | `Vec<Arc<T>>` | 该类型**全部显式 keyed** 注册，按注册顺序（不含 `AnyKey` 兜底） |
 | `.get_named::<T>(name)` | `Option<Arc<T>>` | 命名解析（跨 DLL），未注册返回 `None` |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | 命名解析，不 panic |
 | `.get_owned::<T>()` | `Result<T, RdiError>` | Owned 实例；Singleton 返回 Err；**Scoped 允许从 root 取**（归调用方、不缓存——但构造函数内的 Scoped 依赖仍受 scope 校验） |
 | `.try_get_owned::<T>()` | `Option<T>` | 未注册或 Singleton 返回 `None` |
 | `.get_keyed_owned::<T>(key)` | `Result<T, RdiError>` | Owned 键控实例；Singleton 返回 Err |
 | `.is_registered::<T>()` | `bool` | 是否存在非 keyed 注册（不创建实例） |
-| `.is_registered_keyed::<T>(key)` | `bool` | 指定 key 是否已注册 |
+| `.is_registered_keyed::<T>(key)` | `bool` | 是否有精确 keyed 注册或 `AnyKey` 兜底（`any_key()` → `false`） |
 | `.scope()` | `Scope` | 新建作用域 |
+| `.async_context()` | `Option<AsyncFactoryContext>` | 捕获当前异步链，供脱离任务做跨任务环检测 |
 | `.dispose()` | `()` | 幂等；按创建逆序释放实例，之后解析返回 `Err(ProviderDisposed)`（0.8.0+） |
 
-> **0.8.x 语义**：单服务解析对齐 MEDI 的"最后注册优先"；`get_all` 仅含非 keyed
-> （keyed 用 `get_all_keyed`）；scope 校验**默认严格**——从 root provider 解析
-> Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`（例外：`get_owned` /
-> `try_get_owned` 的 owned 实例归调用方、不进缓存，可从 root 取；但其 Scoped 依赖
-> 仍受校验）。需要 0.7.x 的 root-scope 旧行为时用
-> `build_with(ServiceProviderOptions::lenient())`。逐条差异见
+> **0.9.x 语义**：单服务解析对齐 MEDI 的"最后注册优先"；`get_all` 仅含非 keyed
+> （`get_all_keyed` 仅列显式 keyed，不含 `AnyKey` 兜底）；key 可为类型化键；scope 校验
+> **默认严格**——从 root provider 解析 Scoped 服务返回
+> `Err(RdiError::ScopedFromRootProvider)`（例外：`get_owned` / `try_get_owned` 的 owned
+> 实例归调用方、不进缓存，可从 root 取；但其 Scoped 依赖仍受校验）。需要 0.7.x 的
+> root-scope 旧行为时用 `build_with(ServiceProviderOptions::lenient())`。逐条差异见
 > [与 MEDI 的差异清单](../../docs/rust-dix/01-introduction/medi-differences.md)。
+
+> **枚举与 async**：`get_all` / `get_all_keyed` / `#[inject] Vec<Arc<T>>` 会包含**已初始化**
+> 的 async singleton；同步枚举**未初始化**的 async singleton/transient 会得到
+> `RdiError::AsyncServiceRequiresGetAsync`（不可失败的 `get_all`/`get_all_keyed` 以 typed
+> `RdiError` payload panic）；async **scoped** 在 root provider 上会被严格 scope 校验静默
+> 省略（在 `Scope` 内枚举才 panic）；`get_all_any_result` / `Vec<Arc<T>>` 注入对任何未初始化
+> async 服务返回 `Err`。async scoped/transient 请用 `get_async` 逐项解析。
+
+#### 诊断
+
+| 错误 | 触发场景 |
+|------|----------|
+| `RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service }` | 同步 singleton 依赖 async 服务（build 期）；请把依赖方改为 async 或延迟解析 |
+| `RdiError::AsyncServiceRequiresGetAsync { service }` | 同步 `get` 解析 async 服务（`get_optional` 返回 `None`），或同步枚举未初始化的 async 服务；请用 `get_async` |
+| `RdiError::AsyncServiceRequiresBuildAsync { service }` | 含 `async_*` 注册却调 `build()`；请用 `build_async()` |
+| `RdiError::is_circular()` | **启发式**辅助方法：直接 `CircularDependency` 或 `FactoryPanic` payload 含该文本均返回 `true`（自定义 payload 可能误判；需要精确形态时优先匹配 typed 变体） |
 
 `T` 支持具体类型和 trait object：
 
@@ -333,9 +408,9 @@ h.ctx.add();                 // ✓ owned 字段可变
 | `.async_singleton(f)` | Singleton | 异步初始化，全局共享（DB 连接池、Redis） |
 | `.async_scoped(f)` | Scoped | 异步初始化，Scope 内共享 |
 | `.async_transient(f)` | Transient | 异步初始化，每次新建 |
-| `.async_keyed_singleton(k, f)` | Singleton keyed | 异步初始化，命名实例 |
-| `.async_keyed_scoped(k, f)` | Scoped keyed | 异步初始化，Scope 内命名实例 |
-| `.async_keyed_transient(k, f)` | Transient keyed | 异步初始化，每次新建命名实例 |
+| `.async_keyed_singleton(k, f)` | Singleton keyed | 异步初始化，键控实例（`k: impl Into<ServiceKey>`） |
+| `.async_keyed_scoped(k, f)` | Scoped keyed | 异步初始化，Scope 内键控实例 |
+| `.async_keyed_transient(k, f)` | Transient keyed | 异步初始化，每次新建键控实例 |
 
 异步工厂接收 `Arc<ServiceProvider>`，返回 pinned future：
 
@@ -355,20 +430,50 @@ let provider = ServiceCollection::new()
 
 #### 解析
 
-解析异步注册的服务使用 `get_async()` / `get_keyed_async()`：
+解析异步注册的服务使用 `get_async()` / `get_keyed_async()`（均接受字符串或类型化
+`ServiceKey`，返回 `impl Future`；`.await` 用法不变）：
 
 ```rust
 let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await.unwrap();
 ```
 
-同步注册的服务既可 `get()` 也可 `get_async()`：0.8.0 起 `get_async()` 对用同步
+同步注册的服务既可 `get()` 也可 `get_async()`：`get_async()` 对用同步
 `scoped` / `transient` 注册的服务会**回退到同步解析路径**。`async_*` 注册只用于需要
-**异步初始化**的服务。
+**异步初始化**的服务。同步 `get` 解析 async 服务会返回
+`RdiError::AsyncServiceRequiresGetAsync`；`AnyKey` 兜底仅同步注册，异步解析同样回退同步路径。
 
-async singleton 初始化**依赖驱动、注册顺序无关**（0.8.1+）：工厂可 `await` 任意
-async singleton，`build_async()` 会先递归初始化依赖（确定性的依赖优先拓扑序，eager 且
-fail-fast）；依赖环返回 `RdiError::CircularDependency`，不会死锁。
+async singleton 初始化**依赖驱动、注册顺序无关**：工厂可 `await` 任意 async singleton，
+`build_async()` 会先递归初始化依赖（确定性的依赖优先拓扑序，eager 且 fail-fast）。
+同步 singleton 依赖 async 服务会在 build 期被 `RdiError::SyncSingletonDependsOnAsyncService`
+精确拒绝——请把依赖方改为 async 或延迟解析。
+
+#### 跨任务环检测（`AsyncFactoryContext`）
+
+async 环检测按解析链进行：每个解析 future 在构造时捕获当前链，自引用/交叉递归返回
+`RdiError::CircularDependency`。脱离任务请在工厂内捕获 `sp.async_context()` 并经 clone
+后的上下文解析；完全不传 ctx 的脱离任务仍可能死锁：
+
+```rust
+let provider = ServiceCollection::new()
+    .async_singleton(|sp| Box::pin(async move {
+        let ctx = sp.async_context().expect("built provider");
+        let dep = tokio::spawn({
+            let ctx = ctx.clone();
+            async move { ctx.get_async::<DbPool>().await }
+        })
+        .await
+        .expect("task")
+        .expect("DbPool must resolve");
+        Arc::new(Service { dep })
+    }))
+    .build_async()
+    .await
+    .unwrap();
+```
+
+`AsyncFactoryContext` 提供 `get_async`、`get_keyed_async`、`provider()`，可 `Clone`；
+也可从 `Scope` 获取（`scope.async_context()`）。
 
 #### 混合同步与异步
 

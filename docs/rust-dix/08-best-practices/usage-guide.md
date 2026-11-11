@@ -54,6 +54,7 @@ use rust_dix as di;    // 之后写 #[di::inject]、di::register!()
 | 标准服务自动注册 | `#[inject]` 属性宏 | 零样板，注册 + 构造一步到位 |
 | 面向接口 trait 注册 | `#[inject]` 在 `impl Trait for T` 块 | trait 自动推断，无需 `as =` |
 | 多实现运行时路由 | keyed + 属性宏/闭包 | 一个接口多实现，策略模式 |
+| 类型化键 / 任意 key 兜底 | `ServiceKey::new(value)` + `keyed_any_*` | 键语义稳定（enum/整数）或需要 AnyKey 兜底 |
 | 集中声明式配置 | `#[module]` + `register!()` | 注册声明与服务模块放在一起 |
 | 已有实例 / 配置值 | `singleton_value(T)` / `instance(Arc<T>)` | 免写工厂闭包 |
 | 条件可选注册 | `try_add(...)` | 已注册则跳过，不覆盖 |
@@ -74,6 +75,8 @@ struct PgUserRepo;
 #[inject] impl IUserRepo for PgUserRepo { /* ... */ }
 
 // 场景 3：多实现路由 —— keyed 手动注册（keyed 不支持 #[inject] 自动注册）
+// 字符串键用 "x".into()/ServiceKey::from("x")；ServiceKey::new("x") 是 &str typed key，
+// 与 keyed_singleton("x", …) 的 String key 不相等。
 let provider = ServiceCollection::new()
     .keyed_singleton::<dyn IPayGateway>("wechat", |_| Arc::new(WechatPay))
     .keyed_singleton::<dyn IPayGateway>("alipay", |_| Arc::new(AlipayPay))
@@ -282,6 +285,7 @@ let provider = ServiceCollection::new()
 | `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（普通写法） | N/A（内建） |
 
 > 严格类型校验：`#[inject]` 接受 `Arc<T>` / `Option<Arc<T>>` / `Vec<Arc<T>>`，`#[inject(owned)]` 只接受裸 `T`/`Option<T>`，不匹配触发编译错误。可选性由 `Option<...>` 类型决定，无需额外标记。
+> **`Vec<Arc<T>>` 枚举与 async**：含**已初始化** async singleton；同步枚举**未初始化** async singleton/transient 返回 `Err(RdiError::AsyncServiceRequiresGetAsync)`（注入失败）；async scoped 在 root 枚举会被严格 scope 校验省略（枚举本身即 Err 的路径以 `get_all_any_result` 为准）；async scoped/transient 请用 `get_async` 逐项解析。
 > **`Option` 注入不抑制 scope 校验**：`#[inject] Option<Arc<Scoped>>` 在 strict root provider 下**不会**变成 `None`，而是以 typed
 > `Err(RdiError::ScopedFromRootProvider)` 构造失败（容器方法 `provider.get_optional::<Scoped>()` 才返回 `None`）。
 > 可选 Scoped 依赖必须在 `provider.scope()` 内构造/解析。
@@ -392,20 +396,23 @@ fn build() -> Result<ServiceProvider, RdiError> {
 
 ---
 
-## 8. 0.8.x 语义要点（必读）
+## 8. 0.9.x 语义要点（必读）
 
-0.8.0 起容器语义对齐 MEDI（0.8.1 为 patch，沿用语义并修正 async singleton 初始化顺序），
-以下七条直接影响本文的注册与解析建议：
+0.8.0 起容器语义对齐 MEDI；**0.9.0** 新增类型化键 / `AnyKey` 兜底 / `AsyncFactoryContext` /
+精确诊断，并把 async 环检测升级为解析链。以下要点直接影响本文的注册与解析建议：
 
-| 主题 | 0.8.x 行为 | 对本指南的影响 |
+| 主题 | 0.9.x 行为 | 对本指南的影响 |
 |------|-----------|----------------|
 | 单服务解析 | **最后注册优先**（`get` / `get_keyed` / `get_owned` / `get_async`） | 覆盖 mock / 默认实现：后注册的生效；要"未注册才添加"用 `try_add*` |
-| 多实现收集 | `get_all` / `#[inject] Vec<Arc<T>>` **仅非 keyed**，按注册顺序 | keyed 策略实现用 `get_all_keyed`；观察者广播用非 keyed 注册 |
+| 多实现收集 | `get_all` / `#[inject] Vec<Arc<T>>` **仅非 keyed**，按注册顺序；含**已初始化** async singleton，同步枚举未初始化 async singleton/transient → `AsyncServiceRequiresGetAsync`（`get_all` typed panic，`Vec` 注入 `Err`；async scoped 在 root 被 scope 校验省略） | keyed 策略实现用 `get_all_keyed`；观察者广播用非 keyed 注册；async scoped/transient 用 `get_async` 逐项解析 |
+| 类型化键 / AnyKey | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 兜底（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、枚举不含兜底、单值 any_key 非法）；`ServiceKey::new("x")`（&str）≠ 字符串注册的 `String` key | 语义稳定的 key 用 `ServiceKey::new(enum)`；需要"任意 key"时用 `keyed_any_*` 而非手写回退；字符串键用 `"x".into()` |
 | Scope 校验 | 默认严格：root 解析 Scoped 返回 `Err(ScopedFromRootProvider)`（`get_owned`/`try_get_owned` 例外：owned 不缓存，可从 root 取） | 请求级服务在 `provider.scope()` 内解析；不要再依赖"根 Provider 即 root scope" |
 | 旧行为兼容 | `build_with(ServiceProviderOptions::lenient())` | 仅确需 root 级 Scoped 单例化时使用 |
 | 释放契约 | `Scope::dispose()` / Drop 按创建逆序释放；新增 `ServiceProvider::dispose()`；之后解析返回 `ScopeDisposed` / `ProviderDisposed` | 应用关闭时显式 `provider.dispose()`；请求级 scope 显式 dispose 或依赖 Drop |
-| async singleton | 0.8.1 起依赖驱动递归初始化、**注册顺序无关**；有环返回 `CircularDependency`（不 hang） | 异步基础设施按依赖关系注册即可；确保依赖图无环 |
-| 构建顺序 | **同步 singleton 按注册顺序创建**；async singleton 按依赖优先拓扑序（见上一行），两者均确定 | 不再需要为"HashMap 顺序"做防御性设计 |
+| async singleton | 依赖驱动递归初始化、**注册顺序无关**；有环返回 `CircularDependency`（不 hang） | 异步基础设施按依赖关系注册即可；确保依赖图无环 |
+| async 解析/诊断 | 同步解析 async 服务报 `AsyncServiceRequiresGetAsync`；同步 singleton 不能依赖 async 服务；跨任务传 `AsyncFactoryContext` | 用 `get_async` 解析 async 服务；跨任务环检测必须传 ctx |
+| 构建顺序 | **同步 singleton 按注册顺序创建**；async singleton 按依赖优先拓扑序，两者均确定 | 不再需要为"HashMap 顺序"做防御性设计 |
+| 工程基线 | MSRV **1.95**、`#![forbid(unsafe_code)]`、CI matrix + RustSec `cargo audit`、`SECURITY.md` | CI/发布环境按 1.95 配置；安全策略见 `SECURITY.md` |
 
 ```rust
 use rust_dix::*;

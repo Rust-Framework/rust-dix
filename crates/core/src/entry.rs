@@ -1,4 +1,5 @@
 use crate::error::RdiError;
+use crate::key::ServiceKey;
 use crate::provider::ServiceProvider;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -26,8 +27,10 @@ pub enum ServiceLifetime {
 pub struct ServiceDescriptor {
     pub type_id: TypeId,
     pub type_name: &'static str,
-    pub key: Option<String>,
+    pub key: Option<ServiceKey>,
     pub factory: ServiceFactory,
+    /// Factory used by `AnyKey` fallback registrations; receives the requested key.
+    pub keyed_factory: Option<KeyedServiceFactory>,
     pub async_factory: Option<AsyncServiceFactory>,
     pub lifetime: ServiceLifetime,
 }
@@ -311,15 +314,34 @@ pub trait IServiceResolver: Send + Sync {
 
 pub struct ServiceEntry {
     pub cache_key: usize,
-    pub key: Option<String>,
+    pub key: Option<ServiceKey>,
     pub type_name: &'static str, // kept for IServiceResolver string-based resolution
+    /// Primary sync factory (typed, resolver-only).
     pub factory: ServiceFactory,
+    /// `AnyKey` fallback factory; receives the requested key.
+    pub keyed_factory: Option<KeyedServiceFactory>,
     pub async_factory: Option<AsyncServiceFactory>,
     pub lifetime: ServiceLifetime,
 }
 
+impl ServiceEntry {
+    /// Whether this registration requires async initialization.
+    pub(crate) fn is_async(&self) -> bool {
+        self.async_factory.is_some()
+    }
+
+    /// Whether this is an `AnyKey` fallback registration.
+    pub(crate) fn is_any_key(&self) -> bool {
+        self.key.as_ref().is_some_and(ServiceKey::is_any)
+    }
+}
+
 pub type ServiceFactory =
     Arc<dyn Fn(&dyn IServiceResolver) -> Arc<dyn Any + Send + Sync> + Send + Sync>;
+
+/// Factory for `AnyKey` fallback registrations: receives the requested key.
+pub type KeyedServiceFactory =
+    Arc<dyn Fn(&dyn IServiceResolver, &ServiceKey) -> Arc<dyn Any + Send + Sync> + Send + Sync>;
 
 /// Async variant of [`ServiceFactory`] — for services that require async
 /// initialization (e.g., database connections, remote config loading).

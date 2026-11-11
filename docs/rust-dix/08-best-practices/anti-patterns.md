@@ -274,7 +274,7 @@ fn main() {
 
 ## 反模式 8：从根 Provider 解析 Scoped（或仍按 0.7.x root-scope 语义设计）
 
-### ⚠️ 语义澄清（0.8.x）
+### ⚠️ 语义澄清（0.9.x）
 
 0.8.0 默认开启严格 scope 校验（`ServiceProviderOptions::validate_scopes = true`）。
 从根 Provider 解析 Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`：
@@ -419,6 +419,74 @@ impl IUserHandler for UserHandler {
 
 ---
 
+## 反模式 11：同步 singleton 依赖 async 服务
+
+### ❌ 错误做法
+
+```rust
+// AsyncDb 用 async_singleton 注册
+#[inject(singleton)]
+struct Repository {
+    #[inject]
+    db: Arc<AsyncDb>,   // 同步构造函数无法 await
+}
+```
+
+### 问题（0.9.0 精确诊断）
+
+`build_async` 在同步 singleton 校验阶段返回
+`RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service }`（不会 hang）。
+同步构造无法 `await`，该依赖方向在架构上不成立。
+
+### ✅ 正确做法
+
+```rust
+// 方案 A：把依赖方也改为 async singleton
+#[rust_dix::inject]   // async singleton 的注册方式按项目约定，如 async_singleton 闭包
+async fn build_repository(db: Arc<AsyncDb>) -> Repository { Repository { db } }
+
+// 方案 B：方法内延迟解析（注入 ScopeFactory / provider，在方法里 get_async）
+#[derive(Inject)]
+struct Handler {
+    #[inject(provider)]
+    provider: Arc<ServiceProvider>,
+}
+
+impl Handler {
+    async fn handle(&self) {
+        let db: Arc<AsyncDb> = self.provider.get_async().await.unwrap();
+        // ...
+    }
+}
+```
+
+---
+
+## 反模式 12：AnyKey 误用 / 跨任务不传 AsyncFactoryContext
+
+### ❌ 错误做法
+
+```rust
+// 1) 用 AnyKey 哨兵做单值解析
+let svc = provider.get_keyed::<dyn IStorage>(ServiceKey::any_key()); // Err
+
+// 2) 期望 get_all_keyed 枚举 AnyKey 兜底
+let all = provider.get_all_keyed::<dyn IStorage>(); // 只含显式 key
+
+// 3) spawn 任务解析时不传 ctx：跨任务环可能 hang
+tokio::spawn(async move { sp.get_async::<Dep>().await });
+```
+
+### ✅ 正确做法
+
+- 单值解析用具体 key（字符串或 `ServiceKey::new(...)`）；`AnyKey` 只是注册侧兜底标记。
+- `get_all_keyed` 只列显式 key；需要遍历兜底请按业务 key 逐个 `get_keyed`。
+- 需要在 spawned task 中解析时，工厂内 `let ctx = sp.async_context()`，clone 进任务并用
+  `ctx.get_async::<T>()`；环返回 `CircularDependency`（或 `FactoryPanic`，用
+  `RdiError::is_circular()` 判定）。
+
+---
+
 ## 反模式速查表
 
 | 反模式 | 问题 | 正确做法 |
@@ -432,6 +500,12 @@ impl IUserHandler for UserHandler {
 | 每次重建容器 | 性能开销 | 构建一次 Arc 持有 |
 | 从根 Provider 解析 Scoped | 默认严格校验下解析失败；旧语义导致作用域丢失 | 从 `scope()` 解析；确需旧行为显式 `lenient()` |
 | 误以为 `get_all` 含 keyed | 观察者/广播漏掉 keyed 实现 | 非 keyed 用 `get_all`，keyed 用 `get_all_keyed` |
+| 同步 singleton 依赖 async 服务 | build 期 `SyncSingletonDependsOnAsyncService` | 依赖方改 async，或方法内 `ScopeFactory`/`get_async` 延迟解析 |
+| 用 `any_key()` 做单值解析 | 返回 Err；哨兵只是注册侧标记 | 用具体 key（字符串 / `ServiceKey::new`） |
+| 字符串键用 `ServiceKey::new("x")` | `&str` typed key ≠ 字符串注册的 `String` key | 用 `ServiceKey::from("x")` / `"x".into()` |
+| 同步枚举未初始化 async（`get_all`/`Vec`） | typed panic 或 `Err(AsyncServiceRequiresGetAsync)`（async scoped 在 root 被 scope 校验省略） | async scoped/transient 用 `get_async` 逐项解析 |
+| 以为 AnyKey scoped/transient owned 会被 root scope 拒绝 | owned 是例外，strict root 下允许 | 直接用 `get_keyed_owned`；不进缓存，传递依赖仍受校验 |
+| 跨任务解析不传 `AsyncFactoryContext` | 跨任务环可能死锁 | 工厂内 `sp.async_context()` 并 clone 进任务 |
 | Handler 直接调用 | 绕过 DI | 通过 Mediator 或注入服务 |
 | struct 与 impl 同时用 `#[inject]` | 双重注册，可绕过接口 | struct 用 `#[derive(Inject)]`，impl 用 `#[inject]` |
 
