@@ -44,7 +44,7 @@
 | 后台任务按 tick 建 scope | Singleton 注入 `Arc<dyn ScopeFactory>`（内置、弱引用），不持有 scoped 实例 |
 | 测试替换实现 | 改一行注册换 mock（**最后注册优先**，后注册的覆盖先注册） |
 
-### 0.9.x 语义速查
+### 0.10.x 语义速查
 
 | 规则 | 说明 |
 |------|------|
@@ -54,7 +54,8 @@
 | Scope/释放/构建 | 默认严格 scope 校验（owned 例外）；dispose 逆序幂等；同步 singleton 按注册顺序、async singleton 依赖优先拓扑序 |
 | 异步/诊断/基线 | 同步解析 async → `AsyncServiceRequiresGetAsync`；跨任务传 `AsyncFactoryContext`；`is_circular()` 启发式；MSRV 1.95 + CI/audit |
 
-完整语义见 [0.9 语义权威页](../09-reference/semantics-0.9.md)，MEDI 差异见
+完整语义见 [语义权威页（0.10）](../09-reference/semantics.md)，扩展/自定义 key 见
+[扩展契约](../09-reference/extension-points.md)，MEDI 差异见
 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)，错误见
 [错误目录](../09-reference/error-catalog.md)。
 

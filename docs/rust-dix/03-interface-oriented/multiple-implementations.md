@@ -246,7 +246,8 @@ let admin: Arc<dyn IStorage> = provider.get_keyed("admin").unwrap();     // 精�
 let tenant: Arc<dyn IStorage> = provider.get_keyed("tenant-42").unwrap(); // 兜底，按注册+key 缓存
 ```
 
-> 注意（完整语义见 [0.9 语义权威页](../09-reference/semantics-0.9.md#2-anykey-兜底)）：
+> 注意（完整语义见 [语义权威页（0.10）](../09-reference/semantics.md#2-anykey-兜底)；宏 key 表达式/
+> 下游 `From<LocalKey>` / async AnyKey 边界见 [扩展契约](../09-reference/extension-points.md)）：
 > - `get_all_keyed` 不含 AnyKey 兜底；`ServiceKey::any_key()` 不能做单值解析
 >   （`is_registered_keyed(any_key())` → `false`）。枚举 async 的边界见参考页 §4。
 > - AnyKey 仅同步注册、不做 eager 初始化/单独校验；`keyed_any_scoped` 被同步 singleton

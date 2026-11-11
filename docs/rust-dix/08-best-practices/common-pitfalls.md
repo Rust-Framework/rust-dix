@@ -160,7 +160,7 @@ impl ServiceA {
 
 ### 现象
 
-0.8.0 起（0.9.x 同样适用）从根 Provider 解析 Scoped 服务直接报错，而不是像旧版本那样在根内缓存复用：
+0.8.0 起（0.10.x 同样适用）从根 Provider 解析 Scoped 服务直接报错，而不是像旧版本那样在根内缓存复用：
 
 ```
 Err(RdiError::ScopedFromRootProvider { service: "…Session" })
@@ -170,7 +170,7 @@ Err(RdiError::ScopedFromRootProvider { service: "…Session" })
 
 ### 原因
 
-0.8.0 起默认开启严格 scope 校验（0.9.x 同样适用）（`ServiceProviderOptions::default()`，
+0.8.0 起默认开启严格 scope 校验（0.10.x 同样适用）（`ServiceProviderOptions::default()`，
 `validate_scopes: true`，对齐 ASP.NET Core 开发环境的 `ValidateScopes`）。root
 provider 解析 Scoped 服务（含经 Transient 链间接解析）返回
 `Err(ScopedFromRootProvider)`；不可返回错误的 API（`get_optional` / `get_all` /
@@ -271,6 +271,11 @@ mod services {
 ```
 
 ### 排查
+
+> **0.10 起**：`rdi-E004` 仅对**字符串字面量** key 报编译错误；动态表达式 key 的重复按
+> 运行时"最后注册优先"（last-wins），不会编译失败。上例的
+> `register!(keyed "wechat": singleton: dyn IPayGateway => WechatPay)` 形式自 0.10 起会真正
+> 注册 `WechatPay`（此前 `=> Impl` 会被静默丢弃）。
 
 确保每个 key 在 module 内唯一：
 
@@ -484,7 +489,8 @@ struct OutboxWorker {
 ### 原因
 
 AnyKey 兜底（对齐 MEDI `KeyedService.AnyKey`）要点（完整语义：
-[0.9 语义权威页](../09-reference/semantics-0.9.md#2-anykey-兜底)）：
+[语义权威页（0.10）](../09-reference/semantics.md#2-anykey-兜底) 与
+[扩展契约](../09-reference/extension-points.md)：
 
 1. `get_all_keyed` 只列显式 key，不含兜底；`any_key()` 不能做单值解析
    （`is_registered_keyed(any_key()) == false`）。
@@ -608,8 +614,8 @@ provider.get_keyed::<dyn ITrait>(ServiceKey::new(EnumKey::X))?;
 | `SyncSingletonDependsOnAsyncService` | 同步 singleton 依赖 async 服务 | 依赖方改 async singleton，或方法内 `ScopeFactory`/`get_async` 延迟解析 |
 | `AsyncServiceRequiresGetAsync` | 同步 `get` 解析 async 服务（`get_optional` 返回 `None`，不报错） | 改用 `get_async`/`get_keyed_async` |
 | `AsyncServiceRequiresBuildAsync` | 含 `async_*` 注册却调 `build()` | 改用 `build_async()` |
-| 编译失败：工具链低于 MSRV | 0.9.x MSRV 为 Rust **1.95** | 升级工具链；CI 覆盖 1.95/stable 并跑 `cargo audit`/clippy 零警告 |
-| 后注册的实现没生效 | 0.8.0 起为最后注册优先（0.9.x 同样适用），先注册的被后注册覆盖 | 检查注册顺序；需要"未注册才添加"用 `try_add*` |
+| 编译失败：工具链低于 MSRV | 0.10.x MSRV 为 Rust **1.95** | 升级工具链；CI 覆盖 1.95/stable 并跑 `cargo audit`/clippy 零警告 |
+| 后注册的实现没生效 | 0.8.0 起为最后注册优先（0.10.x 同样适用），先注册的被后注册覆盖 | 检查注册顺序；需要"未注册才添加"用 `try_add*` |
 | dispose 后解析报 `ScopeDisposed` / `ProviderDisposed` | 容器/作用域已释放 | 不要把已 dispose 的 provider/scope 继续传递使用 |
 | 栈溢出 | 循环依赖 | 重构或延迟解析 |
 | 编译失败 | 元组结构体 | 改命名结构体 |

@@ -72,7 +72,7 @@
 > 本章章节页已发布（模式总览 + 语义速查链接）；具体模式小节规划中。
 > 多实现/键控服务的现行用法见
 > [多实现与键控服务](03-interface-oriented/multiple-implementations.md)，
-> 完整 0.9 语义以 [0.9 语义权威页](09-reference/semantics-0.9.md) 为准。
+> 完整 0.10 语义以 [当前版本语义（0.10）](09-reference/semantics.md) 为准。
 
 ---
 
@@ -120,7 +120,8 @@
 
 ### [第九章 参考与附录](09-reference/INDEX.md)
 
-- [0.9 语义权威页](09-reference/semantics-0.9.md)（类型化键/`AnyKey`、async 与环检测、枚举、诊断、工程基线）
+- [当前版本语义（0.10）](09-reference/semantics.md)（类型化键/宏 key 表达式/`AnyKey`、async 与环检测、枚举、诊断、工程基线）
+- [扩展契约与边界](09-reference/extension-points.md)（本地 key `From` + 宏、自定义 resolver、async AnyKey 边界）
 - [RdiError 错误目录](09-reference/error-catalog.md)（全部错误变体与处理建议）
 - [生产环境部署检查清单](09-reference/production-checklist.md)（逐项上线检查）
 - [与 MEDI 的差异清单](01-introduction/medi-differences.md)（逐条对照与迁移）

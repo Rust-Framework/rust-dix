@@ -1643,6 +1643,82 @@ impl IServiceResolver for ServiceProvider {
         self.resolve_keyed_panicking(key, &requested)
     }
 
+    fn get_keyed_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.resolve_keyed_panicking(key, variant)
+    }
+
+    fn try_get_keyed_any_result_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.check_alive()?;
+        let Some(tid) = self.type_map.get(key) else {
+            return Ok(None);
+        };
+        match self.keyed_entry(*tid, variant) {
+            Some(KeyedLookup::Exact(entry)) => self.resolve_entry_catching(entry).map(Some),
+            Some(KeyedLookup::Fallback(entry)) => self
+                .resolve_any_keyed_entry(entry, variant, false)
+                .map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        let tid = self.type_map.get(key)?;
+        match self.keyed_entry(*tid, variant)? {
+            KeyedLookup::Exact(entry) => {
+                if entry.lifetime == ServiceLifetime::Singleton {
+                    return None;
+                }
+                self.check_alive().ok()?;
+                self.create_owned_any_by_entry(entry)
+            }
+            KeyedLookup::Fallback(entry) => {
+                if entry.lifetime == ServiceLifetime::Singleton {
+                    return None;
+                }
+                self.check_alive().ok()?;
+                self.resolve_any_keyed_entry(entry, variant, true).ok()
+            }
+        }
+    }
+
+    fn try_get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.check_alive()?;
+        let Some(tid) = self.type_map.get(key) else {
+            return Ok(None);
+        };
+        match self.keyed_entry(*tid, variant) {
+            Some(KeyedLookup::Exact(entry)) => {
+                if entry.lifetime == ServiceLifetime::Singleton {
+                    return Ok(None);
+                }
+                Ok(self.create_owned_any_by_entry(entry))
+            }
+            Some(KeyedLookup::Fallback(entry)) => {
+                if entry.lifetime == ServiceLifetime::Singleton {
+                    return Ok(None);
+                }
+                self.resolve_any_keyed_entry(entry, variant, true).map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
     fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
         if let Some(entry) = self.unkeyed_entry(tid) {
             return Some(self.resolve_entry_panicking(entry));

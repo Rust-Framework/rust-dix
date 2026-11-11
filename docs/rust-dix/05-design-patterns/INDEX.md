@@ -43,7 +43,9 @@ let one: Arc<dyn Handler> = provider.get_keyed("retry").unwrap();
 ```
 
 > 完整语义（类型化键/AnyKey 缓存/async 枚举）见
-> [0.9 语义权威页](../09-reference/semantics-0.9.md)；模式小节仍规划中。
+> [语义权威页（0.10）](../09-reference/semantics.md) 与
+> [扩展契约](../09-reference/extension-points.md)（宏 key 表达式/下游 key/async AnyKey 边界）；
+> 模式小节仍规划中。
 
 ## 下一步
 

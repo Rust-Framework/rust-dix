@@ -29,7 +29,7 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 ```toml
 [dependencies]
-rust-dix = "0.9"
+rust-dix = "0.10"
 ```
 
 ### 同步应用
@@ -92,10 +92,10 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **确定性释放** | `Scope::dispose()` / `ServiceProvider::dispose()` 按创建逆序释放实例 |
 | **内存安全** | 两个 crate 均 `#![forbid(unsafe_code)]`；MSRV **1.95**；CI matrix + RustSec `cargo audit`；见 [SECURITY.md](SECURITY.md) |
 
-## 容器语义（0.9.x）
+## 容器语义（0.10.x）
 
-rust-dix 0.9.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下五条最易踩坑（完整语义：
-[docs/rust-dix/09-reference/semantics-0.9.md](docs/rust-dix/09-reference/semantics-0.9.md)）：
+rust-dix 0.10.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下五条最易踩坑（完整语义：
+[docs/rust-dix/09-reference/semantics.md](docs/rust-dix/09-reference/semantics.md)）：
 
 | 规则 | 行为 |
 |------|------|
@@ -105,7 +105,12 @@ rust-dix 0.9.x 将单服务解析对齐 MEDI，同时保留构建期安全。以
 | **异步解析与枚举** | async 服务用 `get_async`（同步 `get` → `AsyncServiceRequiresGetAsync`，`get_optional` → `None`）；跨任务环需 `AsyncFactoryContext`；枚举只含已初始化 async singleton（未初始化 → typed panic/`Err`）。 |
 | **诊断与基线** | `is_circular()` 为启发式；MSRV 1.95、`#![forbid(unsafe_code)]`、CI matrix + `cargo audit`，见 [SECURITY.md](SECURITY.md)。 |
 
-0.9 新增：`ServiceKey`/`AnyKey`、`AsyncFactoryContext`、精确诊断与安全基线。与 MEDI 的逐条差异见
+0.10 新增：宏 key **表达式**（`#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]`、
+`register!(keyed <expr>: ...)`，接受字符串字面量、typed `ServiceKey::new(...)` 或下游
+`impl From<LocalKey> for ServiceKey` 的 key 类型）、`IServiceResolver` typed keyed 方法
+（默认字符串回退）、`ServiceKey::as_str()`；参考章含
+[扩展契约](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)。
+**async AnyKey 仍未提供**（workaround 见扩展契约）。与 MEDI 的差异见
 [docs/rust-dix/01-introduction/medi-differences.md](docs/rust-dix/01-introduction/medi-differences.md)。
 
 ## 什么时候应该使用 rust-dix？
@@ -255,6 +260,32 @@ let read: Arc<dyn IDbConnection> =
 assert!(!provider.is_registered_keyed::<dyn IDbConnection>(ServiceKey::new(1u32)));
 assert!(provider.get_keyed::<dyn IDbConnection>(ServiceKey::from("1")).is_err());
 ```
+
+##### 宏 key 表达式（0.10）
+
+`#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]` 接受任意
+`impl Into<ServiceKey>`。下游 key 类型实现 `impl From<LocalKey> for ServiceKey` 后可直接用
+——这是官方扩展路径（**不要复制注入宏**）：
+
+```rust
+impl From<DbKey> for ServiceKey {
+    fn from(k: DbKey) -> Self { ServiceKey::new(k) }
+}
+
+#[derive(Inject)]
+struct ReadService {
+    #[inject(key = DbKey::Read)]                 // typed key 表达式
+    db: Arc<dyn IDbConnection>,
+    #[inject(key = "audit")]                     // 字符串字面量仍可用（String key）
+    audit: Arc<dyn IAuditLog>,
+}
+```
+
+`register!(keyed <expr>: <lifetime>: <Type>)` 同样接受表达式；编译期重复检测（`rdi-E004`）
+**仅覆盖字符串字面量**，动态 key 按运行时"最后注册优先"。字符串键须用
+`ServiceKey::from("x")` / `"x".into()`（`ServiceKey::new("x")` 是 `&str` typed key，不相等）。
+0.10 **不提供** async AnyKey —— 见
+[扩展契约](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)。
 
 #### `AnyKey` 兜底（对齐 MEDI `KeyedService.AnyKey`）
 
@@ -556,7 +587,8 @@ async fn main() {
 - [crates/core —— 核心库文档（中文）](./crates/core/README.zh.md)
 - [crates/macros —— 过程宏文档（中文）](./crates/macros/README.zh.md)
 - [与 MEDI 的差异清单（scope 校验、dispose、keyed、get_all）](docs/rust-dix/01-introduction/medi-differences.md) —— .NET 迁移必读
-- [参考章：0.9 语义权威页 / 错误目录 / 生产检查清单](docs/rust-dix/09-reference/INDEX.md)
+- [参考章：当前版本语义 / 错误目录 / 生产检查清单](docs/rust-dix/09-reference/INDEX.md)
+- [扩展契约与边界（宏 key From / 自定义 resolver / async AnyKey）](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)
 - [业务场景教程](docs/rust-dix/08-best-practices/business-scenarios.md) —— 真实模式
 - [安全策略](./SECURITY.md) —— 漏洞上报、支持版本与安全边界
 - [变更日志](./CHANGELOG.md) —— 发布历史

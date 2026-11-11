@@ -5,6 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-11-11
+
+> **English** · **简体中文**
+
+### English
+
+#### Added
+- **Macro key expressions (backward compatible)**: `#[inject(key = <expr>)]` and
+  `#[inject(owned, key = <expr>)]` accept any `impl Into<ServiceKey>` — string literals
+  (still `String` keys), `ServiceKey::new(Kind::A)` typed keys, or downstream key types
+  after `impl From<LocalKey> for ServiceKey` (the official extension path; do not copy the
+  injection macro). `register!(keyed <expr>: <lifetime>: <Type>)` inside `#[rust_dix::module]`
+  also accepts expressions.
+- **`register!(keyed <expr>: <lt>: dyn Trait => Impl)` now really registers `Impl`**:
+  previously the `=> Impl` part could be silently dropped (the trait's `Default` was used
+  instead); 0.10 honors `Impl`. Keyed `=> Impl` syntax is covered by tests.
+- **Typed-keyed resolver extension**: `IServiceResolver` adds
+  `get_keyed_any_key` / `try_get_keyed_any_result_key` / `get_keyed_owned_any_key` /
+  `try_get_keyed_owned_any_key`. Defaults fall back to the string methods only for
+  string-like keys (`ServiceKey::as_str()`); `ServiceProvider`, `Scope`,
+  `ServiceProviderWrapper` and the build-time validation resolver implement full typed-key
+  lookup (AnyKey fallback, owned, captive checks). `ServiceKey::as_str()` is now public.
+- **Reference: extension points page** (`09-reference/extension-points.md`): official
+  extension contract (`From` + macros), custom `IServiceResolver` guidance, explicit
+  registration + custom resolver pattern, and the async AnyKey boundary/workarounds.
+
+#### Changed
+- Macro keys are now **evaluated as expressions** instead of literal strings. String
+  literals remain source-compatible and still produce `String` keys.
+- `rdi-E004` compile-time duplicate-key detection applies to **string-literal keys only**;
+  dynamic-expression keys follow runtime "last registration wins".
+- Typed-key macro injection and validation participate in the existing captive/AnyKey
+  checks (behavior otherwise unchanged).
+- **Key-expression evaluation timing**: each consumer field evaluates its key once at
+  construction; singletons evaluate once at build/validation; transients evaluate per
+  resolution; `register!(keyed <expr>)` evaluates once per build. Key expressions should be
+  stable and side-effect free (prefer `const`/locals/explicit registration).
+- `ServiceKey::as_str()` returns `Some` for `String` and `&'static str` (including
+  `ServiceKey::new("literal")`) and `None` for enum/integer/custom typed keys and `AnyKey`.
+  Default typed-key resolver methods treat string-like keys as the legacy **`String` key**,
+  which is not equal to an `&str`-typed key in fully typed containers.
+
+#### Fixed
+- `register!(keyed <expr>: <lifetime>: dyn Trait => Impl)` no longer silently drops
+  `=> Impl` (previously the trait's `Default` could be registered instead of `Impl`).
+- `#[inject(provider, key = ...)]` is now a clear compile error (provider fields cannot be
+  keyed; inject `Arc<ServiceProvider>` and resolve keyed services on demand).
+
+#### Migration (0.9 → 0.10)
+- Source-compatible for existing string-key code. Custom `IServiceResolver` implementations
+  keep compiling, but their default typed-key methods only support string-like keys; override
+  the four `*_key` methods to support typed keys.
+- Downstream frameworks should use `impl From<LocalKey> for ServiceKey` + existing macros
+  instead of copying the injection macro.
+
+#### Notes
+- **`async_any_*` is still not provided.** `get_keyed_async` falls back to the synchronous
+  AnyKey path; use finite `async_keyed_*` registrations, or a sync AnyKey service with an
+  internal per-key `tokio::sync::OnceCell`/map. See the extension-points page for the
+  re-evaluation criteria.
+- No MSRV/behavior breakage; MSRV remains **1.95**.
+
+### 简体中文
+
+#### 新增
+- **宏 key 表达式（向后兼容）**：`#[inject(key = <expr>)]` 与
+  `#[inject(owned, key = <expr>)]` 接受任意 `impl Into<ServiceKey>`——字符串字面量（仍为
+  `String` key）、`ServiceKey::new(Kind::A)` typed key，或下游 key 类型实现
+  `impl From<LocalKey> for ServiceKey` 后直接使用（**官方扩展路径，勿复制注入宏**）。
+  `#[rust_dix::module]` 内的 `register!(keyed <expr>: <lifetime>: <Type>)` 同样接受表达式。
+- **`register!(keyed <expr>: <lt>: dyn Trait => Impl)` 现在真正注册 `Impl`**：此前 `=> Impl`
+  可能被静默丢弃（改用 trait 的 `Default`）；0.10 按 `Impl` 注册，并有测试覆盖。
+- **typed keyed 解析扩展**：`IServiceResolver` 新增
+  `get_keyed_any_key` / `try_get_keyed_any_result_key` / `get_keyed_owned_any_key` /
+  `try_get_keyed_owned_any_key`。默认实现仅对 string-like key（`ServiceKey::as_str()`）回退
+  字符串方法；`ServiceProvider`、`Scope`、`ServiceProviderWrapper` 与构建期
+  ValidationResolver 实现完整 typed key（AnyKey 兜底、owned、captive 检查）。
+  `ServiceKey::as_str()` 成为公开 API。
+- **参考页：扩展契约与边界**（`09-reference/extension-points.md`）：官方扩展契约
+  （`From` + 宏）、自定义 `IServiceResolver`、显式注册 + 自定义 resolver 模式，以及
+  async AnyKey 边界/workaround。
+
+#### 变更
+- 宏 key 由字面量字符串改为**表达式求值**；字符串字面量源码兼容且仍产生 `String` key。
+- `rdi-E004` 编译期重复 key 检测**仅对字符串字面量**生效；动态表达式 key 按运行时
+  "最后注册优先"。
+- typed key 宏注入与验证期 captive/AnyKey 行为沿袭既有校验，其余行为不变。
+- **key 表达式求值时机**：每个消费者字段构造时求值一次；singleton 在 build/validation
+  求值一次；transient 每次解析求值一次；`register!(keyed <expr>)` 每次 build 求值一次。
+  key 表达式应稳定、无副作用（建议 `const`/局部变量/显式注册）。
+- `ServiceKey::as_str()` 对 `String` 与 `&'static str`（含 `ServiceKey::new("literal")`）
+  返回 `Some`；enum/整数/自定义 typed key、`AnyKey` 返回 `None`。默认 typed-key resolver
+  会把 string-like key 当作旧 **`String` key**，在完整 typed 容器中与 `&str` typed key
+  不相等。
+
+#### 修复
+- `register!(keyed <expr>: <lifetime>: dyn Trait => Impl)` 不再静默丢弃 `=> Impl`
+  （此前可能错误注册 trait 的 `Default` 而非 `Impl`）。
+- `#[inject(provider, key = ...)]` 现在是明确编译错误（provider 字段不能带 key；应注入
+  `Arc<ServiceProvider>` 并在方法内按需解析）。
+
+#### 迁移（0.9 → 0.10）
+- 现有字符串 key 代码源码兼容。自定义 `IServiceResolver` 实现仍可编译，但默认 typed-key
+  方法仅支持 string-like key；要支持 typed key 需 override 4 个 `*_key` 方法。
+- 下游框架推荐 `impl From<LocalKey> for ServiceKey` + 现有宏，而非复制注入宏。
+
+#### 说明
+- **`async_any_*` 仍未提供**：`get_keyed_async` 对 AnyKey 回退同步路径；有限 key 用
+  `async_keyed_*`，动态 key 用同步 AnyKey + 内部 per-key `tokio::sync::OnceCell`/map。
+  再评估条件见扩展页。
+- 无 MSRV/行为破坏；MSRV 仍为 **1.95**。
+
 ## [0.9.1] - 2026-11-11
 
 > **English** · **简体中文**
@@ -17,8 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the interface-oriented/checklist pages. Corrected quick-start snippets were verified
   with a `cargo check` probe crate (Arc dependency, owned bare dependency, trait-impl
   registration).
-- Added the **Reference** chapter (docs `09-reference/`): `semantics-0.9` (single authority
-  for 0.9 semantics), an `RdiError` catalog, and the production deployment checklist
+- Added the **Reference** chapter (docs `09-reference/`): `semantics` (single authority
+  for 0.9 semantics at that time), an `RdiError` catalog, and the production deployment checklist
   (moved from `docs/production-deployment-checklist.md` and now linked from the book,
   `docs/README.md` and `INDEX.json`).
 - Deduplicated repeated 0.9 semantics into at most 5-line contextual summaries that link to
@@ -47,7 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#[inject]` / `#[derive(Inject)]` 示例（缺字段 `#[inject]` / `#[inject(owned)]` 等）。
   修正后的 quick-start 片段已用临时 `cargo check` probe crate 验证（Arc 依赖、owned 裸依赖、
   trait impl 注册三类）。
-- 新增**参考章**（docs `09-reference/`）：`semantics-0.9`（0.9 语义唯一权威页）、
+- 新增**参考章**（docs `09-reference/`）：语义权威页（当时的 0.9 语义）、
   `RdiError` 错误目录、生产部署检查清单（自 `docs/production-deployment-checklist.md`
   迁入，并登记到目录、`docs/README.md` 与 `INDEX.json`，修掉孤儿页）。
 - 去重重复的 0.9 语义表：各页仅保留 **≤5 行**情境摘要并链接权威页；`crates/*` README
@@ -763,6 +875,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.10.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.10.0
 [0.9.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.9.0
 [0.8.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.1

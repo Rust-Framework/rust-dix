@@ -1,7 +1,7 @@
 # 参考 · RdiError 错误目录
 
 > 集中列出 `RdiError` 变体、触发条件与处理建议。判错/日志/告警以此为速查；
-> 语义背景见 [0.9 语义权威页](semantics-0.9.md)。
+> 语义背景见 [语义权威页（0.10）](semantics.md)。
 >
 > `RdiError` 为 `#[non_exhaustive]`：新增变体不破坏下游 `match`，但匹配处需保留 `_ =>` 分支。
 
@@ -10,7 +10,7 @@
 | 变体 | 触发条件 | 处理建议 |
 |------|----------|----------|
 | `ServiceNotFound { ty, context }` | 非 keyed 服务未注册（`get` / `get_owned` 等 required API） | 检查注册类型是否与解析类型一致（`singleton::<dyn Trait>` vs 具体类型）；`context` 含解析链时用于定位上游依赖 |
-| `KeyedServiceNotFound { key, ty, .. }` | keyed 查询无精确注册且无 `AnyKey` 兜底 | 检查 key 类型/值：`ServiceKey::new("x")`（`&str`）≠ 字符串注册的 `String` key，字符串键用 `ServiceKey::from("x")` / `"x".into()`；确认是否需要 `keyed_any_*` 兜底 |
+| `KeyedServiceNotFound { key, ty, .. }` | keyed 查询无精确注册且无 `AnyKey` 兜底 | 检查 key 类型/值：`ServiceKey::new("x")`（`&str`）≠ 字符串注册的 `String` key，字符串键用 `ServiceKey::from("x")` / `"x".into()`；确认是否需要 `keyed_any_*` 兜底。0.10 宏 key 可传 typed key/`From` 下游 key，注意与注册侧 key 类型一致 |
 | `CircularDependency(path)` | 同步解析栈或 async 解析链检测到自引用/交叉递归 | 重构依赖，或改用 `Arc<dyn ScopeFactory>` / 延迟解析；不要 `.unwrap()` 后忽略 |
 | `SingletonDependsOnScoped { singleton, scoped }` | build 期 captive dependency 检测：Singleton 直接/间接依赖 Scoped | Singleton 只依赖 Singleton/Transient；Scoped 依赖改为每 scope 解析 |
 | `FactoryPanic { service, payload }` | 工厂 panic 被捕获并转为 typed 错误（用户工厂 panic/`unwrap`/`expect`） | 修复工厂；payload 含原始信息。环被 `unwrap` 时 payload 含 `CircularDependency`，可用 `is_circular()` 判定 |
@@ -49,6 +49,6 @@ if err.is_circular() {
 
 ## 相关
 
-- [0.9 语义权威页](semantics-0.9.md)
+- [语义权威页（0.10）](semantics.md)
 - [生产环境部署检查清单](production-checklist.md)
 - [常见陷阱与排查](../08-best-practices/common-pitfalls.md)

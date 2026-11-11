@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.9"
+rust-dix = "0.10"
 ```
 
 > **MSRV**：Rust **1.95**。两个 crate 均 `#![forbid(unsafe_code)]`；CI 跑测试矩阵 +
@@ -156,7 +156,11 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
 keyed API 接受 `impl Into<ServiceKey>`：字符串（`&str` / `String`）保持兼容，
 `ServiceKey::new(value)` 支持 enum/整数/自定义键。键相等包含值的类型——
 `ServiceKey::new(1u32) != ServiceKey::from("1")`。`ServiceKey::any_key()` /
-`KeyedService::any_key()` 是兜底哨兵，`ServiceKey::is_any()` 判别它。
+`KeyedService::any_key()` 是兜底哨兵，`ServiceKey::is_any()` 判别它；
+`ServiceKey::as_str()` 对 `String` / `&'static str`（含 `ServiceKey::new("literal")`）返回
+`Some`；enum/整数/自定义 typed key 与 `AnyKey` 返回 `None`。默认 typed-key resolver 方法在
+`Some` 时回退旧字符串方法，因此 typed `&'static str` key 会被当作 **`String` key**（完整
+typed 容器中不相等）；typed key 请用 `*_key` 方法。
 **字符串键易错点**：
 `ServiceKey::new("x")` 是 `&str` typed key，与 `keyed_singleton("x", …)` 存储的
 `String` key **不相等**；字符串键请用 `"x".into()` / `ServiceKey::from("x")`，
@@ -182,7 +186,7 @@ let read: Arc<dyn IDbConnection> = provider.get_keyed(ServiceKey::new(DbKey::Rea
 ```
 
 `AnyKey` 语义（完整说明见
-[0.9 语义权威页](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md#2-anykey-兜底)）：
+[语义权威页（0.10）](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics.md#2-anykey-兜底)）：
 - 精确 key 注册优先，无精确注册时才使用兜底；
 - singleton/scoped 兜底实例**按 (注册/类型, 请求 key) 缓存**（不同 AnyKey 注册即使同 key 也
   独立；scoped 每 scope 每 (注册, key) 一份）；build validation 消费的 singleton 预填充缓存，
@@ -215,7 +219,15 @@ panic，`*_result` 返回 `Err`）：
 | `get_any(type_name)` / `get_by_type_id(TypeId)` | 类型擦除单值查询（字符串 / TypeId 路径） |
 | `get_keyed_any(type_name, variant)` / `get_keyed_by_type_id(TypeId, key)` | 类型擦除键控查询 |
 | `get_all_any_result(type_name)` / `get_all_any(type_name)` | 类型擦除 `get_all`（`*_result` 对未初始化 async 返回 `Err`） |
+| `get_keyed_any_key(type_name, &ServiceKey)` / `try_get_keyed_any_result_key(...)` | **typed keyed** 查询（0.10）；默认仅当 `ServiceKey::as_str() == Some` 时回退字符串路径 |
+| `get_keyed_owned_any_key(type_name, &ServiceKey)` / `try_get_keyed_owned_any_key(...)` | typed keyed owned 查询（0.10）；默认同样仅字符串回退 |
 | `try_get_any_result(type_name)` / `try_get_keyed_any_result(type_name, variant)` | 不 panic 的可失败探测 |
+
+> 4 个 `*_key` 方法有默认实现，但仅支持 string-like key（`ServiceKey::as_str()`）；
+> `ServiceProvider` / `Scope` / `ServiceProviderWrapper` 与构建期 ValidationResolver 已覆盖为
+> 完整 typed key（AnyKey 兜底、owned、captive 检查）。自定义 `IServiceResolver` 实现必须
+> override 才能支持非字符串 key。扩展契约：
+> [扩展契约](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)。
 
 #### `#[rust_dix::inject]` — 基于属性宏的自动注册（推荐）
 
@@ -292,12 +304,12 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 | `.is_registered_keyed::<T>(key)` | `bool` | 是否有精确 keyed 注册或 `AnyKey` 兜底（`any_key()` → `false`） |
 | `.scope()` | `Scope` | 新建作用域 |
 | `.async_context()` | `Option<AsyncFactoryContext>` | 捕获当前异步链，供脱离任务做跨任务环检测 |
-| `.dispose()` | `()` | 幂等；按创建逆序释放实例，之后解析返回 `Err(ProviderDisposed)`（0.8.0 起，0.9.x 同样适用） |
+| `.dispose()` | `()` | 幂等；按创建逆序释放实例，之后解析返回 `Err(ProviderDisposed)`（0.8.0 起，0.10.x 同样适用） |
 
-> **0.9.x 语义（摘要）**：最后注册优先；`get_all` 仅含非 keyed（`get_all_keyed` 只列显式
+> **0.10.x 语义（摘要）**：最后注册优先；`get_all` 仅含非 keyed（`get_all_keyed` 只列显式
 > key，不含 AnyKey 兜底）；key 可为类型化键；scope 默认严格（root 解析 Scoped →
 > `ScopedFromRootProvider`，`get_owned`/keyed owned 为调用方持有例外）。完整语义见
-> [0.9 语义权威页](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md)。
+> [语义权威页（0.10）](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics.md)。
 
 > **枚举与 async**：`get_all` / `get_all_keyed` / `#[inject] Vec<Arc<T>>` 包含已初始化的
 > async singleton；未初始化 async 服务得到 `AsyncServiceRequiresGetAsync`（枚举按签名
@@ -331,9 +343,9 @@ let all: Vec<Arc<dyn IPlugin>> = provider.get_all();
 | `#[inject(provider)] provider: Arc<ServiceProvider>` | 按需解析；eager singleton 中同样可用。**注意**：singleton 持有会形成 `容器 → singleton → 容器` 强引用环，优先用 `ScopeFactory` |
 | `#[inject] provider: Arc<ServiceProvider>` | 同一内建服务的普通写法（对齐 MEDI `IServiceProvider`）；同样有强引用环风险 |
 | `#[inject] scope_factory: Arc<dyn ScopeFactory>` | singleton worker 推荐：每个任务一个 scope；弱引用单例，不会形成 `Arc` 环 |
-| `#[inject(key = "k")] field: Arc<T>` | 键控注入：按 key `k` 解析 `T`（字符串或 `ServiceKey` typed key） |
+| `#[inject(key = <expr>)] field: Arc<T>` | 键控注入：`expr: impl Into<ServiceKey>`（字符串字面量 / `ServiceKey::new(...)` / 下游 `From` key） |
 | `#[inject(owned)] field: T` | owned（调用方持有）实例；`T` 必须为 Transient/Scoped（Singleton → 错误） |
-| `#[inject(owned, key = "k")] field: T` | owned + 键控注入；生命周期规则同 `#[inject(owned)]` |
+| `#[inject(owned, key = <expr>)] field: T` | owned + 键控注入；生命周期规则同 `#[inject(owned)]` |
 
 显式 `singleton::<dyn ScopeFactory>(...)` 注册优先于内建实现。
 

@@ -40,6 +40,14 @@
 //! `ServiceKey::new(1u32)` is **not** equal to `"1"`; use
 //! `ServiceKey::from("name")` / `"name".into()` for string-keyed registrations.
 //!
+//! The injection macros accept any **expression** convertible to
+//! [`ServiceKey`] — string literals keep working:
+//! `#[inject(key = "fast")]`, `#[inject(key = ServiceKey::new(Kind::Fast))]`, or a
+//! downstream key value implementing `From<LocalKey> for ServiceKey` (the
+//! official extension path for frameworks; do not duplicate the injection
+//! macros). See the repository reference chapter for details:
+//! <https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md>.
+//!
 //! A registration with [`KeyedService::any_key`] (or
 //! [`ServiceKey::any_key`]) acts as a fallback for keys that have no exact
 //! registration. Singleton/scoped fallback instances are cached per
@@ -69,6 +77,31 @@
 //! // No exact registration for "unknown": the AnyKey fallback is used.
 //! let fallback = provider.get_keyed::<dyn Strategy>("unknown").unwrap();
 //! assert_eq!(fallback.name(), "fallback");
+//! ```
+//!
+//! For typed-key constructor injection:
+//!
+//! ```rust
+//! use rust_dix::*;
+//! use std::sync::Arc;
+//!
+//! #[derive(Debug, PartialEq, Eq, Hash)]
+//! enum Channel { Primary }
+//! struct Sink;
+//!
+//! #[derive(Inject)]
+//! struct Consumer {
+//!     #[inject(key = ServiceKey::new(Channel::Primary))]
+//!     sink: Arc<Sink>,
+//! }
+//!
+//! let provider = ServiceCollection::new()
+//!     .keyed_singleton(ServiceKey::new(Channel::Primary), |_| Arc::new(Sink))
+//!     .transient(|r| __rdi_construct_Consumer(r))
+//!     .build()
+//!     .unwrap();
+//! let consumer: Arc<Consumer> = provider.get().unwrap();
+//! let _ = &consumer.sink;
 //! ```
 //!
 //! # Build-time validation
@@ -145,8 +178,10 @@
 //!     registrations take precedence; `get_all_keyed` excludes fallbacks
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
 //! - **Attribute-based auto-registration**: `#[rust_dix::inject]` on structs or
-//!   trait impls (`#[inject(key = "...")]`, `#[inject(owned)]`,
-//!   `#[inject(owned, key = "...")]` supported)
+//!   trait impls (`#[inject(key = <expr>)]`, `#[inject(owned)]`,
+//!   `#[inject(owned, key = <expr>)]`; key expressions accept string literals,
+//!   typed [`ServiceKey`] values, or downstream key types via
+//!   `From<LocalKey> for ServiceKey`)
 //! - **Compile-time module scanning**: `#[rust_dix::module]` collects
 //!   `register!()` declarations
 //! - **Cross-DLL support**: named service registry for cdylib plugins

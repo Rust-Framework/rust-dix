@@ -222,6 +222,36 @@ impl IServiceResolver for Scope {
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_keyed_any(key, variant)
     }
+    fn get_keyed_any_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.scope_provider.get_keyed_any_key(key, variant)
+    }
+    fn try_get_keyed_any_result_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.scope_provider
+            .try_get_keyed_any_result_key(key, variant)
+    }
+    fn get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.scope_provider.get_keyed_owned_any_key(key, variant)
+    }
+    fn try_get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.scope_provider
+            .try_get_keyed_owned_any_key(key, variant)
+    }
     fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_by_type_id(tid)
     }

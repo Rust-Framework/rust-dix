@@ -3,18 +3,19 @@
     "title": "rust-dix 开发者手册",
     "subtitle": "面向接口·键控服务·设计模式落地",
     "docTitle": "rust-dix 开发者手册",
-    "description": "rust-dix 开发者手册：面向接口的 Rust 依赖注入（DI）框架 — 三种生命周期、类型化键控服务与 AnyKey、异步环检测与诊断、过程宏自动注册、0.9 语义权威页与生产检查清单。 | rust-dix developer guide — interface-oriented DI for Rust.",
+    "description": "rust-dix 开发者手册：面向接口的 Rust 依赖注入（DI）框架 — 三种生命周期、类型化键控服务与 AnyKey、宏 key 表达式与扩展契约、异步环检测与诊断、过程宏自动注册、当前版本语义（0.10）与生产检查清单。 | rust-dix developer guide — interface-oriented DI for Rust.",
     "category": "library",
-    "tags": ["rust", "rust-dix", "di", "dependency-injection", "interface-oriented", "typed-keys", "anykey", "async", "design-patterns"],
+    "tags": ["rust", "rust-dix", "di", "dependency-injection", "interface-oriented", "typed-keys", "macro-key-expr", "extension-points", "anykey", "async", "design-patterns"],
     "repoUrl": "https://github.com/Rust-Framework/rust-dix",
     "demoUrl": "",
     "featured": true,
     "sortOrder": 2,
-    "version": "0.9.1",
+    "version": "0.10.0",
     "language": "zh-CN",
     "author": "Start",
     "logo": "logo.svg",
     "foreword": "FOREWORD.md",
+    "publicationPolicy": "仅登记已发布页面；规划中的章节/小节不列入 sections，目录页只提供已发布链接。",
     "pathRules": {
       "chapterIndex": "{chapterId}/INDEX.md",
       "sectionFile": "{chapterId}/{sectionId}.md"
@@ -33,7 +34,7 @@
             {
               "id": "medi-differences",
               "title": "与 MEDI 的差异清单",
-              "summary": "scope 校验、dispose、keyed/AnyKey、get_all 与 async 枚举差异；0.7.x/0.8.x 迁移速查（0.9.x）",
+              "summary": "scope 校验、dispose、keyed/AnyKey、get_all 与 async 枚举差异；0.7.x/0.8.x 迁移速查（0.10.x）",
               "readingTime": 12,
               "difficulty": "intermediate"
             }
@@ -105,7 +106,7 @@
             {
               "id": "usage-guide",
               "title": "用法指南与决策矩阵",
-              "summary": "导入约定、场景推荐、构造函数策略与 0.9 语义要点",
+              "summary": "导入约定、场景推荐、构造函数策略与 0.10 语义要点",
               "readingTime": 14,
               "difficulty": "intermediate"
             },
@@ -119,7 +120,7 @@
             {
               "id": "common-pitfalls",
               "title": "常见陷阱与排查",
-              "summary": "高频错误与解决方案（含 0.9 async 枚举/AnyKey 陷阱）",
+              "summary": "高频错误与解决方案（含 async 枚举/AnyKey/宏 key 陷阱）",
               "readingTime": 12,
               "difficulty": "intermediate"
             },
@@ -141,14 +142,21 @@
         {
           "id": "09-reference",
           "title": "参考与附录",
-          "subtitle": "0.9 语义权威页、错误目录与生产部署检查清单",
+          "subtitle": "语义权威页（0.10）、扩展契约、错误目录与生产部署检查清单",
           "sections": [
             {
-              "id": "semantics-0.9",
-              "title": "0.9 语义权威页",
-              "summary": "类型化键/AnyKey、async 环检测、枚举、诊断与工程基线的唯一权威说明",
+              "id": "semantics",
+              "title": "当前版本语义（0.10）",
+              "summary": "类型化键/宏 key 表达式/AnyKey、async 环检测、枚举、诊断与工程基线的唯一权威说明",
               "readingTime": 14,
               "difficulty": "intermediate"
+            },
+            {
+              "id": "extension-points",
+              "title": "扩展契约与边界",
+              "summary": "From 本地 key + 宏、自定义 IServiceResolver typed 方法、显式注册 + resolver、async AnyKey 边界",
+              "readingTime": 12,
+              "difficulty": "advanced"
             },
             {
               "id": "error-catalog",

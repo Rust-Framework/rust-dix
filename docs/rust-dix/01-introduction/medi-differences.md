@@ -1,18 +1,18 @@
 # 与 MEDI 的差异清单
 
-> 适用版本：**rust-dix 0.9.1**（0.9.0 行为 + 文档补丁）。本文逐条列出 rust-dix
+> 适用版本：**rust-dix 0.10.0**。本文逐条列出 rust-dix
 > 与 Microsoft.Extensions.DependencyInjection（下称 MEDI，.NET 的依赖注入抽象）在**可观察行为**上的
 > 相同点与差异点，重点标注那些"看起来一样、实际不一样"的语义，供 .NET 迁移、评审与
 > 排障时对照。
 >
-> 说明：下文各节的"rust-dix 0.9.x"指当前 0.9.x 语义；旧版本引入点（0.8.0 / 0.8.1）在需要处注明。
+> 说明：下文各节的"rust-dix 0.10.x"指当前 0.10.x 语义；旧版本引入点（0.8.0 / 0.8.1 / 0.9）在需要处注明。
 
 ## 阅读方式
 
 | 列 | 含义 |
 |----|------|
 | **MEDI 行为** | .NET `ServiceCollection` / `ServiceProvider`（含 ASP.NET Core 托管环境）的默认行为 |
-| **rust-dix 0.9.x** | 本框架的默认行为；非默认行为会显式写"需开启 …" |
+| **rust-dix 0.10.x** | 本框架的默认行为；非默认行为会显式写"需开启 …" |
 | **是否对齐** | ✅ 语义等价（API 名称可能不同）／⚠️ 部分对齐（需注意参数/边界）／❌ 不同（Rust 特化） |
 | **迁移建议** | 从 .NET 迁来或从 rust-dix 0.7.x 升级时的动作 |
 
@@ -25,8 +25,8 @@
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | `GetRequiredService<T>()` / `GetService<T>()` 返回**最后注册**的那个实现（`IEnumerable<T>` 与 keyed 是例外，见 1.2）。 |
-| **rust-dix 0.9.x** | ✅ 同 MEDI。`get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 等**所有单实例路径**都遵循"最后注册优先"；同一 key 的 keyed 重复注册同样是后注册生效。 |
-| **是否对齐** | ✅ 对齐（0.7.x 曾按"先注册优先"，0.8.0 起（0.9.x 同样适用）修正）。 |
+| **rust-dix 0.10.x** | ✅ 同 MEDI。`get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 等**所有单实例路径**都遵循"最后注册优先"；同一 key 的 keyed 重复注册同样是后注册生效。 |
+| **是否对齐** | ✅ 对齐（0.7.x 曾按"先注册优先"，0.8.0 起（0.10.x 同样适用）修正）。 |
 | **迁移建议** | 0.7.x 中依赖"先注册优先"做覆盖的代码，改用 `try_add*`（未注册才添加）或调整注册顺序。 |
 
 ### 1.2 多实现：`get_all` 不含 keyed
@@ -34,7 +34,7 @@
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | `GetServices<T>()` 只返回**非 keyed** 注册（按注册顺序）；keyed 实现要用 `GetKeyedServices<T>(key)`（按 key 过滤），或 `GetKeyedServices<T>(KeyedService.AnyKey)` 枚举全部 keyed。 |
-| **rust-dix 0.9.x** | ✅ 同 MEDI。`get_all::<T>()` 与 `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册，按注册顺序。keyed 实现用 `get_all_keyed::<T>()`（返回该类型**显式 keyed** 注册，按注册顺序；`AnyKey` 兜底不计入，对齐 MEDI）。 |
+| **rust-dix 0.10.x** | ✅ 同 MEDI。`get_all::<T>()` 与 `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册，按注册顺序。keyed 实现用 `get_all_keyed::<T>()`（返回该类型**显式 keyed** 注册，按注册顺序；`AnyKey` 兜底不计入，对齐 MEDI）。 |
 | **是否对齐** | ✅ 语义对齐：`get_all` ↔ `GetServices`，`get_all_keyed` ↔ `GetKeyedServices(AnyKey)`。⚠️ API 形态不同：没有"按 key 枚举"的批量 API，按 key 定位用 `get_keyed(key)`（单实例，最后注册生效）。 |
 | **迁移建议** | 0.7.x 中把 keyed 实现也塞进 `get_all` 收集的代码（如观察者广播），改为：非 keyed 注册 → `get_all`；keyed 注册 → `get_all_keyed`；两者都要就分别取并合并。 |
 
@@ -43,7 +43,7 @@
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | `TryAddSingleton` / `TryAddScoped` / `TryAddTransient`：**仅当该服务尚未注册**时添加，已注册则跳过（不覆盖）。 |
-| **rust-dix 0.9.x** | ✅ 同 MEDI。`try_add*` 系列仍是"未注册才添加"：**仅当该类型没有非 keyed 注册**时才添加（keyed 注册不阻止 `try_add`），不参与"最后注册覆盖"。 |
+| **rust-dix 0.10.x** | ✅ 同 MEDI。`try_add*` 系列仍是"未注册才添加"：**仅当该类型没有非 keyed 注册**时才添加（keyed 注册不阻止 `try_add`），不参与"最后注册覆盖"。 |
 | **是否对齐** | ✅ 对齐。 |
 | **迁移建议** | 需要"默认实现 + 可被外部覆盖"的组合根写法：先 `try_add` 默认实现，外部再 `add`/`singleton` 覆盖（后注册生效）。 |
 
@@ -54,7 +54,7 @@
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | 裸 `BuildServiceProvider()` 默认 **不做** scope 校验（`ServiceProviderOptions.ValidateScopes = false`），root provider 解析 Scoped 会被缓存到 root；ASP.NET Core 开发环境默认 `ValidateScopes = true`，从 root 解析 Scoped 抛 `InvalidOperationException`。 |
-| **rust-dix 0.9.x** | 默认**严格**（等价 `ServiceProviderOptions::default()`，`validate_scopes: true`）：root provider 解析 Scoped 服务（含经 Transient 链间接解析）返回 `Err(RdiError::ScopedFromRootProvider { service })`；`get_optional` / `try_*` 把该服务视为"在 root 不可解析"（`None`），`get_all` / `get_all_keyed` 省略该服务（空/不含）。`provider.scope()` 创建的 Scope 内解析 Scoped 不受影响。**例外**：`get_owned::<T>()` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped——owned 实例交给调用方、不进入 scope 缓存、不被容器跟踪；但该服务构造函数内部解析的 Scoped 依赖仍按 root 规则校验（会得到 `ScopedFromRootProvider`）。 |
+| **rust-dix 0.10.x** | 默认**严格**（等价 `ServiceProviderOptions::default()`，`validate_scopes: true`）：root provider 解析 Scoped 服务（含经 Transient 链间接解析）返回 `Err(RdiError::ScopedFromRootProvider { service })`；`get_optional` / `try_*` 把该服务视为"在 root 不可解析"（`None`），`get_all` / `get_all_keyed` 省略该服务（空/不含）。`provider.scope()` 创建的 Scope 内解析 Scoped 不受影响。**例外**：`get_owned::<T>()` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped——owned 实例交给调用方、不进入 scope 缓存、不被容器跟踪；但该服务构造函数内部解析的 Scoped 依赖仍按 root 规则校验（会得到 `ScopedFromRootProvider`）。 |
 | **是否对齐** | ⚠️ 默认值相反：rust-dix 对齐的是 **ASP.NET Core 开发环境**的 `ValidateScopes = true`，而裸 MEDI `BuildServiceProvider()` 默认关闭。 |
 | **补齐方式** | 需要 0.7.x 的 root-scope 语义（root 直接解析 Scoped 并缓存为根内单例）：`ServiceCollection::new()…build_with(ServiceProviderOptions::lenient())`，即 `validate_scopes: false`。 |
 | **迁移建议** | 0.7.x 中从 root 解析 Scoped 的代码：① 改用 `provider.scope()` 并在 scope 内解析（推荐）；② 或显式 `build_with(ServiceProviderOptions::lenient())` 保持旧行为（仅限确实需要 root 单例化的服务）。 |
@@ -105,7 +105,7 @@ let s2: Arc<Session> = provider.get().unwrap(); // 与 s1 同一实例（root �
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | `IServiceScope` 即 `IDisposable`；`scope.Dispose()` 按创建逆序释放 `IDisposable` 的 Scoped/Transient 实例。root `ServiceProvider` 实现 `IDisposable`，`Dispose()` 释放 singleton 与 root scoped，之后解析抛 `ObjectDisposedException`。 |
-| **rust-dix 0.9.x** | 对齐但显式化：① `Scope` 自动跟踪该 scope 创建的 Scoped 实例，`Scope::dispose()`/`Drop` 按**创建逆序**释放实例，随后按**注册逆序**执行 `register_disposable` 清理闭包；dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `None`/空）。② `ServiceProvider::dispose()` 按创建逆序释放全部 singleton 与 root scoped 实例、逆序执行清理、清空 named 注册，并标记 provider 已释放，之后解析返回 `Err(ProviderDisposed)`。两者均幂等。 |
+| **rust-dix 0.10.x** | 对齐但显式化：① `Scope` 自动跟踪该 scope 创建的 Scoped 实例，`Scope::dispose()`/`Drop` 按**创建逆序**释放实例，随后按**注册逆序**执行 `register_disposable` 清理闭包；dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `None`/空）。② `ServiceProvider::dispose()` 按创建逆序释放全部 singleton 与 root scoped 实例、逆序执行清理、清空 named 注册，并标记 provider 已释放，之后解析返回 `Err(ProviderDisposed)`。两者均幂等。 |
 | **是否对齐** | ⚠️ 部分对齐：`Scope` 的 Drop 自动 dispose 等价 MEDI 的 using/dispose 习惯；但 rust-dix 默认**不**通过 Drop 释放 root provider 的 singleton（需显式 `provider.dispose()`），而 MEDI 中 `ServiceProvider.Dispose()` 也是显式调用——这一点实际一致。差异在于：Rust 侧 `Arc<ServiceProvider>` 常被多处持有，"最后一个 Arc 释放"不保证调用 dispose，因此**显式 dispose** 是契约要求。 |
 | **迁移建议** | 应用关闭路径显式 `provider.dispose()`；请求级 scope 用显式 `scope.dispose()` 或让其 Drop。`get_owned` 取得的实例归调用方所有，**不进入**容器跟踪/释放流程（Rust 特有，见 §9）。 |
 
@@ -136,7 +136,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 >   只在 dispose 时 drain 一次（dispose 幂等且之后 provider 已标记释放），因此请在
 >   dispose 之前注册。
 
-> **确定性构建顺序**：build 期**同步 singleton 按注册顺序创建**（0.8.0 起（0.9.x 同样适用））、
+> **确定性构建顺序**：build 期**同步 singleton 按注册顺序创建**（0.8.0 起（0.10.x 同样适用））、
 > **async singleton 按依赖优先拓扑序递归初始化**（0.8.1 起），两者均确定、不依赖
 > `HashMap` 迭代顺序；释放按**创建逆序**进行，即"**后建的先释放、先建的后释放**"，
 > 构建与释放顺序均可复现。
@@ -148,7 +148,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | `IServiceScopeFactory` 由容器提供，强引用容器；singleton 注入它不会造成泄漏（容器与 factory 同生命周期，GC 回收环）。 |
-| **rust-dix 0.9.x** | 内置 `dyn ScopeFactory` 无需注册即可解析（显式注册优先；本身是缓存单例），**持 `Weak<ServiceProvider>`**：singleton 保存它不会形成 `容器 → singleton → 容器` 的 `Arc` 环；代价是**容器必须先于其创建的服务存活**——provider `dispose()` 后 `create_scope()` 仍能返回 scope，但 scope 解析返回 `Err(ProviderDisposed)`；provider 的 `Arc` 全部释放后弱引用无法升级，`create_scope()` 会 panic。 |
+| **rust-dix 0.10.x** | 内置 `dyn ScopeFactory` 无需注册即可解析（显式注册优先；本身是缓存单例），**持 `Weak<ServiceProvider>`**：singleton 保存它不会形成 `容器 → singleton → 容器` 的 `Arc` 环；代价是**容器必须先于其创建的服务存活**——provider `dispose()` 后 `create_scope()` 仍能返回 scope，但 scope 解析返回 `Err(ProviderDisposed)`；provider 的 `Arc` 全部释放后弱引用无法升级，`create_scope()` 会 panic。 |
 | **是否对齐** | ❌ 不同（Rust 无 GC，用弱引用打破 `Arc` 环）。 |
 | **迁移建议** | 后台 worker 等 Singleton 优先注入 `Arc<dyn ScopeFactory>`；不要在 Singleton 里保存 `#[inject(provider)] Arc<ServiceProvider>`（强引用环）。容器关闭前先停止 worker。 |
 
@@ -159,7 +159,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | 构造函数内允许任意 `GetRequiredService`（可能绕过循环/captive 校验，结果依赖注册顺序）。 |
-| **rust-dix 0.9.x** | **拒绝**：在 build 期构造函数内通过注入的 provider 做动态解析，返回类型化 `RdiError::FactoryPanic`（不会被悄悄构建）。请保存句柄（provider / `ScopeFactory`），在方法中延迟解析。 |
+| **rust-dix 0.10.x** | **拒绝**：在 build 期构造函数内通过注入的 provider 做动态解析，返回类型化 `RdiError::FactoryPanic`（不会被悄悄构建）。请保存句柄（provider / `ScopeFactory`），在方法中延迟解析。 |
 | **是否对齐** | ❌ 不同（更严格，换来可校验、可复现的构建）。 |
 | **迁移建议** | 构造函数里只保存依赖句柄；把"运行时解析"移到方法中。 |
 
@@ -170,7 +170,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | 无异步 DI：`IServiceProvider.GetService` 全同步；异步初始化需自己在组合根完成。 |
-| **rust-dix 0.9.x** | 提供扩展：`async_singleton` / `async_scoped` / `async_transient`（及 keyed 变体）+ `build_async()` / `build_async_with(options)` + `get_async` / `get_keyed_async`（返回 `impl Future`，调用时捕获解析链）。含任何 `async_*` 注册时 `build()` 返回 `Err(AsyncServiceRequiresBuildAsync)`；同步解析未初始化的 async 服务返回 `AsyncServiceRequiresGetAsync`。另有 `AsyncFactoryContext`（`provider.async_context()`）用于跨任务环检测。 |
+| **rust-dix 0.10.x** | 提供扩展：`async_singleton` / `async_scoped` / `async_transient`（及 keyed 变体）+ `build_async()` / `build_async_with(options)` + `get_async` / `get_keyed_async`（返回 `impl Future`，调用时捕获解析链）。含任何 `async_*` 注册时 `build()` 返回 `Err(AsyncServiceRequiresBuildAsync)`；同步解析未初始化的 async 服务返回 `AsyncServiceRequiresGetAsync`。另有 `AsyncFactoryContext`（`provider.async_context()`）用于跨任务环检测。 |
 | **是否对齐** | ❌ Rust 扩展（MEDI 无对应能力）。 |
 | **迁移建议** | .NET 中在 `Program.cs` 里 `await` 完成的一次性初始化，可映射为 `async_singleton`。 |
 
@@ -261,8 +261,8 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | keyed 服务的 key 是 `object?`：任意类型（string / enum / 自定义对象）；`KeyedService.AnyKey` 用于"匹配任意 key"的注册（`GetKeyedServices<T>(AnyKey)` 枚举全部显式 key，单值解析不能直接用 AnyKey）。 |
-| **rust-dix 0.9.x** | 已对齐：key 可为**任意类型化值**（`ServiceKey::new(value)`，要求 `Any + Send + Sync + Eq + Hash + Debug`），字符串键（`From<&str>`/`From<String>`）源码兼容；相等包含值的类型（`ServiceKey::new(1u32) != "1"`）。**字符串键易错点**：`ServiceKey::new("x")` 是 `&str` typed key，与 `keyed_singleton("x", …)` 存的 `String` key **不相等**，字符串键请用 `"x".into()` / `ServiceKey::from("x")`。`keyed_any_singleton/scoped/transient` 提供 **AnyKey 兜底**，工厂接收被请求 key（`&ServiceKey` 可 `Debug`/`Display`/`Eq`/`Hash`；**有意不提供** typed downcast 访问器）；精确 key 优先，singleton/scoped 兜底**按 (服务注册/类型, 请求 key) 缓存**（不同 AnyKey 注册即使同一请求 key 也各自独立、不串缓存），`get_all_keyed` **不含**兜底，单值 `get_keyed(any_key())` 非法、`is_registered_keyed(any_key())` 为 `false`；`AnyKey` 注册不做 build 期 eager 初始化/单独校验。 |
-| **0.9.x 补充语义** | ① **validation 预填充**：build 期同步 singleton 依赖 AnyKey 并按请求 key 解析时，写入 **(注册, 请求 key) 缓存**；运行时同一注册 + 同一 key 复用**同一实例**（单次初始化、多消费者共享一次构造）。② **owned 例外**：AnyKey 的 scoped/transient `get_keyed_owned`/`try_get_keyed_owned` 在 strict root 下**允许**（与 exact-key owned 一致；不进缓存/不跟踪，传递依赖仍受 scope 校验）。③ **嵌套 key**：AnyKey 工厂内嵌套解析**不同请求 key** 合法；只有同一注册 + 同一请求 key 的重入才是环（`CircularDependency`）。 |
+| **rust-dix 0.10.x** | 已对齐：key 可为**任意类型化值**（`ServiceKey::new(value)`，要求 `Any + Send + Sync + Eq + Hash + Debug`），字符串键（`From<&str>`/`From<String>`）源码兼容；相等包含值的类型（`ServiceKey::new(1u32) != "1"`）。**字符串键易错点**：`ServiceKey::new("x")` 是 `&str` typed key，与 `keyed_singleton("x", …)` 存的 `String` key **不相等**，字符串键请用 `"x".into()` / `ServiceKey::from("x")`。`keyed_any_singleton/scoped/transient` 提供 **AnyKey 兜底**，工厂接收被请求 key（`&ServiceKey` 可 `Debug`/`Display`/`Eq`/`Hash`；**有意不提供** typed downcast 访问器）；精确 key 优先，singleton/scoped 兜底**按 (服务注册/类型, 请求 key) 缓存**（不同 AnyKey 注册即使同一请求 key 也各自独立、不串缓存），`get_all_keyed` **不含**兜底，单值 `get_keyed(any_key())` 非法、`is_registered_keyed(any_key())` 为 `false`；`AnyKey` 注册不做 build 期 eager 初始化/单独校验。0.10 起宏 key 支持表达式（字符串/typed/下游 `From`）；**async AnyKey 仍未提供**（见 [扩展契约](../09-reference/extension-points.md)）。 |
+| **0.10.x 补充语义** | ① **validation 预填充**：build 期同步 singleton 依赖 AnyKey 并按请求 key 解析时，写入 **(注册, 请求 key) 缓存**；运行时同一注册 + 同一 key 复用**同一实例**（单次初始化、多消费者共享一次构造）。② **owned 例外**：AnyKey 的 scoped/transient `get_keyed_owned`/`try_get_keyed_owned` 在 strict root 下**允许**（与 exact-key owned 一致；不进缓存/不跟踪，传递依赖仍受 scope 校验）。③ **嵌套 key**：AnyKey 工厂内嵌套解析**不同请求 key** 合法；只有同一注册 + 同一请求 key 的重入才是环（`CircularDependency`）。 |
 | **是否对齐** | ✅ 语义对齐（typed keys ≈ MEDI object key；AnyKey 兜底已支持）。⚠️ 仍存差异：rust-dix 的 `AnyKey` 注册**仅同步**（`get_keyed_async` 会回退同步路径），没有 MEDI 的"async AnyKey 工厂"。 |
 | **迁移建议** | 字符串 key 调用无需改动；需要类型安全时改用 `ServiceKey::new(enum)`。从"默认实现 + 手动回退"迁移到 `keyed_any_*` 时注意：精确 key 优先、按 (注册, 请求 key) 缓存、枚举不含兜底、单值不能用 `any_key()`。 |
 
@@ -273,7 +273,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | 构造函数可注入 `IEnumerable<T>`；解析得到**非 keyed** 注册的集合（按注册顺序），空集合合法。集合在解析时即被物化为数组。 |
-| **rust-dix 0.9.x** | `#[inject] Vec<Arc<T>>` / `get_all::<T>()` 语义对齐：返回**非 keyed** 注册、按注册顺序、空 `Vec` 合法。差异只在表示形态：返回 `Vec<Arc<T>>`（共享所有权的 `Arc` 元素），而非 .NET 的对象引用数组；keyed 实现不在其中。**async 注意**：枚举包含已初始化的 async singleton；同步枚举未初始化 async singleton/transient → `AsyncServiceRequiresGetAsync`（`get_all` typed panic），async scoped 在 root 被 scope 校验省略（Scope 内枚举才 panic），`Vec` 注入对任何未初始化 async 返回 `Err`；async scoped/transient 请用 `get_async` 逐项解析。 |
+| **rust-dix 0.10.x** | `#[inject] Vec<Arc<T>>` / `get_all::<T>()` 语义对齐：返回**非 keyed** 注册、按注册顺序、空 `Vec` 合法。差异只在表示形态：返回 `Vec<Arc<T>>`（共享所有权的 `Arc` 元素），而非 .NET 的对象引用数组；keyed 实现不在其中。**async 注意**：枚举包含已初始化的 async singleton；同步枚举未初始化 async singleton/transient → `AsyncServiceRequiresGetAsync`（`get_all` typed panic），async scoped 在 root 被 scope 校验省略（Scope 内枚举才 panic），`Vec` 注入对任何未初始化 async 返回 `Err`；async scoped/transient 请用 `get_async` 逐项解析。 |
 | **是否对齐** | ✅ 语义对齐；⚠️ 返回类型不同（Rust 无引用 GC，用 `Arc` 表达共享所有权）。 |
 | **迁移建议** | 需要 keyed 实现时用 `get_all_keyed::<T>()`；`Vec` 的元素是 `Arc<T>`，如需长期持有请 clone `Arc`（浅拷贝），不要期望 `Vec` 本身是惰性视图。 |
 
@@ -284,7 +284,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | 无"拥有型解析"概念；Scoped/Transient 也是共享引用（对象引用），可变访问由对象自身负责。 |
-| **rust-dix 0.9.x** | Rust 扩展：`get_owned::<T>()` 返回 owned `T`（非 `Arc<T>`），用于 `&mut self` 服务；Singleton 不可 owned（`Err`/`None`）；Scoped 的 owned 解析**绕过缓存**每次新建。**owned 解析是严格 scope 校验的例外**：从 root 对 Scoped 调 `get_owned`/`try_get_owned` 允许（实例归调用方、不进缓存/不跟踪），但其构造函数内部解析的 Scoped 依赖仍受 §2 校验。 |
+| **rust-dix 0.10.x** | Rust 扩展：`get_owned::<T>()` 返回 owned `T`（非 `Arc<T>`），用于 `&mut self` 服务；Singleton 不可 owned（`Err`/`None`）；Scoped 的 owned 解析**绕过缓存**每次新建。**owned 解析是严格 scope 校验的例外**：从 root 对 Scoped 调 `get_owned`/`try_get_owned` 允许（实例归调用方、不进缓存/不跟踪），但其构造函数内部解析的 Scoped 依赖仍受 §2 校验。 |
 | **是否对齐** | ❌ Rust 扩展。 |
 | **迁移建议** | 需要 `&mut self` 的服务注册为 Transient/Scoped；`get_owned` 实例归调用方所有，不参与容器 dispose。需要共享时用 `get`（Scoped 需在 scope 内）。 |
 
@@ -295,7 +295,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | 项 | 内容 |
 |----|------|
 | **MEDI 行为** | 没有"默认生命周期"：`AddSingleton` / `AddScoped` / `AddTransient` 必须显式选择。 |
-| **rust-dix 0.9.x** | `#[inject]` / `#[rust_dix::inject]` 省略生命周期参数时**默认 Singleton**；`#[derive(Inject)]` 只生成构造函数、不注册；keyed 实现必须手动注册（或 `#[module]`）。 |
+| **rust-dix 0.10.x** | `#[inject]` / `#[rust_dix::inject]` 省略生命周期参数时**默认 Singleton**；`#[derive(Inject)]` 只生成构造函数、不注册；keyed 实现必须手动注册（或 `#[module]`）。 |
 | **是否对齐** | ⚠️ 不同（rust-dix 有默认值）。 |
 | **迁移建议** | 面向接口/请求级服务显式写 `#[inject(scoped)]` / `#[inject(transient)]`，不要依赖默认 Singleton；需要多实现路由的服务用 keyed 手动注册。 |
 
@@ -303,7 +303,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 
 ## 11. API 对照补充表
 
-| MEDI (.NET) | rust-dix 0.9.x | 备注 |
+| MEDI (.NET) | rust-dix 0.10.x | 备注 |
 |-------------|----------------|------|
 | `IServiceCollection` | `ServiceCollection` | 注册端 |
 | `IServiceProvider` | `ServiceProvider` | 解析端 |
@@ -317,10 +317,12 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | `GetKeyedServices<T>(key)` | `get_keyed::<T>(key)`（单实例） | 无"按 key 枚举"的批量 API，需自行多次调用 |
 | `GetKeyedServices<T>(KeyedService.AnyKey)` | `get_all_keyed::<T>()` | 只枚举**显式 key**，不含 AnyKey 兜底（对齐 MEDI） |
 | `KeyedService.AnyKey` 注册 | `keyed_any_singleton/scoped/transient` + `ServiceKey::any_key()` / `KeyedService::any_key()` | 兜底：精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、仅同步 |
-| typed object key | `ServiceKey::new(value)` | 任意 `Eq + Hash + Debug` 值；类型参与相等/哈希 |
+| typed object key | `ServiceKey::new(value)` | 任意 `Eq + Hash + Debug` 值；类型参与相等/哈希；`ServiceKey::as_str()` 仅对 `String` / `&'static str`（含 `ServiceKey::new("x")`）返回 `Some`，其他 typed key / `AnyKey` 返回 `None`（外部 string-only resolver 默认回退会把 typed `&'static str` 当 String key，二者在 typed 容器中不相等） |
+| （MEDI 无直接对应） | `#[inject(key = <expr>)]` / `register!(keyed <expr>: ...)` | 0.10 宏 key 表达式：字符串/typed/下游 `impl From<LocalKey> for ServiceKey` |
 | `IServiceProvider.CreateScope()` 等（异步上下文无 MEDI 对应） | `provider.async_context()` / `AsyncFactoryContext` | 跨任务异步环检测（Rust 扩展） |
 | （MEDI 无直接对应） | `RdiError::is_circular()` | **启发式**识别直接 `CircularDependency` 或 `FactoryPanic` payload 含该文本的环（自定义 payload 可能误判；精确形态优先匹配 typed 变体） |
-| （MEDI 无直接对应） | `RdiError::SyncSingletonDependsOnAsyncService` / `AsyncServiceRequiresGetAsync` | 0.9 精确诊断（同步→async 依赖、同步解析 async 服务） |
+| （MEDI 无直接对应） | `RdiError::SyncSingletonDependsOnAsyncService` / `AsyncServiceRequiresGetAsync` | 0.9 引入（0.10 沿用）的精确诊断（同步→async 依赖、同步解析 async 服务） |
+| （MEDI 无直接对应） | `IServiceResolver::get_keyed_any_key` 等 4 个 typed keyed 方法 | 0.10：默认仅 string-like key 回退；容器实现完整 typed key；async AnyKey 仍未提供 |
 | `AddSingleton<T>()` / `AddScoped<T>()` / `AddTransient<T>()` | `.singleton(f)` / `.scoped(f)` / `.transient(f)` | 工厂闭包式 |
 | `AddKeyedSingleton<T>(key)` 等 | `.keyed_singleton::<T>(key, f)` 等 | 三种生命周期齐全 |
 | `TryAddSingleton` / `TryAddScoped` / `TryAddTransient` | `try_add_singleton` / `try_add_scoped` / `try_add_transient`（`try_add` 为 singleton） | 未注册才添加 |
@@ -334,15 +336,15 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 
 ---
 
-## 12. 迁移速查（0.7.x → 0.9.x）
+## 12. 迁移速查（0.7.x → 0.10.x）
 
-| 旧行为（0.7.x / 0.8.x） | 新行为（0.9.x） | 动作 |
+| 旧行为（0.7.x / 0.8.x） | 新行为（0.10.x） | 动作 |
 |-----------------|-----------------|------|
 | 单服务解析"先注册优先" | 最后注册优先（MEDI 语义） | 依赖首注册的代码改用 `try_add*` 或调整顺序 |
 | `get_all` 含 keyed | `get_all` 仅非 keyed | keyed 实现改用 `get_all_keyed` |
 | root 直接解析 Scoped 并缓存 | 默认 `Err(ScopedFromRootProvider)` | 改用 `provider.scope()`；确需旧行为用 `ServiceProviderOptions::lenient()` |
 | `dispose` 仅覆盖显式注册的清理闭包 | Scope 自动逆序释放 Scoped 实例 + 逆序清理；新增 provider dispose | 应用关闭时显式 `provider.dispose()` |
-| 0.7.x singleton 初始化顺序不确定（HashMap） | 同步 singleton 按注册顺序；async singleton 依赖优先拓扑序（0.8.1 起，0.9.x 同样适用），两者均确定 | 依赖构建顺序的初始化逻辑可写文档化断言 |
+| 0.7.x singleton 初始化顺序不确定（HashMap） | 同步 singleton 按注册顺序；async singleton 依赖优先拓扑序（0.8.1 起，0.10.x 同样适用），两者均确定 | 依赖构建顺序的初始化逻辑可写文档化断言 |
 | `RdiError` 可被穷举匹配 | `#[non_exhaustive]` | 匹配处补 `_ =>` 分支 |
 | async singleton 要求依赖先注册（0.8.0 限制） | 0.8.1 起**注册顺序无关**、依赖驱动递归初始化；有环返回 `CircularDependency` | 无需迁移；原先合法的失败配置现在可构建 |
 | 从 root `get_owned` Scoped | **行为不变**：仍允许（owned 不缓存、不跟踪）；失败的是其 Scoped 依赖 | 无需迁移；依赖仍受严格校验，需要依赖时在 scope 内取 |
@@ -351,6 +353,9 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | （0.8.x）async 环检测仅覆盖同任务解析链 | 0.9 起链式检测 + `AsyncFactoryContext` 跨任务 | 脱离任务的解析请传 ctx（否则仍可能死锁） |
 | （0.8.x）同步解析 async 服务错误不精确 | 0.9 起 `AsyncServiceRequiresGetAsync` / `SyncSingletonDependsOnAsyncService` | 按新错误名处理；`build()` 仍用 `AsyncServiceRequiresBuildAsync` |
 | （0.8.x）`get_async` 为 `async fn` | 0.9 起返回 `impl Future`（调用时捕获解析链；`.await` 不变） | MSRV 提升到 **1.95**；重新编译即可 |
+| （0.9）宏 key 仅接受字面量 | 0.10 起 `#[inject(key = <expr>)]` / `register!(keyed <expr>: ...)` 接受任意 `impl Into<ServiceKey>`（typed key / 下游 `From`）；字符串字面量兼容 | 无需迁移；下游 key 类型实现 `impl From<LocalKey> for ServiceKey`（勿复制宏，见 [扩展契约](../09-reference/extension-points.md)） |
+| （0.9）自定义 `IServiceResolver` 无 typed keyed 扩展 | 0.10 新增 4 个 `*_key` 方法（默认仅 string-like key 回退） | 自定义实现需 override 才支持 typed key；容器实现已完整支持 |
+| （0.9）无 async AnyKey | 0.10 **仍未提供** `async_any_*`；`get_keyed_async` 对 AnyKey 回退同步 | 有限 key 用 `async_keyed_*`；动态 key 用同步 AnyKey + 内部 per-key 缓存（见扩展契约 §4） |
 
 ---
 

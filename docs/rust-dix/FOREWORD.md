@@ -99,9 +99,11 @@ composition_root/   # 组合根：基础设施配置
 
 ## 版本说明
 
-本书基于 rust-dix **0.9.x** 编写（当前 0.9.1 为文档补丁，无行为变更）。0.9 的完整语义
-（类型化键 / `AnyKey` / async 链式环检测 / 诊断 / MSRV 1.95 / 安全基线）见
-[参考章 · 0.9 语义权威页](09-reference/semantics-0.9.md)，与 MEDI 的逐条差异见
+本书基于 rust-dix **0.10.x** 编写。0.10 新增：宏 key 表达式（typed key / 下游
+`impl From<LocalKey> for ServiceKey`）、`register!(keyed <expr>: ...)`、`IServiceResolver`
+typed keyed 方法（默认字符串回退）与 `ServiceKey::as_str()`；**async AnyKey 仍未提供**。
+完整语义见 [参考章 · 当前版本语义（0.10）](09-reference/semantics.md)，扩展/自定义 key 见
+[扩展契约与边界](09-reference/extension-points.md)，与 MEDI 的逐条差异见
 [与 MEDI 的差异清单](01-introduction/medi-differences.md)。
 
 ---

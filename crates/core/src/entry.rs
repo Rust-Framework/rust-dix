@@ -63,6 +63,52 @@ pub trait IServiceResolver: Send + Sync {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>>;
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>>;
 
+    /// Typed-keyed resolution by type name (used by `#[inject(key = <expr>)]`).
+    ///
+    /// The default keeps external implementors source-compatible by falling back
+    /// to the string path **only for string-like keys**
+    /// ([`ServiceKey::as_str`]); typed keys require an implementor override
+    /// (`ServiceProvider`, `Scope`, `ServiceProviderWrapper` and the build-time
+    /// validation resolver all support typed keys).
+    fn get_keyed_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.get_keyed_any(key, variant.as_str()?)
+    }
+
+    /// Error-reporting typed-keyed lookup (used by required/optional inject
+    /// fields). Defaults to [`Self::get_keyed_any_key`].
+    fn try_get_keyed_any_result_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_keyed_any_key(key, variant))
+    }
+
+    /// Typed-keyed owned resolution (bypasses caches; non-singleton only).
+    ///
+    /// Default keeps external implementors working for string-like keys.
+    fn get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.get_keyed_owned_any(key, variant.as_str()?)
+    }
+
+    /// Error-reporting typed-keyed owned lookup. Defaults to
+    /// [`Self::get_keyed_owned_any_key`].
+    fn try_get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_keyed_owned_any_key(key, variant))
+    }
+
     /// TypeId 直查（默认 `None`，`ServiceProvider` 等覆盖为 O(1) 直查）。
     ///
     /// 外部实现者若需优化可覆盖；不覆盖则 [`Self::get`] 默认实现 fallback

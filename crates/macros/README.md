@@ -21,7 +21,7 @@ as possible.
 
 ```toml
 [dependencies]
-rust-dix = "0.9"       # re-exports all macros — you usually don't need rust-dix-macros directly
+rust-dix = "0.10"       # re-exports all macros — you usually don't need rust-dix-macros directly
 ```
 
 > **Note**: You rarely need to add `rust-dix-macros` as a direct dependency.
@@ -107,9 +107,10 @@ struct NamedService {
 This macro subsumes `#[derive(Inject)]` — when placed on a struct, it
 internally generates the same constructor function
 (`__rdi_construct_{Type}`) using the same field attribute syntax
-(`#[inject]`, `#[inject(owned)]`, `#[inject(key = "...")]`, etc.). You do
-NOT need both. The impl-block placement does **not** generate a constructor —
-it reuses the one already produced by the struct placement.
+(`#[inject]`, `#[inject(owned)]`, `#[inject(key = <expr>)]`, etc.). Key expressions accept
+string literals, `ServiceKey::new(...)`, or downstream key types via
+`impl From<LocalKey> for ServiceKey`. You do NOT need both. The impl-block placement does
+**not** generate a constructor — it reuses the one already produced by the struct placement.
 
 > **Migration note**: The old verbose syntax
 > `#[rust_dix::inject_attr(singleton, as = dyn Trait<...>)]` has been
@@ -170,17 +171,19 @@ driven by the field type (`Option<...>`), not by a marker.
 | *(none)* | any (`Default`) | Internal field — uses `Default::default()` |
 | `#[inject]` | `Arc<T>` | Required shared — `Err(ServiceNotFound)` (+ field `context` via try-construct) |
 | `#[inject]` | `Option<Arc<T>>` | Optional shared — `None` if `T` not registered |
-| `#[inject(key = "k")]` | `Arc<T>` | Keyed shared — `Err(KeyedServiceNotFound)` if key missing |
-| `#[inject(key = "k")]` | `Option<Arc<T>>` | Optional keyed shared |
+| `#[inject(key = <expr>)]` | `Arc<T>` | Keyed shared — `expr: impl Into<ServiceKey>`; `Err(KeyedServiceNotFound)` if missing |
+| `#[inject(key = <expr>)]` | `Option<Arc<T>>` | Optional keyed shared |
 | `#[inject(owned)]` | bare `T` | Required owned — `Err` if not registered or Singleton |
 | `#[inject(owned)]` | `Option<T>` | Optional owned — `None` if not registered or Singleton |
-| `#[inject(owned, key = "k")]` | bare `T` / `Option<T>` | Keyed owned |
+| `#[inject(owned, key = <expr>)]` | bare `T` / `Option<T>` | Keyed owned (same `expr` rules) |
 | `#[inject]` | `Vec<Arc<T>>` | Polymorphic — collects all **non-keyed** registrations in registration order (keyed implementations need `get_all_keyed` on the provider); no `key` attribute |
 | `#[inject(provider)]` | `Arc<ServiceProvider>` | Injects the provider for on-demand resolution |
 
 > Type checking is strict: `#[inject]` accepts `Arc<T>`, `Option<Arc<T>>`, or
 > `Vec<Arc<T>>`, `#[inject(owned)]` only accepts bare `T` / `Option<T>`.
-> Mismatched markers produce a compile-time error.
+> Mismatched markers produce a compile-time error. `#[inject(provider)]` **cannot** be
+> combined with `key` (compile error: inject `Arc<ServiceProvider>` and resolve the keyed
+> service on demand inside the method).
 
 Built-in container services need no registration and also resolve in eagerly
 built singletons (0.7.1+): `#[inject] scope_factory: Arc<dyn ScopeFactory>`,
@@ -220,6 +223,10 @@ mod services {
     rust_dix::register!(singleton: MyService);
     rust_dix::register!(singleton: dyn IPlugin => MyPlugin);
     rust_dix::register!(keyed "verbose": singleton: Logger);
+    // 0.10: keyed keys are expressions (typed key / downstream From)
+    rust_dix::register!(keyed ServiceKey::new(Level::Debug): singleton: DebugLogger);
+    // 0.10: keyed `dyn Trait => Impl` now registers Impl (was silently dropped before)
+    rust_dix::register!(keyed "debug": singleton: dyn Level => DebugLogger);
 }
 
 // Generates: services::__rdi_build_provider_services() -> Result<Arc<ServiceProvider>>
@@ -234,9 +241,16 @@ let provider = services::__rdi_build_provider_services().unwrap();
 | `register!(scoped: T)` | Register `T` as scoped using `Default` |
 | `register!(transient: T)` | Register `T` as transient using `Default` |
 | `register!(singleton: dyn Trait => Impl)` | Register `Impl` as singleton implementing `Trait` |
-| `register!(keyed "k": singleton: T)` | Register `T` as keyed singleton |
-| `register!(keyed "k": scoped: T)` | Register `T` as keyed scoped |
+| `register!(keyed <expr>: singleton: T)` | Register `T` as keyed singleton; `<expr>: impl Into<ServiceKey>` |
+| `register!(keyed <expr>: scoped: T)` | Register `T` as keyed scoped |
+| `register!(keyed <expr>: <lifetime>: dyn Trait => Impl)` | Register keyed service with `Impl` as `trait` (0.10: `Impl` is actually registered; previously silently dropped) |
 | `register!(factory singleton: T => expr)` | Register with a custom factory expression |
+
+> Compile-time duplicate detection (`rdi-E004`) applies to **string-literal keys only**;
+> dynamic-expression keys follow runtime "last registration wins". String literals still
+> produce `String` keys; typed keys use `ServiceKey::new(...)` or a downstream key type with
+> `impl From<LocalKey> for ServiceKey` (the official extension path — do not copy the macro).
+> See [extension points](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md).
 
 **When to use it**:
 
@@ -267,26 +281,30 @@ rust_dix::register!(singleton: MyService);
 
 ---
 
-### Behavior notes (0.9.x)
+### Behavior notes (0.10.x)
 
-The macros themselves are unchanged in 0.9.x, but the container semantics they feed into
-are (full details:
-[0.9 semantics](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md)):
+0.10 makes macro keys **expressions** (string literals remain source-compatible); container
+semantics they feed into (full details:
+[current (0.10) semantics](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics.md)):
 
+- **Key expressions (0.10)**: `#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]`
+  and `register!(keyed <expr>: ...)` accept any `impl Into<ServiceKey>`; downstream key types
+  use `impl From<LocalKey> for ServiceKey` (do not copy the injection macro). `rdi-E004`
+  duplicate detection covers string literals only; dynamic keys follow runtime last-wins.
+  `register!(keyed <expr>: <lt>: dyn Trait => Impl)` now really registers `Impl` (0.10 fix;
+  earlier the `=> Impl` part could be silently dropped and the trait's `Default` used).
+  Extension contract:
+  [extension points](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md).
 - **Last registration wins**: same type/key registered twice → the later one is returned by
   `get`/`get_keyed`; use `try_add*` for "only add if absent".
 - **`Vec<Arc<T>>` injection**: non-keyed registrations only (registration order; `AnyKey`
   fallbacks excluded), and includes **already-initialized** async singletons. Uninitialized
   async (or async scoped/transient) → `Err(AsyncServiceRequiresGetAsync)`; resolve async
   scoped/transient with `get_async`.
-- **Keyed registration stays manual**: `#[inject]` does not express keys. Use
-  `keyed_*` / `keyed_any_*` with `impl Into<ServiceKey>`; string keys use
-  `"x".into()` / `ServiceKey::from("x")` (`ServiceKey::new("x")` is a `&str` key, not the
-  `String` key stored by `keyed_singleton("x", …)`).
 - **Async & scope**: sync resolution of async services → `AsyncServiceRequiresGetAsync`;
   sync singleton → async dependency → `SyncSingletonDependsOnAsyncService`; propagate
   `AsyncFactoryContext` into spawned tasks. Strict scope validation is the default (root
-  Scoped → `ScopedFromRootProvider`).
+  Scoped → `ScopedFromRootProvider`). **async AnyKey is not provided in 0.10.**
 - **MSRV/safety**: Rust 1.95; both crates `#![forbid(unsafe_code)]`; CI runs tests plus
   RustSec `cargo audit` — see `SECURITY.md`.
 

@@ -69,9 +69,13 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
                     ch.push(quote!{ .#mt(|_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
                 }
             }
-            IK::K { key, lt, ty } => {
+            IK::K { key, lt, ty, imp } => {
                 let mt = kmt(*lt);
-                ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                if let Some(imp_ty) = imp {
+                    ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
+                } else {
+                    ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                }
             }
             IK::F { lt, f } => {
                 let mt = lmt(*lt);
@@ -111,15 +115,25 @@ fn kmt(lt: LT) -> TokenStream2 {
 }
 
 fn vd(rs: &[ID]) -> syn::Result<()> {
+    // Compile-time duplicate detection is only possible for string-literal keys
+    // (expressions may be dynamic); runtime last-registration-wins semantics
+    // still apply for same-key duplicates.
     let mut sn: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for r in rs {
         if let IK::K { key, .. } = &r.kind {
-            let e = sn.entry(key.clone()).or_default();
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(lit),
+                ..
+            }) = key
+            else {
+                continue;
+            };
+            let e = sn.entry(lit.value()).or_default();
             *e += 1;
             if *e > 1 {
                 return Err(syn::Error::new(
-                    proc_macro2::Span::call_site(),
-                    format!("rdi-E004: duplicate key `{key}`"),
+                    lit.span(),
+                    format!("rdi-E004: duplicate key `{}`", lit.value()),
                 ));
             }
         }
@@ -137,9 +151,14 @@ enum IK {
         imp: Option<syn::Type>,
     },
     K {
-        key: String,
+        /// Any expression convertible to `ServiceKey` (string literal, typed
+        /// key expression, or downstream key value via `From`).
+        key: syn::Expr,
         lt: LT,
         ty: syn::Type,
+        /// Optional concrete implementation type for a trait-object registration
+        /// (`keyed <key>: <lt>: dyn Trait => Concrete`).
+        imp: Option<syn::Type>,
     },
     F {
         lt: LT,
@@ -156,10 +175,10 @@ impl Parse for ID {
     fn parse(i: ParseStream) -> syn::Result<Self> {
         let mk = if i.peek(syn::Ident) && i.fork().parse::<syn::Ident>()? == "keyed" {
             let _: syn::Ident = i.parse()?;
-            let k: syn::LitStr = i.parse()?;
+            let k: syn::Expr = i.parse()?;
             let _: Token![:] = i.parse()?;
             let lt: LT = i.parse()?;
-            Some((k.value(), lt))
+            Some((k, lt))
         } else {
             None
         };
@@ -178,11 +197,18 @@ impl Parse for ID {
             let _: Token![:] = i.parse()?;
             let ty: syn::Type = i.parse()?;
             let _ = i.parse::<Token![=>]>();
-            if !i.is_empty() && !i.peek(Token![|]) {
-                let _: syn::Type = i.parse()?;
-            }
+            let imp: Option<syn::Type> = if !i.is_empty() && !i.peek(Token![|]) {
+                Some(i.parse::<syn::Type>()?)
+            } else {
+                None
+            };
             return Ok(ID {
-                kind: IK::K { key: k, lt: l, ty },
+                kind: IK::K {
+                    key: k,
+                    lt: l,
+                    ty,
+                    imp,
+                },
             });
         }
         let lt: LT = i.parse()?;

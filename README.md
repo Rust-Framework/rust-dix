@@ -30,7 +30,7 @@ compile-time validation — all with zero `unsafe` code.
 
 ```toml
 [dependencies]
-rust-dix = "0.9"
+rust-dix = "0.10"
 ```
 
 ### Sync applications
@@ -93,11 +93,11 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Deterministic disposal** | `Scope::dispose()` / `ServiceProvider::dispose()` release instances in reverse creation order |
 | **Memory-safe** | Both crates are `#![forbid(unsafe_code)]`; MSRV **1.95**; CI matrix + RustSec `cargo audit`; see [SECURITY.md](SECURITY.md) |
 
-## Container semantics (0.9.x)
+## Container semantics (0.10.x)
 
-rust-dix 0.9.x aligns single-service resolution with MEDI while keeping build-time
+rust-dix 0.10.x aligns single-service resolution with MEDI while keeping build-time
 safety. The five rules that most often surprise new users (full semantics:
-[docs/rust-dix/09-reference/semantics-0.9.md](docs/rust-dix/09-reference/semantics-0.9.md)):
+[docs/rust-dix/09-reference/semantics.md](docs/rust-dix/09-reference/semantics.md)):
 
 | Rule | Behavior |
 |------|----------|
@@ -107,8 +107,13 @@ safety. The five rules that most often surprise new users (full semantics:
 | **Async: resolve & enumerate** | Async services use `get_async` (sync `get` → `AsyncServiceRequiresGetAsync`, `get_optional` → `None`); cross-task cycles need `AsyncFactoryContext`; enumeration includes initialized async singletons only (uninitialized → typed panic/`Err`). |
 | **Diagnostics & baseline** | `is_circular()` is heuristic; MSRV 1.95, `#![forbid(unsafe_code)]`, CI matrix + `cargo audit`, see [SECURITY.md](SECURITY.md). |
 
-New in 0.9: `ServiceKey`/`AnyKey`, `AsyncFactoryContext`, precise diagnostics, MSRV 1.95 and
-the security baseline. MEDI comparison: [medi-differences](docs/rust-dix/01-introduction/medi-differences.md).
+New in 0.10: macro key **expressions** (`#[inject(key = <expr>)]` /
+`#[inject(owned, key = <expr>)]`, `register!(keyed <expr>: ...)`) accepting string literals,
+typed `ServiceKey::new(...)`, or downstream key types via `impl From<LocalKey> for ServiceKey`;
+`IServiceResolver` typed-keyed methods with string-only fallback; `ServiceKey::as_str()`;
+reference chapter incl. [extension points](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md).
+**async AnyKey is still not provided** (workaround in extension points). MEDI comparison:
+[medi-differences](docs/rust-dix/01-introduction/medi-differences.md).
 
 ## When should you use rust-dix?
 
@@ -262,6 +267,33 @@ let read: Arc<dyn IDbConnection> =
 assert!(!provider.is_registered_keyed::<dyn IDbConnection>(ServiceKey::new(1u32)));
 assert!(provider.get_keyed::<dyn IDbConnection>(ServiceKey::from("1")).is_err());
 ```
+
+##### Macro key expressions (0.10)
+
+`#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]` accept any
+`impl Into<ServiceKey>`. Downstream key types can support them via
+`impl From<LocalKey> for ServiceKey` — the official extension path (do **not** copy the
+injection macro):
+
+```rust
+impl From<DbKey> for ServiceKey {
+    fn from(k: DbKey) -> Self { ServiceKey::new(k) }
+}
+
+#[derive(Inject)]
+struct ReadService {
+    #[inject(key = DbKey::Read)]                 // typed key expression
+    db: Arc<dyn IDbConnection>,
+    #[inject(key = "audit")]                     // string literal still works (String key)
+    audit: Arc<dyn IAuditLog>,
+}
+```
+
+`register!(keyed <expr>: <lifetime>: <Type>)` accepts expressions too; compile-time duplicate
+detection (`rdi-E004`) covers **string literals only** — dynamic keys follow runtime
+last-registration-wins. String keys must use `ServiceKey::from("x")` / `"x".into()`
+(`ServiceKey::new("x")` is a `&str` typed key, not equal). Async AnyKey is **not** provided in
+0.10 — see [extension points](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md).
 
 #### `AnyKey` fallback (MEDI `KeyedService.AnyKey`)
 
@@ -575,7 +607,8 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 - [crates/core — core library docs](./crates/core/README.md)
 - [crates/macros — procedural macro docs](./crates/macros/README.md)
 - [Differences from MEDI (scope validation, dispose, keyed, get_all)](docs/rust-dix/01-introduction/medi-differences.md) — read this if you come from .NET
-- [Reference: 0.9 semantics, RdiError catalog, production checklist](docs/rust-dix/09-reference/INDEX.md)
+- [Reference: current (0.10) semantics, RdiError catalog, production checklist](docs/rust-dix/09-reference/INDEX.md)
+- [Extension points & boundaries (macro key `From`, custom resolver, async AnyKey)](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)
 - [Business scenario tutorials](docs/rust-dix/08-best-practices/business-scenarios.md) — real-world patterns
 - [Security policy](./SECURITY.md) — vulnerability reporting, supported versions, security boundaries
 - [Changelog](./CHANGELOG.md) — release history

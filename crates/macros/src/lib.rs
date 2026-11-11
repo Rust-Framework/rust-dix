@@ -9,8 +9,12 @@
 //!
 //! - [`macro@Inject`] — `#[derive(Inject)]` generates constructor injection
 //!   code from struct fields (fields marked `#[inject]`,
-//!   `#[inject(owned)]`, `#[inject(provider)]`, `#[inject(key = "...")]` or
-//!   `#[inject(owned, key = "...")]`).
+//!   `#[inject(owned)]`, `#[inject(provider)]`, `#[inject(key = <expr>)]` or
+//!   `#[inject(owned, key = <expr>)]`). Key expressions accept string literals,
+//!   typed `ServiceKey` values, or downstream key types implementing
+//!   `From<LocalKey> for ServiceKey` (extension path instead of duplicating
+//!   macros). `#[inject(provider)]` cannot be combined with `key`
+//!   (compile error; resolve through the injected provider instead).
 //! - [`macro@inject`] — attribute macro placed on structs or trait impls to
 //!   auto-register services with the container.
 //! - [`macro@module`] — compile-time module scan that collects

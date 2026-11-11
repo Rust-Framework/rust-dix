@@ -19,7 +19,7 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dix = "0.9"
+rust-dix = "0.10"
 ```
 
 > **MSRV**: Rust **1.95**. Both crates are `#![forbid(unsafe_code)]`; CI runs a
@@ -162,7 +162,12 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // differ
 Keyed APIs accept `impl Into<ServiceKey>`: strings (`&str` / `String`) keep working, and
 `ServiceKey::new(value)` supports enum/integer/custom keys. Key equality includes the
 value's type — `ServiceKey::new(1u32) != ServiceKey::from("1")`. `ServiceKey::any_key()` /
-`KeyedService::any_key()` is the fallback sentinel and `ServiceKey::is_any()` detects it.
+`KeyedService::any_key()` is the fallback sentinel and `ServiceKey::is_any()` detects it;
+`ServiceKey::as_str()` returns `Some` for string-like keys (`String` / `&'static str`,
+including `ServiceKey::new("literal")`) and `None` for enum/integer/custom typed keys and
+the `AnyKey` sentinel. The default typed-key resolver methods fall back to the legacy string
+path for `Some`, so a typed `&'static str` key is treated as a **`String` key** there (not
+equal in fully typed containers) — typed consumers should use the `*_key` methods.
 **String-key footgun**: `ServiceKey::new("x")` is a `&str`-typed key and is *not* equal to
 the `String` key stored by `keyed_singleton("x", …)`; use `"x".into()` /
 `ServiceKey::from("x")` for string keys and `ServiceKey::new` only for typed
@@ -188,7 +193,7 @@ let read: Arc<dyn IDbConnection> = provider.get_keyed(ServiceKey::new(DbKey::Rea
 ```
 
 `AnyKey` semantics (full details:
-[0.9 semantics](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md#2-anykey-兜底)):
+[current (0.10) semantics](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics.md#2-anykey-兜底)):
 - exact-key registrations take precedence; the fallback is used only when no exact key exists;
 - singleton/scoped fallback instances are cached **per (registration/type, requested key)**
   (different `AnyKey` registrations stay independent; scoped: per scope per (registration, key));
@@ -224,7 +229,16 @@ Type-erased `IServiceResolver` helpers used by the macros and by custom factorie
 | `get_any(type_name)` / `get_by_type_id(TypeId)` | Type-erased single lookup (String / TypeId path) |
 | `get_keyed_any(type_name, variant)` / `get_keyed_by_type_id(TypeId, key)` | Type-erased keyed lookup |
 | `get_all_any_result(type_name)` / `get_all_any(type_name)` | Type-erased `get_all` (`*_result` returns `Err` for uninitialized async) |
+| `get_keyed_any_key(type_name, &ServiceKey)` / `try_get_keyed_any_result_key(...)` | **Typed-keyed** lookup (0.10); default falls back to string path only for `ServiceKey::as_str() == Some` |
+| `get_keyed_owned_any_key(type_name, &ServiceKey)` / `try_get_keyed_owned_any_key(...)` | Typed-keyed owned lookup (0.10); same string-only default |
 | `try_get_any_result(type_name)` / `try_get_keyed_any_result(type_name, variant)` | Infallible probing (no panic) |
+
+> The four `*_key` methods have default implementations that only support string-like keys
+> (`ServiceKey::as_str()`); `ServiceProvider` / `Scope` / `ServiceProviderWrapper` and the
+> build-time validation resolver override them with full typed-key support (AnyKey fallback,
+> owned, captive checks). Custom `IServiceResolver` implementations must override them to
+> support non-string keys. Extension contract:
+> [extension points](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md).
 
 #### `#[rust_dix::inject]` — Attribute-based auto-registration (recommended)
 
@@ -310,13 +324,13 @@ For trait-oriented services (handlers, services, repositories), prefer
 | `.is_registered_keyed::<T>(key)` | `bool` | Whether `T` has an exact keyed registration or an `AnyKey` fallback (`any_key()` → `false`) |
 | `.scope()` | `Scope` | New scope for scoped services |
 | `.async_context()` | `Option<AsyncFactoryContext>` | Capture the current async chain for detached tasks (cross-task cycle detection) |
-| `.dispose()` | `()` | Idempotent; releases instances in reverse creation order, later resolution returns `Err(ProviderDisposed)` (0.8.0 起，0.9.x 同样适用) |
+| `.dispose()` | `()` | Idempotent; releases instances in reverse creation order, later resolution returns `Err(ProviderDisposed)` (0.8.0 起，0.10.x 同样适用) |
 
-> **0.9.x semantics (summary)**: last registration wins; `get_all` is unkeyed-only
+> **0.10.x semantics (summary)**: last registration wins; `get_all` is unkeyed-only
 > (`get_all_keyed` lists explicit keys, excluding `AnyKey` fallbacks); keys may be typed;
 > scope validation is strict by default (root Scoped → `ScopedFromRootProvider`, with
 > `get_owned`/keyed owned as the caller-owned exception). Full semantics:
-> [docs/rust-dix/09-reference/semantics-0.9.md](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md).
+> [docs/rust-dix/09-reference/semantics.md](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics.md).
 
 > **Enumeration and async**: `get_all` / `get_all_keyed` / `#[inject] Vec<Arc<T>>` include
 > already-initialized async singletons; uninitialized async services yield
@@ -352,9 +366,9 @@ build-time validation alike:
 | `#[inject(provider)] provider: Arc<ServiceProvider>` | On-demand resolution; also available in eagerly built singletons. **Warning:** a singleton holding this creates a strong `container → singleton → container` cycle; prefer `ScopeFactory` |
 | `#[inject] provider: Arc<ServiceProvider>` | Same built-in, plain form (MEDI `IServiceProvider` parity); same strong-reference caveat |
 | `#[inject] scope_factory: Arc<dyn ScopeFactory>` | Recommended for singleton workers: one scope per task. Weak-backed singleton, so holding it does not create an `Arc` cycle |
-| `#[inject(key = "k")] field: Arc<T>` | Keyed injection; resolve `T` under key `k` (string or typed key via `ServiceKey`) |
+| `#[inject(key = <expr>)] field: Arc<T>` | Keyed injection; `expr: impl Into<ServiceKey>` (string literal, `ServiceKey::new(...)`, or downstream key via `From`) |
 | `#[inject(owned)] field: T` | Owned (callback-owned) instance; `T` must be Transient/Scoped (Singleton → error) |
-| `#[inject(owned, key = "k")] field: T` | Owned + keyed injection; same lifetime rules as `#[inject(owned)]` |
+| `#[inject(owned, key = <expr>)] field: T` | Owned + keyed injection; same lifetime rules as `#[inject(owned)]` |
 
 Explicit `singleton::<dyn ScopeFactory>(...)` registrations still take precedence
 over the built-in.

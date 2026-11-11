@@ -33,17 +33,17 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 | **可扩展** | 增加新实现无需修改消费方 |
 | **开闭原则** | 对扩展开放，对修改关闭 |
 
-## 与 MEDI 对照（0.9.x 语义）
+## 与 MEDI 对照（0.10.x 语义）
 
 **单一对照源**：完整的 MEDI ↔ rust-dix API/语义对照、默认值与迁移动作见
 [与 MEDI 的差异清单 · §11 API 对照补充表](medi-differences.md#11-api-对照补充表)，以及
-[0.9 语义权威页](../09-reference/semantics-0.9.md)。这里只保留三个最易误解的速记：
+[语义权威页（0.10）](../09-reference/semantics.md)。这里只保留三个最易误解的速记：
 
 | 主题 | 速记 |
 |------|------|
 | scope 校验 | rust-dix 默认**严格**（root 解析 Scoped → `ScopedFromRootProvider`），对齐 ASP.NET Core 开发环境 `ValidateScopes = true`；裸 MEDI 默认关闭。owned 例外见参考页。 |
 | `get_all` | 只含非 keyed 注册；keyed 多实现用 `get_all_keyed`（不含 `AnyKey` 兜底）。 |
-| keyed / AnyKey | key 可为字符串或类型化 `ServiceKey`；`keyed_any_*` 为兜底，精确 key 优先，缓存维度为 (注册/类型, 请求 key)。 |
+| keyed / AnyKey | key 可为字符串或类型化 `ServiceKey`；**宏 key 支持表达式**（0.10，含下游 `impl From<LocalKey> for ServiceKey`）；`keyed_any_*` 为兜底，精确 key 优先，缓存维度为 (注册/类型, 请求 key)。扩展边界见 [扩展契约](../09-reference/extension-points.md)。 |
 
 ## 下一步
 

@@ -145,7 +145,9 @@ let maybe: Option<Arc<dyn IPayGateway>> = provider.try_get_keyed("unknown");
 > 精确 key 优先于 `keyed_any_*` 兜底；`ServiceKey::any_key()` 不是合法的单值 key
 > （`get_keyed(any_key())` → `Err`）。字符串键用 `"wechat".into()` / `ServiceKey::from("wechat")`；
 > `ServiceKey::new("wechat")` 是 `&str` typed key，与字符串注册的 `String` key **不相等**。
-> 详见 [多实现与键控服务](multiple-implementations.md#类型化键与-anykey-兜底090)。
+> 详见 [多实现与键控服务](multiple-implementations.md#类型化键与-anykey-兜底090)；
+> 宏 key 表达式（typed key / 下游 `From`）与自定义 resolver 见
+> [扩展契约](../09-reference/extension-points.md)。
 
 ### 批量解析
 
@@ -186,6 +188,12 @@ pub trait IServiceResolver: Send + Sync {
     fn try_get_any_result(&self, key: &str) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError>;
     fn try_get_keyed_any_result(&self, key: &str, variant: &str) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError>;
 
+    // 0.10 typed keyed 扩展（默认仅 string-like key 回退旧字符串方法）
+    fn get_keyed_any_key(&self, key: &str, variant: &ServiceKey) -> Option<Arc<dyn Any + Send + Sync>>;
+    fn try_get_keyed_any_result_key(&self, key: &str, variant: &ServiceKey) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError>;
+    fn get_keyed_owned_any_key(&self, key: &str, variant: &ServiceKey) -> Option<Arc<dyn Any + Send + Sync>>;
+    fn try_get_keyed_owned_any_key(&self, key: &str, variant: &ServiceKey) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError>;
+
     // 默认实现的方法（均带 Self: Sized，不能在 trait object 上调用）
     fn get<T: ?Sized + Sync + Send + 'static>(&self) -> Result<Arc<T>, RdiError>;
     fn try_get<T>(&self) -> Option<Arc<T>>;
@@ -196,7 +204,7 @@ pub trait IServiceResolver: Send + Sync {
 }
 ```
 
-> **失败语义契约（0.9.x 摘要；完整错误清单见
+> **失败语义契约（0.10.x 摘要；完整错误清单见
 > [RdiError 错误目录](../09-reference/error-catalog.md)）**：
 > - trait 层 Option 方法（`get_any`/`get_keyed_any`/`get_by_type_id`/`get_keyed_by_type_id`）
 >   对"已注册但不可解析"（scope 校验/dispose/环/panic）**typed payload panic**；required API
@@ -274,7 +282,7 @@ impl ILogger for FileLogger { /* ... */ }
 | `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 返回 `Err` |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
-| `#[inject]` | `Vec<Arc<T>>` | 多态注入 — **仅非 keyed** 注册，按注册顺序（0.8.0 起（0.9.x 同样适用）对齐 MEDI `GetServices`）；keyed 用 `get_all_keyed` |
+| `#[inject]` | `Vec<Arc<T>>` | 多态注入 — **仅非 keyed** 注册，按注册顺序（0.8.0 起（0.10.x 同样适用）对齐 MEDI `GetServices`）；keyed 用 `get_all_keyed` |
 | `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入容器自身（按需解析） |
 | `#[inject]` | `Arc<dyn ScopeFactory>` | 内建 scope 工厂 — 每任务/每 tick 建独立 scope |
 | `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（等价普通写法，对齐 MEDI `IServiceProvider`） |

@@ -102,6 +102,31 @@ impl ServiceKey {
         matches!(self.0, KeyRepr::Any)
     }
 
+    /// Borrow the key as `&str` for **string-like** keys: `String` and
+    /// `&'static str` (including `ServiceKey::new("literal")`). Returns `None`
+    /// for other typed keys and the `AnyKey` sentinel.
+    ///
+    /// This is the compatibility bridge used by the default
+    /// `IServiceResolver` typed-key methods, which fall back to the legacy
+    /// string methods. Note that the fallback maps a typed `&'static str` key to
+    /// a **`String` key**; in fully typed containers those two keys are *not*
+    /// equal, so typed-key consumers should use the `*_key` methods.
+    pub fn as_str(&self) -> Option<&str> {
+        match &self.0 {
+            KeyRepr::Value(v) => {
+                let any = v.as_any();
+                if let Some(s) = any.downcast_ref::<String>() {
+                    Some(s.as_str())
+                } else if let Some(s) = any.downcast_ref::<&'static str>() {
+                    Some(*s)
+                } else {
+                    None
+                }
+            }
+            KeyRepr::Any => None,
+        }
+    }
+
     /// Stable hash used for per-requested-key cycle markers.
     pub(crate) fn stable_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
@@ -236,6 +261,14 @@ mod tests {
         assert_eq!(ServiceKey::any_key(), KeyedService::any_key());
         assert_ne!(ServiceKey::any_key(), ServiceKey::from("AnyKey"));
         assert_ne!(ServiceKey::any_key(), ServiceKey::new("AnyKey"));
+    }
+
+    #[test]
+    fn as_str_only_for_string_like_keys() {
+        assert_eq!(ServiceKey::from("x").as_str(), Some("x"));
+        assert_eq!(ServiceKey::new("y").as_str(), Some("y"));
+        assert_eq!(ServiceKey::new(1_u32).as_str(), None);
+        assert_eq!(ServiceKey::any_key().as_str(), None);
     }
 
     #[test]

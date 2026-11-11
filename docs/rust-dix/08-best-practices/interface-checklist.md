@@ -135,7 +135,8 @@ ServiceCollection::new()
 ```
 
 > AnyKey 语义（缓存维度、预填充、owned/嵌套例外）见
-> [0.9 语义权威页](../09-reference/semantics-0.9.md#2-anykey-兜底)。
+> [语义权威页（0.10）](../09-reference/semantics.md#2-anykey-兜底)、
+> [扩展契约](../09-reference/extension-points.md)（宏 key 表达式/自定义 resolver）。
 
 ### 多接口注册
 
@@ -269,7 +270,7 @@ fn handle_request(provider: &Arc<ServiceProvider>, req: Request) {
     handler.handle(&uow, req);
 } // scope Drop → 按创建逆序释放 scoped 实例
 
-// ❌ 错误：0.8.0 起默认严格 scope 校验（0.9.x 同样适用）下，root provider 解析 Scoped 返回 Err
+// ❌ 错误：0.8.0 起默认严格 scope 校验（0.10.x 同样适用）下，root provider 解析 Scoped 返回 Err
 let provider = ServiceCollection::new()
     .scoped(|_| Arc::new(Session))
     .build()
@@ -341,7 +342,7 @@ fn test_create_user() {
 | 容器 | 是否只构建一次 |
 | 测试 | 是否可替换 mock |
 
-### 工程基线（0.9.x）
+### 工程基线（0.10.x）
 
 | 项 | 要求 |
 |----|------|

@@ -596,9 +596,9 @@ impl OutboxWorker {
 
 ---
 
-## 0.9.x 语义要点（贯穿所有场景）
+## 0.10.x 语义要点（贯穿所有场景）
 
-| 主题 | 0.9.x 行为 | 场景中的影响 |
+| 主题 | 0.10.x 行为 | 场景中的影响 |
 |------|-----------|--------------|
 | 单服务/多实现 | 最后注册优先；`get_all`/`Vec` 仅非 keyed，keyed 用 `get_all_keyed` | 测试用后注册 mock；观察者广播注册为非 keyed |
 | 类型化键/AnyKey | keyed API 取 `impl Into<ServiceKey>`；AnyKey 按 (注册/类型, key) 缓存、预填充/owned/嵌套有例外 | 多租户/策略用 enum 键；"任意 key"用 `keyed_any_*` |
@@ -606,7 +606,8 @@ impl OutboxWorker {
 | async | 同步解析 async → `AsyncServiceRequiresGetAsync`；跨任务传 `AsyncFactoryContext` | 场景 6 后台任务 spawn 内解析需传 ctx |
 | 基线 | MSRV 1.95、`forbid(unsafe_code)`、CI/audit、`SECURITY.md` | CI/部署按 1.95 配置 |
 
-完整语义见 [0.9 语义权威页](../09-reference/semantics-0.9.md)，错误处理见
+完整语义见 [语义权威页（0.10）](../09-reference/semantics.md)、
+[扩展契约](../09-reference/extension-points.md)（宏 key/async AnyKey 边界），错误处理见
 [错误目录](../09-reference/error-catalog.md)。
 
 ## 生命周期选择速查

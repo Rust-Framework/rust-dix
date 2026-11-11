@@ -1,11 +1,12 @@
-# 参考 · 0.9 语义权威页
+﻿# 参考 · 当前版本语义（0.10）
 
-> **单一权威源**：本页是 rust-dix **0.9.x** 容器语义的唯一权威说明。其它章节只保留
+> **单一权威源**：本页是 rust-dix **0.10.x** 容器语义的唯一权威说明。其它章节只保留
 > 情境摘要并链接回本页；两者冲突时以本页为准。
 >
-> 适用版本：**0.9.1**（0.9.0 行为 + 文档补丁；0.9.x 无破坏性变更）。与 MEDI 的逐条对照
-> 见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)，从 0.8.x 升级的动作见
-> [迁移速查](../01-introduction/medi-differences.md#12-迁移速查07x--09x)。
+> 适用版本：**0.10.0**。与 MEDI 的逐条对照
+> 见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)，从 0.9 升级的动作见
+> [迁移速查](../01-introduction/medi-differences.md#12-迁移速查07x--010x)；扩展边界（宏 key
+> From、自定义 resolver、async AnyKey workaround）见 [扩展契约](extension-points.md)。
 
 ## 1. 类型化键与字符串 footgun
 
@@ -14,6 +15,16 @@
 - 键相等**包含值的类型**：`ServiceKey::new(1u32) != ServiceKey::from("1")`。
 - `ServiceKey::any_key()` / `KeyedService::any_key()` 是注册侧 `AnyKey` 哨兵；
   `ServiceKey::is_any()` 判别哨兵；单值解析**不能**用哨兵。
+  `ServiceKey::as_str()` 对 **string-like key** 返回 `Some`：`String` 与 `&'static str`
+  （包括 `ServiceKey::new("literal")` 产生的 &str typed key）；enum/整数/自定义 typed key
+  与 `AnyKey` 哨兵返回 `None`。**回退警告**：默认 `IServiceResolver` typed-key 方法在
+  `as_str() == Some` 时回退旧字符串方法，因此 typed `&'static str` key 会被当作 **`String`
+  key** 解析；在完整 typed 容器中二者**不相等**，typed key 消费者应使用 `*_key` 方法。
+- **宏 key 表达式（0.10）**：`#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]`
+  接受任意 `impl Into<ServiceKey>` 表达式：字符串字面量（仍为 `String` key）、
+  `ServiceKey::new(Kind::A)`、或下游 key 类型（`impl From<LocalKey> for ServiceKey`）。
+  `register!(keyed <expr>: <lifetime>: <Type>)` 同样接受表达式（详见 §3 与
+  [扩展契约](extension-points.md)）。
 - **字符串 footgun**：字符串注册 API（`keyed_singleton("x", …)`）存的是 `String` key；
   `ServiceKey::new("x")` 是 `&str` typed key，**不相等**。字符串键请用
   `"x".into()` / `ServiceKey::from("x")`；`ServiceKey::new` 只用于有意使用 typed
@@ -58,6 +69,10 @@ provider.get_keyed::<dyn IDb>(ServiceKey::from("write"))?; // 不是 ServiceKey:
   typed downcast 访问器（擦除表示私有）。需要按 key 分支时用相等/hash，或在闭包中捕获类型信息。
 - AnyKey 注册仅同步（`get_keyed_async` 回退同步路径）；不做 eager 初始化/单独校验；
   `keyed_any_scoped` 被同步 singleton 捕获仍按 captive dependency 拒绝。
+- **async AnyKey 边界（0.10）**：本版本**不提供** `async_any_*` 注册；`get_keyed_async` 对
+  AnyKey 兜底回退同步解析。有限 key 用 `async_keyed_*`；动态 key 用同步 AnyKey 服务 +
+  内部 per-key 缓存（`tokio::sync::OnceCell`/map）或 async singleton + keyed map。详见
+  [扩展契约 · async AnyKey 边界](extension-points.md#4-async-anykey-边界010-仍未提供)。
 
 ```rust
 let provider = ServiceCollection::new()
@@ -69,7 +84,27 @@ let a: Arc<dyn IStorage> = provider.get_keyed("tenant-1")?; // 兜底，(类型,
 let b: Arc<dyn IStorage> = provider.get_keyed("tenant-2")?; // 另一实例
 ```
 
-## 3. async 解析与环检测
+## 3. 宏 key 表达式与 resolver typed 扩展（0.10）
+
+- **宏 key 表达式**：`#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]` 接受任意
+  `impl Into<ServiceKey>`；`register!(keyed <expr>: <lifetime>: <Type>)` 同。字符串字面量
+  源码兼容且仍产生 `String` key。
+- **表达式求值时机（0.10）**：每个消费者构造时求值一次；singleton 在 build/validation
+  期求值一次；transient 每次解析求值一次；`register!(keyed <expr>)` 每次 build 求值一次。
+  表达式应稳定、无副作用（建议 `const`/局部变量/显式注册）。
+- **下游 key 类型（官方扩展路径）**：不要复制注入宏；为本地 key 实现
+  `impl From<LocalKey> for ServiceKey`，之后 `#[inject(key = LocalKey::...)]` / 显式 keyed
+  注册即可。见 [扩展契约](extension-points.md)。
+- **重复 key 检测**：`#[module]` 的编译期重复检测（`rdi-E004`）**仅对字符串字面量**生效；
+  动态表达式 key 重复按运行时"最后注册优先"。
+- **resolver typed keyed 方法**：`IServiceResolver` 新增
+  `get_keyed_any_key` / `try_get_keyed_any_result_key` / `get_keyed_owned_any_key` /
+  `try_get_keyed_owned_any_key`。默认实现仅对 string-like key（`ServiceKey::as_str()`
+  为 `Some`）回退旧字符串方法；`ServiceProvider` / `Scope` / `ServiceProviderWrapper` /
+  构建期 ValidationResolver 均实现完整 typed key（AnyKey 兜底、owned、captive 检查）。
+  外部自定义实现需 override 才能支持非字符串 key；扩展点方法不能是泛型（保持对象安全）。
+
+## 4. async 解析与环检测
 
 - `build_async()` 初始化 async singleton：**依赖驱动、注册顺序无关**（依赖优先拓扑序）。
 - `get_async` / `get_keyed_async` 返回 `impl Future`（构造时捕获解析链；`.await` 用法不变）。
@@ -83,6 +118,8 @@ let b: Arc<dyn IStorage> = provider.get_keyed("tenant-2")?; // 另一实例
 - **同步解析 async 服务**：`get` 返回 `AsyncServiceRequiresGetAsync`；`get_optional` 返回
   `None`（不 panic）；`get_owned` / `try_get_owned` 同理按各自签名处理。
 - 含 `async_*` 注册却调 `build()` → `AsyncServiceRequiresBuildAsync`（仅此场景）。
+- **async AnyKey**：无 `async_any_*`；`get_keyed_async` 对 AnyKey 回退同步，替代方案见
+  [扩展契约](extension-points.md#4-async-anykey-边界010-仍未提供)。
 
 ```rust
 .async_singleton(|sp| Box::pin(async move {
@@ -95,7 +132,7 @@ let b: Arc<dyn IStorage> = provider.get_keyed("tenant-2")?; // 另一实例
 }))
 ```
 
-## 4. 枚举与 async
+## 5. 枚举与 async
 
 `get_all` / `get_all_keyed` / `#[inject] Vec<Arc<T>>`：
 
@@ -106,7 +143,7 @@ let b: Arc<dyn IStorage> = provider.get_keyed("tenant-2")?; // 另一实例
   - async **scoped** 在 root provider 上会被严格 scope 校验**静默省略**，在 `Scope` 内枚举才 panic；
 - async scoped/transient 请用 `get_async` 逐项解析。
 
-## 5. 错误与诊断
+## 6. 错误与诊断
 
 集中清单见 [RdiError 错误目录](error-catalog.md)。要点：
 
@@ -115,20 +152,26 @@ let b: Arc<dyn IStorage> = provider.get_keyed("tenant-2")?; // 另一实例
 - `AsyncServiceRequiresBuildAsync` 只用于"含 `async_*` 却调 `build()`"；同步解析 async 服务用
   `AsyncServiceRequiresGetAsync`。
 
-## 6. 工程基线
+## 7. 工程基线
 
 | 项 | 值 |
 |----|----|
 | MSRV | Rust **1.95**（`rust-version`，CI matrix 覆盖 1.95 / stable） |
 | 安全 | 两个 crate 均 `#![forbid(unsafe_code)]`；漏洞上报/支持版本/边界见 `SECURITY.md` |
 | CI | `.github/workflows/ci.yml`：ubuntu + windows × 1.95/stable；stable fmt/clippy(-D warnings)/doc(-D warnings)；RustSec `cargo audit` |
-| 行为 | 0.9.1 为**文档补丁**，无行为变更；升级无风险 |
+| 行为 | 0.10.0 在宏 key 表达式 / resolver typed 方法上**源码兼容**；async AnyKey 仍未提供；MSRV 1.95 |
 | 释放 | `Scope` 的 Drop 会逆序释放 scope 内实例；`ServiceProvider` 需**显式** `dispose()` 才确定性释放 singleton/root scoped（幂等，之后解析返回 `ProviderDisposed`） |
 
-## 7. 迁移与延伸
+## 8. 迁移与延伸
 
-- 0.7.x / 0.8.x → 0.9.x：见
-  [迁移速查](../01-introduction/medi-differences.md#12-迁移速查07x--09x)。
+- 0.9 → 0.10：源码兼容（宏 key 从字面量改为表达式；字符串字面量仍为 `String` key）。
+  自定义 `IServiceResolver` 实现者默认仅字符串 key，需 override 4 个 typed keyed 方法；
+  下游推荐 `impl From<LocalKey> for ServiceKey` + 宏，而不是复制注入宏。详见
+  [扩展契约](extension-points.md)。
+- 0.7.x / 0.8.x → 0.10.x：见
+  [迁移速查](../01-introduction/medi-differences.md#12-迁移速查07x--010x)。
 - 生产部署检查：见 [生产环境部署检查清单](production-checklist.md)（原
   `docs/production-deployment-checklist.md` 已迁入参考章）。
 - API 细节：见 [crates/core README](../../../crates/core/README.md) 与 docs.rs API 文档。
+
+

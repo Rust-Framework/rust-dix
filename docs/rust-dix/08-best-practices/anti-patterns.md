@@ -276,9 +276,9 @@ fn main() {
 
 ## 反模式 8：从根 Provider 解析 Scoped（或仍按 0.7.x root-scope 语义设计）
 
-### ⚠️ 语义澄清（0.9.x）
+### ⚠️ 语义澄清（0.10.x）
 
-0.8.0 起默认开启严格 scope 校验（0.9.x 同样适用）（`ServiceProviderOptions::validate_scopes = true`）。
+0.8.0 起默认开启严格 scope 校验（0.10.x 同样适用）（`ServiceProviderOptions::validate_scopes = true`）。
 从根 Provider 解析 Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`：
 
 ```rust
@@ -434,7 +434,7 @@ struct Repository {
 }
 ```
 
-### 问题（0.9.0 精确诊断）
+### 问题（0.10 精确诊断）
 
 `build_async` 在同步 singleton 校验阶段返回
 `RdiError::SyncSingletonDependsOnAsyncService { singleton, async_service }`（不会 hang）。
@@ -509,8 +509,8 @@ tokio::spawn(async move { sp.get_async::<Dep>().await });
 | 以为 AnyKey scoped/transient owned 会被 root scope 拒绝 | owned 是例外，strict root 下允许 | 直接用 `get_keyed_owned`；不进缓存，传递依赖仍受校验 |
 | 跨任务解析不传 `AsyncFactoryContext` | 跨任务环可能死锁 | 工厂内 `sp.async_context()` 并 clone 进任务 |
 
-> 0.9 完整语义（类型化键/AnyKey/async 枚举/诊断）见
-> [0.9 语义权威页](../09-reference/semantics-0.9.md)；错误处理见
+> 当前版本完整语义（类型化键/AnyKey/async 枚举/诊断/扩展）见
+> [语义权威页（0.10）](../09-reference/semantics.md)；错误处理见
 > [错误目录](../09-reference/error-catalog.md)。
 | Handler 直接调用 | 绕过 DI | 通过 Mediator 或注入服务 |
 | struct 与 impl 同时用 `#[inject]` | 双重注册，可绕过接口 | struct 用 `#[derive(Inject)]`，impl 用 `#[inject]` |

@@ -151,6 +151,44 @@ impl IServiceResolver for ServiceProviderWrapper {
         IServiceResolver::get_keyed_any(self.child.as_ref(), key, variant)
             .or_else(|| IServiceResolver::get_keyed_any(self.root.as_ref(), key, variant))
     }
+    fn get_keyed_any_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.child
+            .get_keyed_any_key(key, variant)
+            .or_else(|| self.root.get_keyed_any_key(key, variant))
+    }
+    fn try_get_keyed_any_result_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        match self.child.try_get_keyed_any_result_key(key, variant) {
+            Ok(Some(v)) => Ok(Some(v)),
+            _ => self.root.try_get_keyed_any_result_key(key, variant),
+        }
+    }
+    fn get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.child
+            .get_keyed_owned_any_key(key, variant)
+            .or_else(|| self.root.get_keyed_owned_any_key(key, variant))
+    }
+    fn try_get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &crate::key::ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        match self.child.try_get_keyed_owned_any_key(key, variant) {
+            Ok(Some(v)) => Ok(Some(v)),
+            _ => self.root.try_get_keyed_owned_any_key(key, variant),
+        }
+    }
     fn get_by_type_id(&self, tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
         self.child
             .get_by_type_id(tid)

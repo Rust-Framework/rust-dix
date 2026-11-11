@@ -4,8 +4,9 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.9.x   | ✅        |
-| 0.8.x   | ✅ (security fixes only, until 0.9.1 is released) |
+| 0.10.x  | ✅        |
+| 0.9.x   | ✅ (security fixes only) |
+| 0.8.x   | ✅ (security fixes only) |
 | < 0.8   | ❌        |
 
 ## Reporting a vulnerability

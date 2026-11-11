@@ -1,6 +1,6 @@
 # rust-dix 文档
 
-本目录为 **rust-dix 开发者手册：面向接口开发的 Rust 依赖注入（DI）框架**（当前对应 **0.9.1** 文档补丁）的 canonical 源，覆盖 DI 容器的三种生命周期、类型化键控服务与 `AnyKey`、异步环检测、过程宏与参考/附录。
+本目录为 **rust-dix 开发者手册：面向接口开发的 Rust 依赖注入（DI）框架**（当前对应 **0.10.0**）的 canonical 源，覆盖 DI 容器的三种生命周期、类型化键控服务与 `AnyKey`、宏 key 表达式、异步环检测、过程宏与参考/附录。
 
 ## 结构
 
@@ -16,9 +16,10 @@ docs/
     ├── 03-interface-oriented/   # 第三章 面向接口编程范式（已发布 2 页）
     ├── 05-design-patterns/      # 第五章 设计模式实践（章节页已发布，小节规划中）
     ├── 08-best-practices/       # 第八章 最佳实践（已发布 6 页）
-    └── 09-reference/            # 附录 · 参考（0.9 语义权威页 / 错误目录 / 生产清单）
+    └── 09-reference/            # 附录 · 参考（语义权威页（0.10） / 扩展契约 / 错误目录 / 生产清单）
         ├── INDEX.md
-        ├── semantics-0.9.md
+        ├── semantics.md
+        ├── extension-points.md
         ├── error-catalog.md
         └── production-checklist.md
 ```
@@ -30,7 +31,8 @@ docs/
 
 ## 附加文档
 
-- [参考章 · 0.9 语义权威页](rust-dix/09-reference/semantics-0.9.md) — 语义冲突时以本页为准
+- [参考章 · 当前版本语义（0.10）](rust-dix/09-reference/semantics.md) — 语义冲突时以本页为准
+- [扩展契约与边界](rust-dix/09-reference/extension-points.md) — 本地 key `From` + 宏、自定义 resolver、async AnyKey 边界
 - [RdiError 错误目录](rust-dix/09-reference/error-catalog.md) — 错误变体与处理建议
 - [生产环境部署检查清单](rust-dix/09-reference/production-checklist.md) — 上线逐项检查（原 `docs/production-deployment-checklist.md`，已迁入参考章）
 - [与 MEDI 的差异清单](rust-dix/01-introduction/medi-differences.md) — .NET 迁移必读

@@ -5,6 +5,7 @@
 
 use crate::entry::IServiceResolver;
 use crate::error::RdiError;
+use crate::key::ServiceKey;
 use crate::provider::ServiceProvider;
 use std::any::Any;
 use std::sync::Arc;
@@ -29,19 +30,29 @@ pub fn resolve_arc<T: ?Sized + Send + Sync + 'static>(
 }
 
 /// Resolve keyed `Arc<T>` for a required inject field.
+///
+/// `key` accepts anything convertible into [`ServiceKey`], so macros can pass
+/// string literals (`#[inject(key = "main")]`), typed key expressions
+/// (`#[inject(key = ServiceKey::new(Kind::A))]`) or downstream key types via
+/// `impl From<LocalKey> for ServiceKey`.
 #[doc(hidden)]
 pub fn resolve_keyed_arc<T: ?Sized + Send + Sync + 'static>(
     resolver: &dyn IServiceResolver,
-    key: &str,
+    key: impl Into<ServiceKey>,
     consumer: &'static str,
     field: &'static str,
 ) -> Result<Arc<T>, RdiError> {
     let ty = std::any::type_name::<T>();
     let ctx = field_context(consumer, field);
-    resolver
-        .get_keyed_any(ty, key)
-        .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
-        .ok_or_else(|| RdiError::keyed_not_found(ty, key, Some(ctx)))
+    let key = key.into();
+    match resolver.try_get_keyed_any_result_key(ty, &key)? {
+        Some(a) => a
+            .downcast::<Arc<T>>()
+            .ok()
+            .map(|d| Arc::clone(&*d))
+            .ok_or_else(|| RdiError::keyed_not_found(ty, key.to_string(), Some(ctx))),
+        None => Err(RdiError::keyed_not_found(ty, key.to_string(), Some(ctx))),
+    }
 }
 
 /// Optional shared inject field.
@@ -59,11 +70,14 @@ pub fn resolve_option_arc<T: ?Sized + Send + Sync + 'static>(
 #[doc(hidden)]
 pub fn resolve_option_keyed_arc<T: ?Sized + Send + Sync + 'static>(
     resolver: &dyn IServiceResolver,
-    key: &str,
+    key: impl Into<ServiceKey>,
 ) -> Option<Arc<T>> {
     let ty = std::any::type_name::<T>();
+    let key = key.into();
     resolver
-        .get_keyed_any(ty, key)
+        .try_get_keyed_any_result_key(ty, &key)
+        .ok()
+        .flatten()
         .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
 }
 
@@ -115,20 +129,21 @@ pub fn resolve_owned<T: Send + Sync + 'static>(
 #[doc(hidden)]
 pub fn resolve_keyed_owned<T: Send + Sync + 'static>(
     resolver: &dyn IServiceResolver,
-    key: &str,
+    key: impl Into<ServiceKey>,
     consumer: &'static str,
     field: &'static str,
 ) -> Result<T, RdiError> {
     let ty = std::any::type_name::<T>();
     let ctx = field_context(consumer, field);
+    let key = key.into();
     let arc_any = resolver
-        .get_keyed_owned_any(ty, key)
-        .ok_or_else(|| RdiError::keyed_not_found(ty, key, Some(ctx.clone())))?;
+        .try_get_keyed_owned_any_key(ty, &key)?
+        .ok_or_else(|| RdiError::keyed_not_found(ty, key.to_string(), Some(ctx.clone())))?;
     let arc_t: Arc<T> = arc_any
         .downcast::<Arc<T>>()
         .ok()
         .map(|d| Arc::clone(&*d))
-        .ok_or_else(|| RdiError::keyed_not_found(ty, key, Some(ctx)))?;
+        .ok_or_else(|| RdiError::keyed_not_found(ty, key.to_string(), Some(ctx)))?;
     Arc::try_unwrap(arc_t).map_err(|_| RdiError::OwnedNotSupported(ty))
 }
 
@@ -147,10 +162,14 @@ pub fn resolve_option_owned<T: Send + Sync + 'static>(
 #[doc(hidden)]
 pub fn resolve_option_keyed_owned<T: Send + Sync + 'static>(
     resolver: &dyn IServiceResolver,
-    key: &str,
+    key: impl Into<ServiceKey>,
 ) -> Option<T> {
     let ty = std::any::type_name::<T>();
-    let arc_any = resolver.get_keyed_owned_any(ty, key)?;
+    let key = key.into();
+    let arc_any = resolver
+        .try_get_keyed_owned_any_key(ty, &key)
+        .ok()
+        .flatten()?;
     let arc_t: Arc<T> = arc_any.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d))?;
     Arc::try_unwrap(arc_t).ok()
 }

@@ -348,6 +348,45 @@ impl IServiceResolver for ValidationResolver<'_> {
         self.resolve_entry_for(entry, Some(&requested))
     }
 
+    fn get_keyed_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        let tid = self.tid_by_name(key)?;
+        let entry = self.keyed_entry(tid, variant)?;
+        self.resolve_entry_for(entry, Some(variant))
+    }
+
+    fn try_get_keyed_any_result_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_keyed_any_key(key, variant))
+    }
+
+    fn get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        let tid = self.tid_by_name(key)?;
+        let entry = self.keyed_entry(tid, variant)?;
+        if entry.lifetime == ServiceLifetime::Singleton {
+            return None;
+        }
+        self.resolve_entry_for(entry, Some(variant))
+    }
+
+    fn try_get_keyed_owned_any_key(
+        &self,
+        key: &str,
+        variant: &ServiceKey,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_keyed_owned_any_key(key, variant))
+    }
+
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
         let Some(tid) = self.tid_by_name(key) else {
             return Vec::new();

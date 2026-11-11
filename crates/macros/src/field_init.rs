@@ -84,6 +84,12 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
         return Ok(quote! { #fnm: ::std::default::Default::default() });
     }
     if attrs.provider {
+        if attrs.key.is_some() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "#[inject(provider)] cannot be combined with key; inject Arc<ServiceProvider> and resolve keyed services on demand",
+            ));
+        }
         return Ok(quote! {
             #fnm: ::rust_dix::macros_support::resolve_provider(
                 resolver,
@@ -200,7 +206,7 @@ pub(crate) struct IA {
     pub inject: bool,
     pub owned: bool,
     pub provider: bool,
-    pub key: Option<String>,
+    pub key: Option<syn::Expr>,
 }
 
 pub(crate) fn parse_ia(f: &Field) -> IA {
@@ -220,7 +226,10 @@ pub(crate) fn parse_ia(f: &Field) -> IA {
                 a.provider = true;
                 a.inject = false;
             } else if m.path.is_ident("key") {
-                a.key = Some(m.value()?.parse::<syn::LitStr>()?.value());
+                // Accept any expression convertible to `ServiceKey`:
+                // string literals, typed key expressions, or downstream key
+                // values implementing `From<LocalKey> for ServiceKey`.
+                a.key = Some(m.value()?.parse::<syn::Expr>()?);
             }
             Ok(())
         })

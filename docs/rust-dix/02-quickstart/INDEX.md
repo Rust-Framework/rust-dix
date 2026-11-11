@@ -18,15 +18,15 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.9"
+rust-dix = "0.10"
 ```
 
 如果使用过程宏：
 
 ```toml
 [dependencies]
-rust-dix = "0.9"
-rust-dix-macros = "0.9"
+rust-dix = "0.10"
+rust-dix-macros = "0.10"
 ```
 
 > **MSRV**：Rust **1.95**。两个 crate 均 `#![forbid(unsafe_code)]`；CI 跑测试矩阵 +
@@ -81,18 +81,19 @@ logger.log("Hello, rust-dix!");
 | 请求上下文、事务 | Scoped |
 | 无状态轻量服务 | Transient |
 
-## 0.9.x 关键语义（先记住这几条）
+## 0.10.x 关键语义（先记住这几条）
 
 | 规则 | 说明 |
 |------|------|
 | **最后注册优先** | `get` / `get_keyed*` / `get_owned` / `get_async` 返回最后注册；`try_add*` = 未注册才添加 |
 | **严格 scope 校验** | root 解析 Scoped 返回 `ScopedFromRootProvider`，请求级服务在 `provider.scope()` 内解析；owned/`get_owned` 例外 |
-| **类型化键 / AnyKey** | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 兜底（精确优先、按 (注册/类型, key) 缓存、单值 `any_key()` 非法、字符串键用 `from/into`） |
+| **类型化键 / AnyKey** | keyed API 接受 `impl Into<ServiceKey>`；**宏 key 支持表达式**（`#[inject(key = <expr>)]`、`register!(keyed <expr>: ...)`，0.10）；`keyed_any_*` 兜底（精确优先、按 (注册/类型, key) 缓存、单值 `any_key()` 非法、字符串键用 `from/into`） |
 | **异步解析/枚举** | 同步解析 async 服务 → `AsyncServiceRequiresGetAsync`；枚举含已初始化 async singleton；跨任务传 `AsyncFactoryContext` |
 | **释放/诊断** | `dispose()` 逆序释放、幂等；`is_circular()` 为启发式；诊断错误见参考章 |
 
 完整语义与边界（尤其 async 枚举、AnyKey owned/预填充、错误目录）见
-[0.9 语义权威页](../09-reference/semantics-0.9.md) 与
+[语义权威页（0.10）](../09-reference/semantics.md)、
+[扩展契约](../09-reference/extension-points.md)（宏 key 表达式/From 下游 key/async AnyKey 边界）与
 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 
 ## 异步容器（推荐 Web 应用使用）

@@ -1,23 +1,25 @@
 # 生产环境部署检查清单
 
-> 适用于 `rust-dix` **v0.9.x**（当前 0.9.1；0.9.1 为文档补丁）。基于源码静态分析 + 运行时行为验证编写。
-> 0.9.0 新增类型化 keyed 键 / `AnyKey` 兜底 / `AsyncFactoryContext`（跨任务环检测）/
+> 适用于 `rust-dix` **v0.10.x**（当前 0.10.0，特性发布：宏 key 表达式 / typed resolver /
+> 扩展契约）。基于源码静态分析 + 运行时行为验证编写。
+> 0.9 引入、0.10 继续适用：类型化 keyed 键 / `AnyKey` 兜底 / `AsyncFactoryContext`（跨任务环检测）/
 > 精确诊断，并把 async 环检测升级为解析链；MSRV **1.95**，两个 crate 均
 > `#![forbid(unsafe_code)]`，CI 含 RustSec `cargo audit`，安全策略见 `SECURITY.md`。
 > 需要兼容 0.7.x / 0.8.x 的地方会注明。
 
-## 0. 0.9.x 语义变更摘要（部署前必读）
+## 0. 0.10.x 语义变更摘要（部署前必读）
 
-完整语义见 [0.9 语义权威页](semantics-0.9.md)，错误见 [错误目录](error-catalog.md)；
+完整语义见 [语义权威页（0.10）](semantics.md)，错误见 [错误目录](error-catalog.md)；
+宏 key/自定义 resolver/async AnyKey 边界见 [扩展契约](extension-points.md)；
 本清单只列**会影响生产部署**的 5 条：
 
 | 变更 | 生产影响 |
 |------|----------|
 | 最后注册优先 + 严格 scope 校验 | 覆盖关系检查注册顺序/`try_add*`；root 解析 Scoped 失败，请求级服务必须在 `scope()` 内解析（owned 例外） |
 | `get_all` / `Vec` 仅非 keyed、含已初始化 async singleton | 广播逻辑用 `get_all`；keyed 用 `get_all_keyed`；未初始化 async 枚举会 panic/`Err` |
-| 类型化键 / AnyKey（0.9） | keyed API 取 `impl Into<ServiceKey>`；AnyKey 按 (注册/类型, key) 缓存、预填充/owned/嵌套有例外；单值 `any_key()` 非法 |
-| async 诊断/环检测（0.9） | 同步解析 async → `AsyncServiceRequiresGetAsync`；同步 singleton 不得依赖 async；跨任务传 `AsyncFactoryContext`；`is_circular()` 启发式 |
-| 供应链/安全（0.9） | MSRV 1.95、`forbid(unsafe_code)`、CI matrix + fmt/clippy/doc + RustSec `cargo audit`、`SECURITY.md` |
+| 类型化键 / AnyKey（0.9 起，0.10 同样适用） | keyed API 取 `impl Into<ServiceKey>`；AnyKey 按 (注册/类型, key) 缓存、预填充/owned/嵌套有例外；单值 `any_key()` 非法 |
+| async 诊断/环检测（0.9 起，0.10 同样适用） | 同步解析 async → `AsyncServiceRequiresGetAsync`；同步 singleton 不得依赖 async；跨任务传 `AsyncFactoryContext`；`is_circular()` 启发式 |
+| 供应链/安全（0.9 起，0.10 同样适用） | MSRV 1.95、`forbid(unsafe_code)`、CI matrix + fmt/clippy/doc + RustSec `cargo audit`、`SECURITY.md` |
 
 ---
 
@@ -25,7 +27,7 @@
 
 ### 1.1 Singleton 缓存释放
 
-**机制**：`LazyCache` 的 singleton cell 在 `ServiceProvider` 生命周期内保持。0.8.0 起（0.9.x 同样适用）
+**机制**：`LazyCache` 的 singleton cell 在 `ServiceProvider` 生命周期内保持。0.8.0 起（0.10.x 同样适用）
 `ServiceProvider::dispose()` 会按**创建逆序**释放全部 singleton 与 root scoped 实例、
 逆序执行 `register_disposable` 清理闭包、清空 named 注册，并标记 provider 已释放
 （此后解析返回 `Err(ProviderDisposed)`）。**仅 drop `Arc`/不调用 dispose 不会主动执行
@@ -61,7 +63,7 @@
 
 ### 1.3 disposables / scoped 实例未执行导致资源泄漏
 
-**机制**：`Scope` 自动跟踪该 scope 创建的 Scoped 实例。0.8.0 起（0.9.x 同样适用）
+**机制**：`Scope` 自动跟踪该 scope 创建的 Scoped 实例。0.8.0 起（0.10.x 同样适用）
 `Scope::dispose()`/Drop 先按**创建逆序**释放这些实例，再按**注册逆序**执行
 `register_disposable` 清理闭包。实现会先取出待释放队列、**释放锁再执行**用户代码，
 避免持锁回调导致重入死锁。
@@ -109,7 +111,7 @@ scope.dispose();  // 显式 dispose：逆序释放 scoped 实例 + 逆序执行�
 | 属性 | 行为 |
 |------|------|
 | 缓存位置 | `singleton_cache`（全局唯一，`OnceLock` 保护） |
-| 初始化时机 | 同步 singleton：`build()` / `build_async()` 时 eager init（工厂执行一次，**按注册顺序创建**，0.8.0 起（0.9.x 同样适用）顺序确定）；async singleton：`build_async()` 时**依赖驱动递归初始化**（0.8.1 起注册顺序无关，最终为依赖优先拓扑序）。此时 provider `Arc` 已创建，工厂内可解析 `#[inject(provider)]` / 内置 `ScopeFactory`（0.7.1+） |
+| 初始化时机 | 同步 singleton：`build()` / `build_async()` 时 eager init（工厂执行一次，**按注册顺序创建**，0.8.0 起（0.10.x 同样适用）顺序确定）；async singleton：`build_async()` 时**依赖驱动递归初始化**（0.8.1 起注册顺序无关，最终为依赖优先拓扑序）。此时 provider `Arc` 已创建，工厂内可解析 `#[inject(provider)]` / 内置 `ScopeFactory`（0.7.1+） |
 | async 初始化约束 | async singleton 可 `await` 任意（含后注册的）async singleton，会先递归初始化依赖；**依赖图必须无环**——自引用/交叉依赖返回 `RdiError::CircularDependency`（不会 hang）；`build_async` 返回时所有 async singleton 均已初始化 |
 | build 期 async 解析 | async singleton **初始化完成前只能用 `get_async` 解析**（工厂内 `sp.get_async::<T>()` 会递归初始化依赖）；此时同步 `get` 返回 `Err(RdiError::AsyncServiceRequiresGetAsync)`、`get_optional` 为 `None`，但 `is_registered` 仍为 `true`。`build_async` 返回后已缓存的 async singleton 可直接 `get` |
 | 生命周期 | = `ServiceProvider` 生命周期，直到 `provider.dispose()` |
@@ -142,7 +144,7 @@ scope.dispose();  // 显式 dispose：逆序释放 scoped 实例 + 逆序执行�
 | 生命周期 | = `Scope` 生命周期；`dispose()`/Drop 按**创建逆序**释放 |
 | 隔离性 | 每个 `Scope` 独立缓存，互不影响 |
 | 依赖约束 | 可依赖 Singleton / Scoped / Transient |
-| root 解析 | **0.8.0 起（0.9.x 同样适用）默认拒绝**：从 root provider 解析 Scoped（含经 Transient 链间接）返回 `Err(ScopedFromRootProvider)`；0.7.x 旧行为需 `build_with(ServiceProviderOptions::lenient())`。例外：`get_owned`/`try_get_owned` 可从 root 取 Scoped（归调用方、不缓存；其 Scoped 依赖仍受校验） |
+| root 解析 | **0.8.0 起（0.10.x 同样适用）默认拒绝**：从 root provider 解析 Scoped（含经 Transient 链间接）返回 `Err(ScopedFromRootProvider)`；0.7.x 旧行为需 `build_with(ServiceProviderOptions::lenient())`。例外：`get_owned`/`try_get_owned` 可从 root 取 Scoped（归调用方、不缓存；其 Scoped 依赖仍受校验） |
 
 **检查项**：
 - [ ] 确认每个 HTTP 请求 / 业务事务创建独立 `Scope`，请求结束显式 `dispose()` 或 drop
@@ -219,9 +221,9 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ## 三、异常处理机制
 
-### 3.1 sync 工厂 panic / 失败（0.9.x 语义）
+### 3.1 sync 工厂 panic / 失败（0.10.x 语义）
 
-**机制**：0.8.0 起（0.9.x 同样适用）同步解析路径不再把工厂 panic 直接抛给业务调用方，而是统一转成类型化
+**机制**：0.8.0 起（0.10.x 同样适用）同步解析路径不再把工厂 panic 直接抛给业务调用方，而是统一转成类型化
 `RdiError`。`OnceLock` 类缓存在工厂 panic 时不会写入（cell 保持未初始化），下次解析会重试。
 
 **行为**：
@@ -345,7 +347,7 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ### 3.6 key 冲突、类型化键与 AnyKey
 
-**机制**（完整语义见 [0.9 语义权威页 §1-§2](semantics-0.9.md)）：
+**机制**（完整语义见 [语义权威页（0.10） §1-§2](semantics.md)）：
 - 非 keyed：同类型多次注册最后生效；keyed 同 key 重复注册最后生效，`#[module]` 重复 key 编译期错误。
 - **类型化键/AnyKey**：keyed API 取 `impl Into<ServiceKey>`；字符串键用 `ServiceKey::from("x")`；AnyKey 精确优先、按 (注册/类型, key) 缓存、validation 预填充、owned 例外、嵌套不同 key 合法、单值 `any_key()` 非法。
 - **枚举与 async**：`get_all`/`get_all_keyed` 含已初始化 async singleton；未初始化 async → `AsyncServiceRequiresGetAsync`（`get_all` typed panic / `Vec` Err；async scoped 在 root 被 scope 校验省略）。
@@ -360,13 +362,14 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 - [ ] 确认 `get_all_keyed` 的消费方不假设包含 AnyKey 兜底/非 keyed 注册
 - [ ] 确认同步枚举的消费方不会遇到未初始化 async 服务（否则用 `get_async` 逐项解析）
 - [ ] 确认没有用 `ServiceKey::any_key()` 做单值解析
+- [ ] 确认未使用 `async_any_*`（0.10 未提供）；动态 key 异步构建按 [扩展契约](extension-points.md#4-async-anykey-边界010-仍未提供) 的 workaround 处理
 - [ ] 0.7.x/0.8.x 升级：确认没有依赖"先注册优先"的覆盖逻辑
 
 ---
 
 ### 3.7 Scope 校验错误
 
-**机制**：0.8.0 起默认严格 scope 校验（0.9.x 同样适用）：root provider 解析 Scoped 服务（含经 Transient
+**机制**：0.8.0 起默认严格 scope 校验（0.10.x 同样适用）：root provider 解析 Scoped 服务（含经 Transient
 链间接）返回 `Err(RdiError::ScopedFromRootProvider { service })`；
 `get_optional` / `get_all` / `get_all_keyed` / `try_*` 视为不可解析（`None`/空）。
 **例外**：`get_owned`/`try_get_owned` 允许从 root 解析 Scoped（实例归调用方、不缓存），
@@ -404,7 +407,7 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ### 4.3 dispose/register 竞态
 
-**机制**：0.8.0 起（0.9.x 同样适用） `Scope` 既跟踪 scoped 实例也维护 `disposables` 队列。`dispose()` **等待**
+**机制**：0.8.0 起（0.10.x 同样适用） `Scope` 既跟踪 scoped 实例也维护 `disposables` 队列。`dispose()` **等待**
 `disposables` 锁（不再 `try_lock` 静默跳过），取出队列后释放锁再执行用户清理闭包，避免
 持锁调用用户代码导致重入死锁。`Scope::dispose()` 与 `ServiceProvider::dispose()` 均幂等，
 重复调用不会重复释放。
@@ -498,7 +501,7 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 - **`#![forbid(unsafe_code)]`**：两个 crate 均禁止 `unsafe`；同步使用 std 的
   `Mutex` / `RwLock` / `OnceLock`。
 - **`SECURITY.md`**：漏洞通过 GitHub 私密 advisories 上报（目标 72h 内响应、30 天内修复），
-  声明支持版本（0.9.x；0.8.x 仅安全修复）与安全设计/边界（无网络/文件访问、panic containment、
+  声明支持版本（0.10.x；0.8.x 仅安全修复）与安全设计/边界（无网络/文件访问、panic containment、
   dispose 契约、环安全、供应链审计）。
 
 **检查项**：

@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.9"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
+rust-dix = "0.10"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
 ```
 
 > **注意**：你很少需要直接添加 `rust-dix-macros` 依赖。`rust-dix` crate 已经重新导出了
@@ -98,7 +98,8 @@ struct NamedService {
 
 该宏包含 `#[derive(Inject)]` 的功能——放在 struct 上时，内部生成相同的构造函数
 （`__rdi_construct_{类型}`），使用相同的字段属性语法
-（`#[inject]`、`#[inject(owned)]`、`#[inject(key = "...")]` 等），
+（`#[inject]`、`#[inject(owned)]`、`#[inject(key = <expr>)]` 等）。key 表达式接受字符串
+字面量、`ServiceKey::new(...)`，或通过 `impl From<LocalKey> for ServiceKey` 的下游 key 类型。
 **无需同时使用两者**。impl 块放置方式**不会**生成构造函数——它复用 struct 放置方式已经生成的构造函数。
 
 > **迁移说明**：旧的冗长语法 `#[rust_dix::inject_attr(singleton, as = dyn Trait<...>)]`
@@ -154,16 +155,18 @@ let provider = ServiceCollection::new()
 | *(无标记)* | 任意（需 `Default`） | 内部字段 — 使用 `Default::default()` |
 | `#[inject]` | `Arc<T>` | 必选共享 — 未注册返回 `Err(ServiceNotFound)`（try-construct 带字段 `context`） |
 | `#[inject]` | `Option<Arc<T>>` | 可选共享 — 未注册返回 `None` |
-| `#[inject(key = "k")]` | `Arc<T>` | 键控共享 — 找不到 key 返回 `Err(KeyedServiceNotFound)` |
-| `#[inject(key = "k")]` | `Option<Arc<T>>` | 可选键控共享 |
+| `#[inject(key = <expr>)]` | `Arc<T>` | 键控共享 — `expr: impl Into<ServiceKey>`；找不到 key 返回 `Err(KeyedServiceNotFound)` |
+| `#[inject(key = <expr>)]` | `Option<Arc<T>>` | 可选键控共享 |
 | `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 返回 `Err` |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
-| `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
+| `#[inject(owned, key = <expr>)]` | 裸 `T` / `Option<T>` | 键控 owned（`expr` 规则同上） |
 | `#[inject]` | `Vec<Arc<T>>` | 多态注入 — 按注册顺序收集**全部非 keyed** 实现（keyed 实现需在 provider 上调用 `get_all_keyed`）；不支持 `key` 属性 |
 | `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入 provider 供按需解析 |
 
 > 严格类型校验：`#[inject]` 接受 `Arc<T>`、`Option<Arc<T>>` 或 `Vec<Arc<T>>`，
 > `#[inject(owned)]` 只接受裸 `T` / `Option<T>`。标记与类型不匹配会触发编译错误。
+> `#[inject(provider)]` **不能**与 `key` 组合（编译错误：应注入 `Arc<ServiceProvider>`，
+> 在方法内按需解析 keyed 服务）。
 
 内建容器服务无需注册，且在 eager singleton（0.7.1+）中同样可注入：
 `#[inject] scope_factory: Arc<dyn ScopeFactory>`、`#[inject] provider: Arc<ServiceProvider>`
@@ -199,6 +202,10 @@ mod services {
     rust_dix::register!(singleton: MyService);
     rust_dix::register!(singleton: dyn IPlugin => MyPlugin);
     rust_dix::register!(keyed "verbose": singleton: Logger);
+    // 0.10：keyed key 是表达式（typed key / 下游 From）
+    rust_dix::register!(keyed ServiceKey::new(Level::Debug): singleton: DebugLogger);
+    // 0.10：keyed `dyn Trait => Impl` 现在真正注册 Impl（此前会被静默丢弃）
+    rust_dix::register!(keyed "debug": singleton: dyn Level => DebugLogger);
 }
 
 // 生成: services::__rdi_build_provider_services() -> Result<Arc<ServiceProvider>>
@@ -213,9 +220,15 @@ let provider = services::__rdi_build_provider_services().unwrap();
 | `register!(scoped: T)` | 用 `Default` 注册 `T` 为 Scoped |
 | `register!(transient: T)` | 用 `Default` 注册 `T` 为 Transient |
 | `register!(singleton: dyn Trait => Impl)` | 注册 `Impl` 为 Singleton 实现 `Trait` |
-| `register!(keyed "k": singleton: T)` | 注册 `T` 为键控 Singleton |
-| `register!(keyed "k": scoped: T)` | 注册 `T` 为键控 Scoped |
+| `register!(keyed <expr>: singleton: T)` | 注册 `T` 为键控 Singleton；`<expr>: impl Into<ServiceKey>` |
+| `register!(keyed <expr>: scoped: T)` | 注册 `T` 为键控 Scoped |
+| `register!(keyed <expr>: <lifetime>: dyn Trait => Impl)` | 键控服务以 `Impl` 注册为 `trait`（0.10：`Impl` 真正生效；此前会被静默丢弃） |
 | `register!(factory singleton: T => expr)` | 使用自定义工厂表达式注册 |
+
+> 编译期重复检测（`rdi-E004`）**仅对字符串字面量**生效；动态表达式 key 按运行时
+> "最后注册优先"。字符串字面量仍产生 `String` key；typed key 用 `ServiceKey::new(...)` 或
+> 下游 `impl From<LocalKey> for ServiceKey`（官方扩展路径，不要复制宏）。
+> 见 [扩展契约](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)。
 
 **什么时候用**：
 
@@ -242,11 +255,18 @@ rust_dix::register!(singleton: MyService);
 
 ---
 
-### 行为说明（0.9.x）
+### 行为说明（0.10.x）
 
-宏本身在 0.9.x 没有变化，但接入的容器语义如下（完整语义：
-[0.9 语义权威页](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md)）：
+0.10 起宏 key 改为**表达式**（字符串字面量源码兼容）；接入的容器语义如下（完整语义：
+[当前版本语义（0.10）](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics.md)）：
 
+- **宏 key 表达式（0.10）**：`#[inject(key = <expr>)]` / `#[inject(owned, key = <expr>)]`
+  与 `register!(keyed <expr>: ...)` 接受任意 `impl Into<ServiceKey>`；下游 key 类型用
+  `impl From<LocalKey> for ServiceKey`（不要复制注入宏）。`rdi-E004` 仅检测字面量（编译期），
+  动态 key 运行时 last-wins。`register!(keyed <expr>: <lt>: dyn Trait => Impl)` 自 0.10
+  起真正注册 `Impl`（此前 `=> Impl` 可能被静默丢弃并错误使用 trait 的 `Default`）。
+  扩展契约：
+  [扩展契约](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)。
 - **最后注册优先**：同类型/同 key 注册两次时 `get`/`get_keyed` 返回后注册者；需要
   "未注册才添加"用 `try_add*`。
 - **`Vec<Arc<T>>` 注入**：仅非 keyed（按注册顺序，不含 `AnyKey` 兜底），并包含**已初始化**

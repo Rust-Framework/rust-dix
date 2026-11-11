@@ -396,13 +396,14 @@ fn build() -> Result<ServiceProvider, RdiError> {
 
 ---
 
-## 8. 0.9.x 语义要点（必读）
+## 8. 0.10.x 语义要点（必读）
 
-**0.8.0 起（0.9.x 同样适用）**容器语义对齐 MEDI；0.9 新增类型化键 / `AnyKey` 兜底 /
+**0.8.0 起（0.10.x 同样适用）**容器语义对齐 MEDI；0.9 新增类型化键 / `AnyKey` 兜底 /
 `AsyncFactoryContext` / 精确诊断。以下 5 条直接影响本文建议，完整语义见
-[0.9 语义权威页](../09-reference/semantics-0.9.md)：
+[语义权威页（0.10）](../09-reference/semantics.md)（扩展/自定义 key 见
+[扩展契约](../09-reference/extension-points.md)）：
 
-| 主题 | 0.9.x 行为 | 对本指南的影响 |
+| 主题 | 0.10.x 行为 | 对本指南的影响 |
 |------|-----------|----------------|
 | 单服务解析 | 最后注册优先（`get`/`get_keyed`/`get_owned`/`get_async`） | 覆盖 mock/默认实现：后注册生效；"未注册才添加"用 `try_add*` |
 | 多实现收集 | `get_all`/`Vec` 仅非 keyed；keyed 用 `get_all_keyed`（不含 AnyKey 兜底） | 观察者广播用非 keyed；keyed 策略显式解析 |

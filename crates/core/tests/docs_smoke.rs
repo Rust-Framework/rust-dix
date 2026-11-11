@@ -91,6 +91,33 @@ fn typed_keys_and_any_key_fallback() {
     assert_eq!(fallback.name(), "fallback");
 }
 
+// ── Typed keys in injection macros (0.10 canonical example) ──
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum Channel {
+    Primary,
+}
+
+#[derive(Inject)]
+struct TypedKeyConsumer {
+    #[inject(key = ServiceKey::new(Channel::Primary))]
+    #[allow(dead_code)]
+    svc: Arc<SharedService>,
+}
+
+#[test]
+fn typed_key_expression_in_inject_macro() {
+    let provider = ServiceCollection::new()
+        .keyed_singleton(ServiceKey::new(Channel::Primary), |_| {
+            Arc::new(SharedService)
+        })
+        .transient(|r| __rdi_construct_TypedKeyConsumer(r))
+        .build()
+        .unwrap();
+    let consumer: Arc<TypedKeyConsumer> = provider.get().unwrap();
+    let _ = &consumer.svc;
+}
+
 // ── Async resolution (build_async + get_async) ──
 
 struct DbPool {
