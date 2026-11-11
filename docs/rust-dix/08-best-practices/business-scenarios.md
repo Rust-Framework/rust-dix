@@ -595,15 +595,15 @@ impl OutboxWorker {
 
 ---
 
-## 0.8.0 语义要点（贯穿所有场景）
+## 0.8.x 语义要点（贯穿所有场景）
 
-| 主题 | 0.8.0 行为 | 场景中的影响 |
+| 主题 | 0.8.x 行为 | 场景中的影响 |
 |------|-----------|--------------|
 | 单服务解析 | 最后注册优先 | 测试/组合根用"后注册 mock"覆盖默认实现；需要"未注册才添加"用 `try_add*` |
 | 多实现收集 | `get_all` 仅非 keyed；keyed 用 `get_all_keyed` | 观察者广播（场景 4/5）把广播目标注册为非 keyed |
 | Scope 校验 | 默认严格：root 解析 Scoped 报 `ScopedFromRootProvider` | 场景 1/3 的请求级服务必须在 `provider.scope()` 内解析 |
 | 释放契约 | `Scope::dispose()` / Drop 逆序释放；新增 `ServiceProvider::dispose()` | Web 服务器关闭、后台 worker 停止时显式释放 |
-| 构建顺序 | eager singleton 按注册顺序创建 | 异步基础设施（场景 1 的 DbPool/Redis）初始化顺序可依赖 |
+| 构建顺序 | **同步 singleton 按注册顺序创建**；async singleton 依赖驱动递归初始化（0.8.1+，注册顺序无关） | 异步基础设施（场景 1 的 DbPool/Redis）按依赖关系初始化，依赖图需无环 |
 
 > 逐条差异与迁移见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 

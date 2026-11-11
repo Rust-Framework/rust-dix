@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-11-11
+
+> **English** · **简体中文**
+
+### English
+
+#### Fixed
+- **Async singleton initialization is dependency-first and registration-order independent**:
+  `build_async` now recursively initializes an async singleton's dependencies before the
+  dependent, regardless of registration order. 0.8.0 required dependencies to be registered
+  before dependents and returned a `FactoryPanic` otherwise; that restriction is gone.
+  Recursive dependency initialization is single-flight and cycle-safe — a self/cross
+  dependency cycle returns `RdiError::CircularDependency` instead of dead-locking.
+- Async singleton initialization remains eager and fail-fast: when `build_async` returns, all
+  async singletons are initialized (initialization is not deferred to the first `get_async`).
+
+#### Behavior note
+- Async singleton creation order is now a deterministic **dependency-first topological order**;
+  factory side effects may observe dependency-before-dependent instead of registration order.
+
+#### Migration from 0.8.0
+- None required — previously failing valid configurations now build; no API change (patch
+  release). If a test asserted the 0.8.0 `FactoryPanic` for a later-registered dependency,
+  update it to expect successful initialization.
+
+### 简体中文
+
+#### 修复
+- **async singleton 改为依赖驱动初始化，注册顺序无关**：`build_async` 会先递归初始化 async
+  singleton 的依赖，与注册先后无关。0.8.0 要求依赖先注册、否则返回 `FactoryPanic`；该限制
+  已移除。递归初始化为单飞（single-flight）且环安全——自引用/交叉依赖返回
+  `RdiError::CircularDependency`，而不是死锁。
+- async singleton 仍为 eager 且 fail-fast：`build_async` 返回时所有 async singleton 均已
+  初始化（不会推迟到首次 `get_async` 才初始化）。
+
+#### 行为说明
+- async singleton 的创建顺序现在是确定性的**依赖优先拓扑序**；工厂副作用可能观察到
+  "依赖先于依赖方"，而不再按注册顺序。
+
+#### 从 0.8.0 迁移
+- 无需迁移——原先会失败的合法配置现在可正常构建；无 API 变更（patch 版本）。若测试断言了
+  0.8.0 对"后注册依赖"返回 `FactoryPanic`，请改为断言初始化成功。
+
 ## [0.8.0] - 2026-11-11
 
 > **English** · **简体中文**
@@ -69,15 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_all_keyed_any` / `get_all_any_result`.
 - `build_async` initializes async singletons in registration order; resolving a
   not-yet-initialized async singleton reports an actionable `FactoryPanic` (register
-  dependencies before their dependents).
+  dependencies before their dependents). *(Superseded by 0.8.1: initialization is now
+  dependency-first and registration-order independent.)*
 
 #### Fixed
 - Registration-order semantics now match the documentation and MEDI: single-service
   resolution is last-registration-wins (0.7.x implementations resolved first-registration
   despite documenting otherwise in places).
-- Eager singleton creation order during `build()` is now deterministic (registration
-  order) instead of depending on `HashMap` iteration order, so construction and disposal
-  order are reproducible.
+- Singleton creation order during `build()` is now deterministic (`HashMap` iteration
+  order no longer matters), so construction and disposal order are reproducible.
+  *(0.8.1+: async singletons follow a dependency-first topological order instead of
+  registration order.)*
 - `try_add*` semantics clarified and documented: "only add if absent", unaffected by the
   last-registration rule.
 - Dispose ordering is deterministic and documented (reverse creation order for
@@ -147,14 +192,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `try_get_keyed_any_result`（供 `try_get` / `try_get_keyed` 使用，使 strict-root
   scope 校验与已 dispose 容器返回 `None` 而不 panic）；以及 `get_all_keyed_any` /
   `get_all_any_result`。
-- **async singleton 注册顺序**：`build_async` 按注册顺序初始化 async singleton；解析
-  尚未初始化的 async singleton 会返回可操作的 `FactoryPanic`（依赖须先注册/先初始化）。
+- **async singleton 初始化顺序（0.8.0，已于 0.8.1 修复）**：0.8.0 的 `build_async`
+  对注册顺序敏感——解析尚未初始化的 async singleton 会返回可操作的 `FactoryPanic`
+  （依赖需先注册/先初始化）。*0.8.1 已改为依赖驱动、注册顺序无关。*
 
 #### 修复
 - 注册顺序语义与文档、MEDI 对齐：单服务解析为最后注册优先（0.7.x 实现为首注册优先，
   与部分文档表述不符）。
-- `build()` 期 eager singleton 创建顺序确定（按注册顺序），不再依赖 `HashMap` 迭代
-  顺序，构建与释放顺序可复现。
+- `build()` 期 singleton 创建顺序确定（0.8.0 时同步与 async 均按注册顺序；0.8.1 起
+  async singleton 改为依赖优先拓扑序），不再依赖 `HashMap` 迭代顺序，构建与释放顺序可复现。
 - `try_add*` 语义澄清并写入文档："未注册才添加"，不受最后注册优先规则影响。
 - dispose 顺序确定并文档化（实例按创建逆序、清理闭包按注册逆序）。
 
@@ -438,6 +484,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.8.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.0
 [0.7.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.0

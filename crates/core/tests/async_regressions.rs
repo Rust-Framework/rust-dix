@@ -162,33 +162,198 @@ fn async_scoped_cross_recursion_is_detected() {
 }
 
 #[test]
-fn async_singleton_forward_dependency_reports_actionable_error() {
+fn async_singleton_forward_dependency_is_order_independent() {
     #[derive(Debug)]
     struct Consumer(#[allow(dead_code)] Arc<LateDep>);
     #[derive(Debug)]
     struct LateDep;
 
-    // Consumer is registered BEFORE its async singleton dependency; async
-    // singletons initialize in registration order, so this must fail with a
-    // clear message rather than a misleading sync-build panic.
-    let result = futures::executor::block_on(
+    for dependency_first in [true, false] {
+        let collection = ServiceCollection::new();
+        let collection = if dependency_first {
+            collection
+                .async_singleton(|_| Box::pin(async { Arc::new(LateDep) }))
+                .async_singleton(|sp| {
+                    Box::pin(async move {
+                        let dep = sp.get_async::<LateDep>().await.unwrap();
+                        Arc::new(Consumer(dep))
+                    })
+                })
+        } else {
+            // Consumer is registered BEFORE its async singleton dependency.
+            collection
+                .async_singleton(|sp| {
+                    Box::pin(async move {
+                        let dep = sp.get_async::<LateDep>().await.unwrap();
+                        Arc::new(Consumer(dep))
+                    })
+                })
+                .async_singleton(|_| Box::pin(async { Arc::new(LateDep) }))
+        };
+
+        let provider = futures::executor::block_on(collection.build_async()).unwrap_or_else(|e| {
+            panic!("build_async failed (dependency_first={dependency_first}): {e:?}")
+        });
+        let consumer: Arc<Consumer> = provider.get().unwrap();
+        let dep: Arc<LateDep> = provider.get().unwrap();
+        assert!(Arc::ptr_eq(&consumer.0, &dep));
+    }
+}
+
+#[test]
+fn async_singleton_dependency_chain_is_order_independent() {
+    #[derive(Debug)]
+    struct A(#[allow(dead_code)] Arc<B>);
+    #[derive(Debug)]
+    struct B(#[allow(dead_code)] Arc<C>);
+    #[derive(Debug)]
+    struct C;
+
+    // Register the chain in reverse dependency order: A (needs B), B (needs C), C.
+    let provider = futures::executor::block_on(
         ServiceCollection::new()
             .async_singleton(|sp| {
                 Box::pin(async move {
-                    let dep = sp.get_async::<LateDep>().await;
-                    Arc::new(Consumer(dep.expect("dependency")))
+                    let b = sp.get_async::<B>().await.unwrap();
+                    Arc::new(A(b))
                 })
             })
-            .async_singleton(|_| Box::pin(async { Arc::new(LateDep) }))
+            .async_singleton(|sp| {
+                Box::pin(async move {
+                    let c = sp.get_async::<C>().await.unwrap();
+                    Arc::new(B(c))
+                })
+            })
+            .async_singleton(|_| Box::pin(async { Arc::new(C) }))
             .build_async(),
+    )
+    .unwrap();
+    assert!(provider.get::<A>().is_ok());
+}
+
+#[test]
+fn async_keyed_singleton_forward_dependency_is_order_independent() {
+    #[derive(Debug)]
+    struct KConsumer(#[allow(dead_code)] Arc<KDep>);
+    #[derive(Debug)]
+    struct KDep;
+
+    // Consumer registered before the keyed dependency it awaits.
+    let provider = futures::executor::block_on(
+        ServiceCollection::new()
+            .async_keyed_singleton("consumer", |sp| {
+                Box::pin(async move {
+                    let dep = sp.get_keyed_async::<KDep>("dep").await.unwrap();
+                    Arc::new(KConsumer(dep))
+                })
+            })
+            .async_keyed_singleton("dep", |_| Box::pin(async { Arc::new(KDep) }))
+            .build_async(),
+    )
+    .unwrap();
+    assert!(provider.get_keyed::<KConsumer>("consumer").is_ok());
+    assert!(provider.get_keyed::<KDep>("dep").is_ok());
+}
+
+#[test]
+fn async_singleton_mixed_sync_dependency_is_order_independent() {
+    #[derive(Debug)]
+    struct SyncConfig(u32);
+    #[derive(Debug)]
+    struct Consumer(#[allow(dead_code)] Arc<LateAsync>, u32);
+    #[derive(Debug)]
+    struct LateAsync;
+
+    // Async singleton registered before both its sync dependency and its async
+    // dependency; both must be resolvable regardless of registration order.
+    let provider = futures::executor::block_on(
+        ServiceCollection::new()
+            .async_singleton(|sp| {
+                Box::pin(async move {
+                    let cfg = sp.get::<SyncConfig>().unwrap();
+                    let dep = sp.get_async::<LateAsync>().await.unwrap();
+                    Arc::new(Consumer(dep, cfg.0))
+                })
+            })
+            .singleton(|_| Arc::new(SyncConfig(7)))
+            .async_singleton(|_| Box::pin(async { Arc::new(LateAsync) }))
+            .build_async(),
+    )
+    .unwrap();
+    let consumer: Arc<Consumer> = provider.get().unwrap();
+    assert_eq!(consumer.1, 7);
+}
+
+#[test]
+fn async_singleton_self_cycle_returns_circular_dependency() {
+    struct SelfRef;
+    let seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen_in_factory = Arc::clone(&seen);
+
+    let collection = ServiceCollection::new().async_singleton(move |sp| {
+        let seen = Arc::clone(&seen_in_factory);
+        Box::pin(async move {
+            let nested = sp.get_async::<SelfRef>().await;
+            if matches!(nested, Err(RdiError::CircularDependency(_))) {
+                seen.store(true, Ordering::SeqCst);
+            }
+            Arc::new(SelfRef)
+        })
+    });
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = futures::executor::block_on(collection.build_async());
+        let _ = tx.send((result.is_ok(), seen.load(Ordering::SeqCst)));
+    });
+    let (built, detected) = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("async singleton self-recursion must not hang");
+    assert!(
+        built,
+        "factory handled the cycle error, build should succeed"
     );
-    match result {
-        Err(RdiError::FactoryPanic { payload, .. }) => {
-            assert!(payload.contains("registration order"), "payload={payload}");
-        }
-        Ok(_) => panic!("forward async-singleton dependency must fail"),
-        Err(other) => panic!("expected FactoryPanic, got {other:?}"),
-    }
+    assert!(detected, "nested resolution must report CircularDependency");
+}
+
+#[test]
+fn async_singleton_cross_cycle_returns_circular_dependency() {
+    struct A;
+    struct B;
+    let seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen_in_b = Arc::clone(&seen);
+
+    let collection = ServiceCollection::new()
+        .async_singleton(|sp| {
+            Box::pin(async move {
+                let _ = sp.get_async::<B>().await;
+                Arc::new(A)
+            })
+        })
+        .async_singleton(move |sp| {
+            let seen = Arc::clone(&seen_in_b);
+            Box::pin(async move {
+                let nested = sp.get_async::<A>().await;
+                if matches!(nested, Err(RdiError::CircularDependency(_))) {
+                    seen.store(true, Ordering::SeqCst);
+                }
+                Arc::new(B)
+            })
+        });
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = futures::executor::block_on(collection.build_async());
+        let _ = tx.send((result.is_ok(), seen.load(Ordering::SeqCst)));
+    });
+    let (built, detected) = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("async singleton cross-recursion must not hang");
+    assert!(
+        built,
+        "factory handled the cycle error, build should succeed"
+    );
+    assert!(detected, "nested resolution must report CircularDependency");
 }
 
 #[test]

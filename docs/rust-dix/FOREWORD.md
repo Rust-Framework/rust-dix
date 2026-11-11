@@ -96,9 +96,11 @@ composition_root/   # 组合根：基础设施配置
 
 ## 版本说明
 
-本书基于 rust-dix **0.8.0** 版本编写。0.8.0 的核心语义变化（单服务解析最后注册优先、
-`get_all` 不含 keyed、默认严格 scope 校验、确定性 dispose）已同步到全书；与 MEDI 的
-逐条差异见 [与 MEDI 的差异清单](01-introduction/medi-differences.md)。
+本书基于 rust-dix **0.8.1** 版本编写。0.8.x 的核心语义（单服务解析最后注册优先、
+`get_all` 不含 keyed、默认严格 scope 校验、确定性 dispose）已同步到全书；**0.8.1** 为
+patch：async singleton 初始化改为**依赖驱动、注册顺序无关**（有环返回
+`CircularDependency`，不 hang），无 API 变更。与 MEDI 的逐条差异见
+[与 MEDI 的差异清单](01-introduction/medi-differences.md)。
 
 ---
 

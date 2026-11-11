@@ -266,9 +266,9 @@ rust_dix::register!(singleton: MyService);
 
 ---
 
-### Behavior notes (0.8.0)
+### Behavior notes (0.8.x)
 
-The macros themselves are unchanged in 0.8.0, but the container semantics they
+The macros themselves are unchanged in 0.8.x, but the container semantics they
 feed into are:
 
 - **Single-service resolution is "last registration wins"** (MEDI parity). If the

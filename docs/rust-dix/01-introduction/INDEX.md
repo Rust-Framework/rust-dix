@@ -33,11 +33,11 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 | **可扩展** | 增加新实现无需修改消费方 |
 | **开闭原则** | 对扩展开放，对修改关闭 |
 
-## 与 MEDI 对照（0.8.0 语义）
+## 与 MEDI 对照（0.8.x 语义）
 
 > 完整差异（含默认值、边界与迁移动作）见 [与 MEDI 的差异清单](medi-differences.md)。
 
-| MEDI (.NET) | rust-dix 0.8.0 | 语义说明 |
+| MEDI (.NET) | rust-dix 0.8.x | 语义说明 |
 |-------------|----------------|----------|
 | `IServiceCollection` | `ServiceCollection` | 注册端 |
 | `IServiceProvider` | `ServiceProvider` | 解析端（root） |
@@ -63,7 +63,7 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 | `IServiceScope.Dispose()` | `.dispose()`（Drop 自动） | 逆序释放；之后解析 `Err(ScopeDisposed)` |
 
 > 两处最容易被 .NET 经验误导的差异：
-> 1. **scope 校验默认开启**：rust-dix 0.8.0 默认拒绝从 root 解析 Scoped
+> 1. **scope 校验默认开启**：rust-dix 0.8.x 默认拒绝从 root 解析 Scoped
 >    （`Err(ScopedFromRootProvider)`），等价 ASP.NET Core 开发环境的 `ValidateScopes = true`；
 >    裸 MEDI `BuildServiceProvider()` 默认关闭。例外：`get_owned` / `try_get_owned`
 >    可从 root 取 Scoped（owned 不缓存、不跟踪，但其 Scoped 依赖仍受校验）。

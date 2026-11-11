@@ -428,36 +428,68 @@ impl ServiceProvider {
         // Phase 3: eagerly execute sync singletons not already built.
         Self::init_sync_singletons(&sp_arc);
 
-        // Phase 4: execute async singleton factories (deterministic order,
-        // panics converted to typed errors).
-        let mut async_singletons: Vec<(usize, &'static str, AsyncServiceFactory)> = sp_arc
+        // Phase 4: initialize async singletons dependency-first.
+        //
+        // Registration order must not matter: an async singleton factory may
+        // `await` another async singleton registered later. `ensure_async_singleton`
+        // recursively initializes dependencies (single-flight, per-poll cycle
+        // detection), so the resulting creation order is a deterministic
+        // dependency-first topological order rather than registration order.
+        let mut async_singletons: Vec<&ServiceEntry> = sp_arc
             .store
             .values()
             .flat_map(|entries| entries.iter())
             .filter(|e| e.lifetime == ServiceLifetime::Singleton && e.async_factory.is_some())
-            .map(|e| {
-                (
-                    e.cache_key,
-                    e.type_name,
-                    e.async_factory.clone().expect("async singleton factory"),
-                )
-            })
             .collect();
-        async_singletons.sort_by_key(|(cache_key, _, _)| *cache_key);
+        async_singletons.sort_by_key(|e| e.cache_key);
 
-        for (ck, type_name, async_factory) in async_singletons {
-            let result = match futures::FutureExt::catch_unwind(AssertUnwindSafe(async_factory(
-                Arc::clone(&sp_arc),
-            )))
-            .await
-            {
-                Ok(value) => value,
-                Err(payload) => return Err(RdiError::from_panic_payload(type_name, payload)),
-            };
-            sp_arc.singleton_cache.get_or_init_with(ck, || result);
+        for entry in async_singletons {
+            sp_arc.ensure_async_singleton(entry).await?;
         }
 
         Ok(sp_arc)
+    }
+
+    /// Ensure that an async singleton entry is initialized exactly once.
+    ///
+    /// Dependency-driven and registration-order independent: if a factory
+    /// `await`s an async singleton that has not been initialized yet, the nested
+    /// `get_async` call re-enters this method and recursively initializes the
+    /// dependency first (single-flight via the shared async cache).
+    ///
+    /// Recursive self/cross cycles are detected by the per-poll resolution guard
+    /// and reported as [`RdiError::CircularDependency`] instead of dead-locking.
+    /// Also used as a lazy safety net by `get_async` after build.
+    async fn ensure_async_singleton(&self, entry: &ServiceEntry) -> Result<(), RdiError> {
+        self.check_alive()?;
+        if self.singleton_cache.get(entry.cache_key).is_some() {
+            return Ok(());
+        }
+        let Some(async_factory) = entry.async_factory.clone() else {
+            // Synchronous singleton: already eagerly initialized by build.
+            return Ok(());
+        };
+
+        // Nested self-await would dead-lock on the per-key async cache lock.
+        check_not_resolving(entry.cache_key, entry.type_name)?;
+
+        let key = entry.cache_key;
+        let type_name = entry.type_name;
+        let provider_arc = self.provider_arc().ok_or_else(|| RdiError::FactoryPanic {
+            service: type_name.to_string(),
+            payload: "provider_arc() returned None for async singleton initialization".into(),
+        })?;
+
+        self.singleton_cache
+            .get_or_init_with_async(key, || {
+                poll_guard(
+                    key,
+                    type_name,
+                    Self::run_async_factory_safely(type_name, async_factory, provider_arc),
+                )
+            })
+            .await?;
+        Ok(())
     }
 
     /// 创建一个 scope 范围的 ServiceProvider，共享 store/type_map/singleton_cache/named，
@@ -776,22 +808,9 @@ impl ServiceProvider {
             .ok_or_else(|| RdiError::not_found(type_name, None))?;
 
         if entry.lifetime == ServiceLifetime::Singleton {
-            // Building an async singleton is only valid after `build_async`
-            // initialized it. Resolving one during build (e.g. another async
-            // singleton factory awaiting it) yields a clear, actionable error
-            // instead of the generic `AsyncServiceRequiresBuildAsync` panic from
-            // the sync fallback factory.
-            if entry.async_factory.is_some() && self.singleton_cache.get(entry.cache_key).is_none()
-            {
-                return Err(RdiError::FactoryPanic {
-                    service: type_name.to_string(),
-                    payload: format!(
-                        "async singleton '{type_name}' was resolved before its build-time \
-                         initialization completed; async singletons are initialized in \
-                         registration order, so register dependencies before their dependents"
-                    ),
-                });
-            }
+            // Async singletons are initialized dependency-first; this is also a
+            // lazy safety net after build. Registration order is irrelevant.
+            self.ensure_async_singleton(entry).await?;
             return self.get::<T>();
         }
         self.check_resolvable(entry)?;
@@ -816,17 +835,7 @@ impl ServiceProvider {
             .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))?;
 
         if entry.lifetime == ServiceLifetime::Singleton {
-            if entry.async_factory.is_some() && self.singleton_cache.get(entry.cache_key).is_none()
-            {
-                return Err(RdiError::FactoryPanic {
-                    service: type_name.to_string(),
-                    payload: format!(
-                        "async singleton '{type_name}' (key '{key}') was resolved before its \
-                         build-time initialization completed; async singletons are initialized \
-                         in registration order, so register dependencies before their dependents"
-                    ),
-                });
-            }
+            self.ensure_async_singleton(entry).await?;
             return self.get_keyed::<T>(key);
         }
         self.check_resolvable(entry)?;

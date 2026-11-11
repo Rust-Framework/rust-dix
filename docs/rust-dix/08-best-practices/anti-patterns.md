@@ -274,7 +274,7 @@ fn main() {
 
 ## 反模式 8：从根 Provider 解析 Scoped（或仍按 0.7.x root-scope 语义设计）
 
-### ⚠️ 语义澄清（0.8.0）
+### ⚠️ 语义澄清（0.8.x）
 
 0.8.0 默认开启严格 scope 校验（`ServiceProviderOptions::validate_scopes = true`）。
 从根 Provider 解析 Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`：

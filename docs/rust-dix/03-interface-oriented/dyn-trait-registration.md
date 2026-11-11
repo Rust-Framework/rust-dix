@@ -185,7 +185,7 @@ pub trait IServiceResolver: Send + Sync {
 }
 ```
 
-> **失败语义契约（0.8.0，写自定义 `IServiceResolver` 实现时必读）**：
+> **失败语义契约（0.8.x，写自定义 `IServiceResolver` 实现时必读）**：
 > - **trait 层 Option 方法**（`get_any` / `get_keyed_any` / `get_by_type_id` /
 >   `get_keyed_by_type_id`）签名不可失败：**已注册但当前不可解析**（strict root scope
 >   校验、已 dispose、循环依赖、工厂 panic 等）时，必须以 **typed `RdiError` payload

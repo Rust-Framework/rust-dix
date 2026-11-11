@@ -89,9 +89,9 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Owned resolution** | `get_owned::<T>()` returns owned `T` for `&mut self` — no interior mutability |
 | **Deterministic disposal** | `Scope::dispose()` / `ServiceProvider::dispose()` release instances in reverse creation order |
 
-## Container semantics (0.8.0)
+## Container semantics (0.8.x)
 
-rust-dix 0.8.0 aligns single-service resolution with MEDI while keeping build-time
+rust-dix 0.8.x aligns single-service resolution with MEDI while keeping build-time
 safety. The rules that most often surprise new users:
 
 | Rule | Behavior |
@@ -101,7 +101,7 @@ safety. The rules that most often surprise new users:
 | **Strict scope validation (default)** | Resolving a Scoped service from the root `ServiceProvider` (directly or through a transient chain) returns `Err(RdiError::ScopedFromRootProvider)`. Resolve Scoped services inside `provider.scope()`. APIs that cannot return an error (`get_optional`, `get_all`, `get_all_keyed`, `try_*`) treat that service as unresolvable (`None`/empty). **Exception**: `get_owned` / `try_get_owned` (and keyed owned) may resolve a Scoped service from the root — the instance is caller-owned, never cached or tracked; Scoped dependencies resolved *inside* its constructor still obey validation. |
 | **Opting into 0.7.x root-scope behavior** | `build_with(ServiceProviderOptions::lenient())` (i.e. `validate_scopes: false`) lets the root provider resolve and cache Scoped services as root-local singletons. |
 | **Dispose contracts** | `Scope::dispose()` / `Drop` releases the scope's instances in reverse creation order, then runs cleanup closures in reverse registration order; afterwards resolution returns `Err(RdiError::ScopeDisposed)`. `ServiceProvider::dispose()` does the same for singletons and root-scoped instances, clears the named registry, and afterwards returns `Err(RdiError::ProviderDisposed)`. Both are idempotent. |
-| **Deterministic build order** | Eager singletons are created in registration order (no longer `HashMap` iteration order), so construction and disposal order are reproducible. |
+| **Deterministic build order** | Sync singletons are created in registration order; async singletons are initialized in a dependency-first topological order (0.8.1+). Both are deterministic and independent of `HashMap` iteration order, so construction and disposal order are reproducible. |
 | **Constructor-time resolution is rejected** | Resolving through an injected provider inside a build-time constructor returns a typed `FactoryPanic`; store the handle and resolve lazily in methods. |
 
 New in 0.8.0: `ServiceProviderOptions` (`validate_scopes`, `with_validate_scopes`,

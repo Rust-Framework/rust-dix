@@ -1,9 +1,10 @@
 # 生产环境部署检查清单
 
-> 适用于 `rust-dix` **v0.8.x**（0.8.0 起）。基于源码静态分析 + 运行时行为验证编写。
-> 文中标注"0.8.0+"的条目是 0.8.0 新行为；需要兼容 0.7.x 的地方会注明。
+> 适用于 `rust-dix` **v0.8.x**（0.8.0 起；当前 0.8.1）。基于源码静态分析 + 运行时行为验证编写。
+> 文中标注"0.8.0+"的条目是 0.8.0 新行为；0.8.1 为 patch（async singleton 初始化改为依赖驱动、
+> 注册顺序无关），无 API 变更；需要兼容 0.7.x 的地方会注明。
 
-## 0. 0.8.0 语义变更摘要（部署前必读）
+## 0. 0.8.x 语义变更摘要（0.8.0 起；0.8.1 patch 见 §2.1；部署前必读）
 
 | 变更 | 生产影响 |
 |------|----------|
@@ -11,7 +12,7 @@
 | `get_all` / `#[inject] Vec<Arc<T>>` **只含非 keyed** | 观察者/广播逻辑若依赖 keyed 实现，改用 `get_all_keyed` |
 | 默认**严格 scope 校验** | root provider 解析 Scoped 返回 `Err(ScopedFromRootProvider)`；请求级服务必须在 `provider.scope()` 内解析；旧行为需显式 `ServiceProviderOptions::lenient()`。例外：`get_owned`/`try_get_owned` 可从 root 取 Scoped（owned 不缓存），其 Scoped 依赖仍受校验 |
 | 新增 `Scope::dispose()` / `ServiceProvider::dispose()` | Scope 逆序释放 Scoped 实例；provider 逆序释放 singleton/root scoped 并清空 named 注册；dispose 后解析分别返回 `ScopeDisposed` / `ProviderDisposed` |
-| eager singleton 创建顺序确定（按注册顺序） | 不再依赖 `HashMap` 迭代顺序，初始化/释放顺序可复现 |
+| 构建顺序确定 | **同步 singleton 按注册顺序创建；async singleton 按依赖优先拓扑序递归初始化（0.8.1+）**，两者均确定、不依赖 `HashMap` 迭代顺序；初始化/释放顺序可复现 |
 
 ---
 
@@ -103,12 +104,13 @@ scope.dispose();  // 显式 dispose：逆序释放 scoped 实例 + 逆序执行�
 | 属性 | 行为 |
 |------|------|
 | 缓存位置 | `singleton_cache`（全局唯一，`OnceLock` 保护） |
-| 初始化时机 | 同步 singleton：`build()` / `build_async()` 时 eager init（工厂执行一次，**按注册顺序创建**，0.8.0 起顺序确定）；async singleton：`build_async()` 按**注册顺序**初始化（依赖须先注册）。此时 provider `Arc` 已创建，工厂内可解析 `#[inject(provider)]` / 内置 `ScopeFactory`（0.7.1+） |
-| async 注册顺序约束 | async singleton 在初始化期解析"**后注册、尚未初始化**"的 async singleton → 返回带 `registration order` 提示的 `RdiError::FactoryPanic`；请把被依赖方先注册 |
+| 初始化时机 | 同步 singleton：`build()` / `build_async()` 时 eager init（工厂执行一次，**按注册顺序创建**，0.8.0 起顺序确定）；async singleton：`build_async()` 时**依赖驱动递归初始化**（0.8.1 起注册顺序无关，最终为依赖优先拓扑序）。此时 provider `Arc` 已创建，工厂内可解析 `#[inject(provider)]` / 内置 `ScopeFactory`（0.7.1+） |
+| async 初始化约束 | async singleton 可 `await` 任意（含后注册的）async singleton，会先递归初始化依赖；**依赖图必须无环**——自引用/交叉依赖返回 `RdiError::CircularDependency`（不会 hang）；`build_async` 返回时所有 async singleton 均已初始化 |
+| build 期 async 解析 | async singleton **初始化完成前只能用 `get_async` 解析**（工厂内 `sp.get_async::<T>()` 会递归初始化依赖）；此时同步 `get` 返回 `Err(AsyncServiceRequiresBuildAsync)`、`get_optional` 为 `None`，但 `is_registered` 仍为 `true`。`build_async` 返回后已缓存的 async singleton 可直接 `get` |
 | 生命周期 | = `ServiceProvider` 生命周期，直到 `provider.dispose()` |
 | 释放顺序 | `dispose()` 按**创建逆序**释放；`register_disposable` 清理闭包按**注册逆序**执行 |
 | 线程安全 | `OnceLock::get_or_init` 保证工厂只执行一次 |
-| 依赖约束 | 不能依赖 Scoped（captive dependency 检测） |
+| 依赖约束 | 不能依赖 Scoped（captive dependency 检测）；**同步 singleton 的依赖图里不能出现 async singleton**——`build_async` 会返回 `Err(RdiError::AsyncServiceRequiresBuildAsync { service })`（不 hang），因为同步 singleton 的校验/构建（Phase 2/3）先于 async 初始化（Phase 4） |
 
 **检查项**：
 - [ ] 确认所有 Singleton 工厂是幂等的（虽然只执行一次，但工厂内不应有副作用依赖）
@@ -116,8 +118,10 @@ scope.dispose();  // 显式 dispose：逆序释放 scoped 实例 + 逆序执行�
 - [ ] 确认 Singleton 工厂内 `#[inject(provider)]` 拿到的是 root provider（非 scope）
 - [ ] 需要按任务建 scope 的 Singleton 优先注入 `Arc<dyn ScopeFactory>`（内置、弱引用，0.7.1+ 在 eager singleton 中可用）；仅确需容器自身时才用 `#[inject(provider)]`
 - [ ] 确认 Singleton 构造函数内不通过注入的 provider 做动态解析（框架会在 build 期返回 `FactoryPanic` 拒绝，避免绕过 captive dependency 校验）
-- [ ] 确认依赖构建顺序的初始化逻辑基于"按注册顺序创建"设计（0.8.0 起确定；旧版依赖 HashMap 顺序）
-- [ ] 确认 async singleton 的依赖**先注册**（`build_async` 按注册顺序初始化；解析后注册且未初始化的 async singleton 会返回带 `registration order` 提示的 `FactoryPanic`）
+- [ ] 确认依赖构建顺序的初始化逻辑基于"**同步 singleton 按注册顺序 / async singleton 依赖优先拓扑序**"设计（两者均确定，不依赖 `HashMap`）
+- [ ] 确认 async singleton 依赖图**无环**（自引用/交叉依赖会返回 `RdiError::CircularDependency`，不会死锁/挂起；注册顺序无关）
+- [ ] 确认同步 singleton 的依赖图**不含 async singleton**（含则 `build_async` 返回 `AsyncServiceRequiresBuildAsync`）；需要时把依赖方也改为 async singleton，或在方法内用 `Arc<dyn ScopeFactory>` / `get_async` 延迟解析
+- [ ] 确认 build 期解析 async singleton 只用 `get_async`（初始化完成前同步 `get` 会返回 `AsyncServiceRequiresBuildAsync`、`get_optional` 为 `None`；`is_registered` 仍为 `true`）
 
 ---
 
@@ -207,7 +211,7 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 
 ## 三、异常处理机制
 
-### 3.1 sync 工厂 panic / 失败（0.8.0 语义）
+### 3.1 sync 工厂 panic / 失败（0.8.x 语义）
 
 **机制**：0.8.0 起同步解析路径不再把工厂 panic 直接抛给业务调用方，而是统一转成类型化
 `RdiError`。`OnceLock` 类缓存在工厂 panic 时不会写入（cell 保持未初始化），下次解析会重试。
@@ -260,7 +264,8 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 **检测范围**：
 - ✅ Singleton 依赖图（build 时执行工厂检测；含经 Transient 中间节点的间接环）
 - ✅ Scoped / Transient 的同步循环依赖（运行时线程局部解析栈 → `RdiError::CircularDependency`，不再静默栈溢出）
-- ✅ **async 解析链**：`async_scoped` / `async_transient` 的**自引用/交叉递归**在**同一 poll 链路**内检测
+- ✅ **async 解析链**：`async_scoped` / `async_transient` 的**自引用/交叉递归**，以及
+  **async singleton 的依赖环**，都在**同一 poll 链路**内检测
   （`AsyncPollGuardFuture` 只在单次 poll 期间把"正在解析"标记暴露给嵌套解析），返回
   `RdiError::CircularDependency`，从而**避免在自有的 per-key async 缓存锁上死锁**。
 - ✅ 通过注入 provider 发起的动态解析同样参与解析栈/poll 链检测
@@ -270,11 +275,21 @@ dispose 后解析返回 `Err(ScopeDisposed)`（不可返回错误的 API 为 `No
 > 单次 poll 标记，因此正常并发不会被判成循环；async 工厂内也**不得**递归 `await` 自身正在
 > 构建的服务（会得到 `CircularDependency`，而不是挂死）。
 
+> **错误形态（0.8.1）**：嵌套解析本身得到 `RdiError::CircularDependency(_)`；若用户 async 工厂
+> 对该错误 `.unwrap()` / `.expect()`，panic 会被捕获并转为**顶层** `RdiError::FactoryPanic { payload }`，
+> 其中 `payload` 含 `"CircularDependency(...)"`。因此：
+> - `get_async` 侧可直接 `matches!(err, RdiError::CircularDependency(_))`；
+> - `build_async` 顶层可用
+>   `matches!(err, RdiError::FactoryPanic { ref payload, .. } if payload.contains("CircularDependency"))`
+>   判定"环被工厂 unwrap 后转成了 FactoryPanic"。
+
 **检查项**：
 - [ ] 确认所有 Singleton 的循环依赖在 build 时被检测
 - [ ] 确认 Scoped / Transient 同步循环依赖在首次解析时返回 `Err(RdiError::CircularDependency)`（调用方处理，勿 `.unwrap()`）
+- [ ] 确认 async singleton 依赖图无环（`build_async` 依赖驱动初始化，有环返回 `CircularDependency`、不 hang；注册顺序无关）
 - [ ] 确认 async 工厂不会递归 `await` 自身正在构建的服务（应得到 `CircularDependency` 而非死锁）
 - [ ] 确认跨 `await` 的合法并发解析不被误报为循环依赖
+- [ ] 确认环错误形态：`get_async` 侧为 `CircularDependency`；工厂 `.unwrap()` 后 `build_async` 顶层为 `FactoryPanic`（payload 含 `CircularDependency`）
 - [ ] 确认 `RdiError::CircularDependency` 的路径信息用于调试日志
 
 ---

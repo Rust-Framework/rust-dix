@@ -42,7 +42,7 @@
 | 后台任务按 tick 建 scope | Singleton 注入 `Arc<dyn ScopeFactory>`（内置、弱引用），不持有 scoped 实例 |
 | 测试替换实现 | 改一行注册换 mock（**最后注册优先**，后注册的覆盖先注册） |
 
-### 0.8.0 语义速查
+### 0.8.x 语义速查
 
 | 规则 | 说明 |
 |------|------|
@@ -51,7 +51,7 @@
 | Scope 校验 | 默认严格：root 解析 Scoped 返回 `Err(ScopedFromRootProvider)`；在 `provider.scope()` 内解析（`get_owned`/`try_get_owned` 例外：owned 不缓存，可从 root 取） |
 | 旧行为兼容 | `build_with(ServiceProviderOptions::lenient())` 恢复 0.7.x root-scope 语义 |
 | 释放 | `Scope::dispose()` / `ServiceProvider::dispose()` 按创建逆序；dispose 后解析返回 `ScopeDisposed` / `ProviderDisposed` |
-| 构建顺序 | eager singleton 按注册顺序创建（确定性），不再依赖 `HashMap` 顺序 |
+| 构建顺序 | **同步 singleton 按注册顺序创建；async singleton 按依赖优先拓扑序递归初始化（0.8.1+）**，两者均确定，不依赖 `HashMap` 顺序 |
 
 > 逐条差异与迁移见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 

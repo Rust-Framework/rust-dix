@@ -230,7 +230,7 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 | `.scope()` | `Scope` | 新建作用域 |
 | `.dispose()` | `()` | 幂等；按创建逆序释放实例，之后解析返回 `Err(ProviderDisposed)`（0.8.0+） |
 
-> **0.8.0 语义**：单服务解析对齐 MEDI 的"最后注册优先"；`get_all` 仅含非 keyed
+> **0.8.x 语义**：单服务解析对齐 MEDI 的"最后注册优先"；`get_all` 仅含非 keyed
 > （keyed 用 `get_all_keyed`）；scope 校验**默认严格**——从 root provider 解析
 > Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`（例外：`get_owned` /
 > `try_get_owned` 的 owned 实例归调用方、不进缓存，可从 root 取；但其 Scoped 依赖
@@ -365,6 +365,10 @@ let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await
 同步注册的服务既可 `get()` 也可 `get_async()`：0.8.0 起 `get_async()` 对用同步
 `scoped` / `transient` 注册的服务会**回退到同步解析路径**。`async_*` 注册只用于需要
 **异步初始化**的服务。
+
+async singleton 初始化**依赖驱动、注册顺序无关**（0.8.1+）：工厂可 `await` 任意
+async singleton，`build_async()` 会先递归初始化依赖（确定性的依赖优先拓扑序，eager 且
+fail-fast）；依赖环返回 `RdiError::CircularDependency`，不会死锁。
 
 #### 混合同步与异步
 

@@ -392,18 +392,20 @@ fn build() -> Result<ServiceProvider, RdiError> {
 
 ---
 
-## 8. 0.8.0 语义要点（必读）
+## 8. 0.8.x 语义要点（必读）
 
-0.8.0 起容器语义对齐 MEDI，以下六条直接影响本文的注册与解析建议：
+0.8.0 起容器语义对齐 MEDI（0.8.1 为 patch，沿用语义并修正 async singleton 初始化顺序），
+以下七条直接影响本文的注册与解析建议：
 
-| 主题 | 0.8.0 行为 | 对本指南的影响 |
+| 主题 | 0.8.x 行为 | 对本指南的影响 |
 |------|-----------|----------------|
 | 单服务解析 | **最后注册优先**（`get` / `get_keyed` / `get_owned` / `get_async`） | 覆盖 mock / 默认实现：后注册的生效；要"未注册才添加"用 `try_add*` |
 | 多实现收集 | `get_all` / `#[inject] Vec<Arc<T>>` **仅非 keyed**，按注册顺序 | keyed 策略实现用 `get_all_keyed`；观察者广播用非 keyed 注册 |
 | Scope 校验 | 默认严格：root 解析 Scoped 返回 `Err(ScopedFromRootProvider)`（`get_owned`/`try_get_owned` 例外：owned 不缓存，可从 root 取） | 请求级服务在 `provider.scope()` 内解析；不要再依赖"根 Provider 即 root scope" |
 | 旧行为兼容 | `build_with(ServiceProviderOptions::lenient())` | 仅确需 root 级 Scoped 单例化时使用 |
 | 释放契约 | `Scope::dispose()` / Drop 按创建逆序释放；新增 `ServiceProvider::dispose()`；之后解析返回 `ScopeDisposed` / `ProviderDisposed` | 应用关闭时显式 `provider.dispose()`；请求级 scope 显式 dispose 或依赖 Drop |
-| 构建顺序 | eager singleton 按注册顺序创建（确定性） | 不再需要为"HashMap 顺序"做防御性设计 |
+| async singleton | 0.8.1 起依赖驱动递归初始化、**注册顺序无关**；有环返回 `CircularDependency`（不 hang） | 异步基础设施按依赖关系注册即可；确保依赖图无环 |
+| 构建顺序 | **同步 singleton 按注册顺序创建**；async singleton 按依赖优先拓扑序（见上一行），两者均确定 | 不再需要为"HashMap 顺序"做防御性设计 |
 
 ```rust
 use rust_dix::*;

@@ -88,9 +88,9 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **拥有式解析** | `get_owned::<T>()` 为 `&mut self` 返回拥有型 `T` —— 无需内部可变性 |
 | **确定性释放** | `Scope::dispose()` / `ServiceProvider::dispose()` 按创建逆序释放实例 |
 
-## 容器语义（0.8.0）
+## 容器语义（0.8.x）
 
-rust-dix 0.8.0 将单服务解析对齐 MEDI，同时保留构建期安全。以下是最容易踩坑的语义规则：
+rust-dix 0.8.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下是最容易踩坑的语义规则：
 
 | 规则 | 行为 |
 |------|------|
@@ -99,7 +99,7 @@ rust-dix 0.8.0 将单服务解析对齐 MEDI，同时保留构建期安全。以
 | **默认严格 scope 校验** | 从 root `ServiceProvider` 解析 Scoped 服务（直接、或经 Transient 链间接）返回 `Err(RdiError::ScopedFromRootProvider)`；应在 `provider.scope()` 内解析 Scoped。不可返回错误的 API（`get_optional`、`get_all`、`get_all_keyed`、`try_*`）把该服务视为不可解析（`None`/空）。**例外**：`get_owned` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped —— 实例归调用方、不进缓存/不被跟踪；但其构造函数内部解析的 Scoped 依赖仍受校验。 |
 | **回到 0.7.x 的 root-scope 行为** | `build_with(ServiceProviderOptions::lenient())`（即 `validate_scopes: false`）允许 root 解析 Scoped 并缓存为根内单例。 |
 | **dispose 契约** | `Scope::dispose()` / Drop 按**创建逆序**释放 scope 内实例，再按**注册逆序**执行清理闭包；之后解析返回 `Err(RdiError::ScopeDisposed)`。`ServiceProvider::dispose()` 对 singleton 与 root scoped 实例做同样处理、清空 named 注册，之后解析返回 `Err(RdiError::ProviderDisposed)`。两者均幂等。 |
-| **确定性构建顺序** | build 期 eager singleton 按注册顺序创建（不再依赖 `HashMap` 迭代顺序），构建与释放顺序可复现。 |
+| **确定性构建顺序** | build 期**同步 singleton 按注册顺序创建**、**async singleton 按依赖优先拓扑序递归初始化**（0.8.1+），两者均确定、不依赖 `HashMap` 迭代顺序；构建与释放顺序可复现。 |
 | **构造期解析被拒绝** | 在 build 期构造函数内通过注入的 provider 解析服务会返回类型化 `FactoryPanic`；请保存句柄、在方法中延迟解析。 |
 
 0.8.0 新增：`ServiceProviderOptions`（`validate_scopes`、`with_validate_scopes`、`lenient`）、

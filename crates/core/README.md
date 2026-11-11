@@ -246,7 +246,7 @@ For trait-oriented services (handlers, services, repositories), prefer
 | `.scope()` | `Scope` | New scope for scoped services |
 | `.dispose()` | `()` | Idempotent; releases instances in reverse creation order, later resolution returns `Err(ProviderDisposed)` (0.8.0+) |
 
-> **0.8.0 semantics**: single-service resolution is MEDI-style "last registration
+> **0.8.x semantics**: single-service resolution is MEDI-style "last registration
 > wins"; `get_all` is unkeyed-only (use `get_all_keyed` for keyed); and scope
 > validation is **strict by default** — resolving a Scoped service from the root
 > provider returns `Err(RdiError::ScopedFromRootProvider)` (the exception is
@@ -390,6 +390,11 @@ For sync-registered services you can use either `get()` or `get_async()`: `get_a
 falls back to the synchronous resolution path for services registered with the sync
 `scoped` / `transient` builders (0.8.0+). Async registration (`async_*`) is only needed
 for services that require **asynchronous initialization**.
+
+Async singleton initialization is **dependency-first and registration-order independent**
+(0.8.1+): a factory may `await` any async singleton, and `build_async()` recursively
+initializes dependencies first (deterministic dependency-first topological order, eager and
+fail-fast). Dependency cycles return `RdiError::CircularDependency` instead of dead-locking.
 
 #### Mixing sync and async
 
