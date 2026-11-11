@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::Arc;
@@ -52,8 +52,12 @@ fn get_all_returns_all_keyed() {
         .keyed_singleton("b", |_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
-    let all: Vec<Arc<common::MyService>> = p.get_all();
-    assert_eq!(all.len(), 2);
+    assert!(
+        p.get_all::<common::MyService>().is_empty(),
+        "get_all excludes keyed registrations (MEDI GetServices)"
+    );
+    let keyed: Vec<Arc<common::MyService>> = p.get_all_keyed();
+    assert_eq!(keyed.len(), 2);
 }
 
 #[test]
@@ -106,7 +110,8 @@ fn provider_has_correct_keyed_count() {
     assert_eq!(p.get_keyed::<common::MyService>("a").unwrap().value, 1);
     assert_eq!(p.get_keyed::<common::MyService>("b").unwrap().value, 2);
     assert_eq!(p.get_keyed::<common::MyService>("c").unwrap().value, 3);
-    assert_eq!(p.get_all::<common::MyService>().len(), 3);
+    assert_eq!(p.get_all_keyed::<common::MyService>().len(), 3);
+    assert!(p.get_all::<common::MyService>().is_empty());
 }
 
 #[test]

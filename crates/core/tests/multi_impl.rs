@@ -1,4 +1,4 @@
-﻿//! 多实现注册测试 - 验证一个 trait 多个实现的多态支持
+//! 多实现注册测试 - 验证一个 trait 多个实现的多态支持
 
 use rust_dix::*;
 use std::sync::Arc;
@@ -84,9 +84,11 @@ fn default_plus_keyed() {
     let credit: Arc<dyn IPayGateway> = p.get_keyed("credit").unwrap();
     assert_eq!(credit.name(), "credit");
 
-    // 批量获取
+    // 批量获取：MEDI GetServices 不含 keyed
     let all: Vec<Arc<dyn IPayGateway>> = p.get_all();
-    assert_eq!(all.len(), 4); // 1 default + 3 keyed
+    assert_eq!(all.len(), 1); // 1 default
+    let keyed: Vec<Arc<dyn IPayGateway>> = p.get_all_keyed();
+    assert_eq!(keyed.len(), 3); // 3 keyed
 }
 
 #[test]
@@ -108,9 +110,11 @@ fn all_keyed_no_default() {
     let wechat: Arc<dyn IPayGateway> = p.get_keyed("wechat").unwrap();
     assert_eq!(wechat.name(), "wechat");
 
-    // get_all 获取所有
+    // get_all 只返回非 keyed（此处为空），keyed 用 get_all_keyed
     let all: Vec<Arc<dyn IPayGateway>> = p.get_all();
-    assert_eq!(all.len(), 2);
+    assert!(all.is_empty());
+    let keyed: Vec<Arc<dyn IPayGateway>> = p.get_all_keyed();
+    assert_eq!(keyed.len(), 2);
 }
 
 #[test]
@@ -121,7 +125,7 @@ fn get_all_returns_all_implementations() {
         .build()
         .unwrap();
 
-    let all: Vec<Arc<dyn ILogOutput>> = p.get_all();
+    let all: Vec<Arc<dyn ILogOutput>> = p.get_all_keyed();
     assert_eq!(all.len(), 2);
 
     // 验证所有实现都能调用

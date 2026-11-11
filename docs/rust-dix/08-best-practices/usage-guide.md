@@ -84,9 +84,17 @@ let provider = ServiceCollection::new()
     .singleton_value(Config { port: 8080 })
     .build()?;
 
-// 场景 7：复杂工厂 —— 手动闭包
+// 场景 7：复杂工厂 —— 手动闭包。闭包参数是 &dyn IServiceResolver；
+// 泛型 get::<T>() 带 Self: Sized，不能直接在 trait object 上调用，
+// 这里用 get_any + downcast 解析配置（或让 #[derive(Inject)] 生成构造函数）。
 let provider = ServiceCollection::new()
-    .singleton(|p| Arc::new(Pool::connect(&p.get::<Config>().unwrap().url)))
+    .singleton(|r| {
+        let cfg = r
+            .get_any(std::any::type_name::<Config>())
+            .expect("Config registered at composition root");
+        let cfg: Arc<Config> = Arc::clone(&*cfg.downcast::<Arc<Config>>().unwrap());
+        Arc::new(Pool::connect(&cfg.url))
+    })
     .build()?;
 ```
 
@@ -141,6 +149,13 @@ struct Config { port: u16 }
 
 这是最常见的设计抉择。三种方式各有适用场景，**不互相排斥，可在同一项目混用**。
 
+> **工厂闭包的解析约束**：注册闭包（`.singleton(f)` 等）的参数类型是
+> `&dyn IServiceResolver`，而泛型 `get::<T>()` / `get_owned::<T>()` 带
+> `Self: Sized` 约束，**不能直接在 trait object 上调用**。闭包内解析依赖有三种正确
+> 方式：① 用 `#[derive(Inject)]` / `#[inject]` 生成的构造函数（tests 中的
+> `|r| __rdi_construct_T(r)`，该函数为 `#[doc(hidden)]` 内部面）；② 用
+> `get_any` + `downcast` 手动解析；③ 在闭包外解析好依赖，以 `Arc` 捕获进闭包。
+
 ### 三种方式对比
 
 | 方式 | 代码量 | 结构体干净度 | 适用场景 |
@@ -169,12 +184,12 @@ impl OrderService {
     }
 }
 
-// 注册时用闭包调用构造函数
+// 注册时用闭包调用构造函数。闭包参数是 &dyn IServiceResolver：
+// 依赖在闭包外解析好、以 Arc 捕获（也可用 get_any + downcast，或让
+// #[derive(Inject)] 生成的构造函数内部完成解析）。
+let repo: Arc<dyn IOrderRepo> = Arc::new(PgOrderRepo);
 let provider = ServiceCollection::new()
-    .singleton(|p| Arc::new(OrderService::new(
-        p.get().unwrap(),
-        p.get::<Config>().unwrap().threshold,
-    )))
+    .singleton(move |_| Arc::new(OrderService::new(Arc::clone(&repo), 100)))
     .build()?;
 ```
 
@@ -244,6 +259,9 @@ let provider = ServiceCollection::new()
 | **禁止** Singleton 依赖 Scoped | build 阶段检测并拒绝 |
 
 > Owned 语义：需要独占修改（`&mut self`）的服务用 `#[inject(owned)]` 注入裸 `T`，每次解析新建实例，Singleton 不可 owned。
+> Owned 解析是严格 scope 校验的**例外**：`get_owned`/`try_get_owned`（含 keyed owned）
+> 允许从 root 解析 Scoped（实例归调用方、不进缓存/不被跟踪）；但该服务构造函数内部
+> 解析的 Scoped 依赖仍受校验——有依赖时仍需在 `provider.scope()` 内取。
 
 ---
 
@@ -264,6 +282,9 @@ let provider = ServiceCollection::new()
 | `#[inject]` | `Arc<ServiceProvider>` | 内建容器自身（普通写法） | N/A（内建） |
 
 > 严格类型校验：`#[inject]` 接受 `Arc<T>` / `Option<Arc<T>>` / `Vec<Arc<T>>`，`#[inject(owned)]` 只接受裸 `T`/`Option<T>`，不匹配触发编译错误。可选性由 `Option<...>` 类型决定，无需额外标记。
+> **`Option` 注入不抑制 scope 校验**：`#[inject] Option<Arc<Scoped>>` 在 strict root provider 下**不会**变成 `None`，而是以 typed
+> `Err(RdiError::ScopedFromRootProvider)` 构造失败（容器方法 `provider.get_optional::<Scoped>()` 才返回 `None`）。
+> 可选 Scoped 依赖必须在 `provider.scope()` 内构造/解析。
 > 内建服务（`ServiceProvider` / `dyn ScopeFactory`）无需注册，eager singleton 与懒解析服务均可用；显式注册仍优先。singleton 内优先持有 `Arc<dyn ScopeFactory>`（弱引用单例，无 `Arc` 环），而不是 `Arc<ServiceProvider>`（强引用环）；在构造函数内通过注入的 provider 解析服务会被拒绝，请在方法中延迟解析。
 
 ---
@@ -288,6 +309,10 @@ let provider = ServiceCollection::new()
 ## 7. 完整示例：从冗长到简洁
 
 同一 `OrderService`，三种写法的代码量对比：
+
+> 为聚焦代码量对比，写法 1 / 2 的闭包体内省略了依赖解析细节；真实闭包内不能调用
+> `p.get::<T>()`，请按 §3 的说明改用生成的构造函数、`get_any` + downcast，或在闭包外
+> 解析好依赖后以 `Arc` 捕获。
 
 ### 写法 1：全限定路径 + 手动闭包（最冗长，不推荐）
 
@@ -364,6 +389,44 @@ fn build() -> Result<ServiceProvider, RdiError> {
 ```
 
 **对比**：写法 3 比写法 1 减少约 60% 代码量，无样板、无手动闭包、无全限定路径，且类型安全由宏在编译期保证。
+
+---
+
+## 8. 0.8.0 语义要点（必读）
+
+0.8.0 起容器语义对齐 MEDI，以下六条直接影响本文的注册与解析建议：
+
+| 主题 | 0.8.0 行为 | 对本指南的影响 |
+|------|-----------|----------------|
+| 单服务解析 | **最后注册优先**（`get` / `get_keyed` / `get_owned` / `get_async`） | 覆盖 mock / 默认实现：后注册的生效；要"未注册才添加"用 `try_add*` |
+| 多实现收集 | `get_all` / `#[inject] Vec<Arc<T>>` **仅非 keyed**，按注册顺序 | keyed 策略实现用 `get_all_keyed`；观察者广播用非 keyed 注册 |
+| Scope 校验 | 默认严格：root 解析 Scoped 返回 `Err(ScopedFromRootProvider)`（`get_owned`/`try_get_owned` 例外：owned 不缓存，可从 root 取） | 请求级服务在 `provider.scope()` 内解析；不要再依赖"根 Provider 即 root scope" |
+| 旧行为兼容 | `build_with(ServiceProviderOptions::lenient())` | 仅确需 root 级 Scoped 单例化时使用 |
+| 释放契约 | `Scope::dispose()` / Drop 按创建逆序释放；新增 `ServiceProvider::dispose()`；之后解析返回 `ScopeDisposed` / `ProviderDisposed` | 应用关闭时显式 `provider.dispose()`；请求级 scope 显式 dispose 或依赖 Drop |
+| 构建顺序 | eager singleton 按注册顺序创建（确定性） | 不再需要为"HashMap 顺序"做防御性设计 |
+
+```rust
+use rust_dix::*;
+
+// 覆盖默认实现（后注册生效）；需要"未注册才添加"时改 try_add_singleton
+let provider = ServiceCollection::new()
+    .singleton::<dyn ILogger>(|_| Arc::new(ConsoleLogger))     // 默认
+    .singleton::<dyn ILogger>(|_| Arc::new(StructuredLogger))  // 生效（最后注册）
+    .build()
+    .unwrap();
+
+// 严格 scope：Scoped 服务在 scope 内解析
+let provider = ServiceCollection::new()
+    .scoped::<dyn IUnitOfWork>(|_| Arc::new(UnitOfWork::new()))
+    .build()
+    .unwrap();
+let scope = provider.scope();
+let uow: Arc<dyn IUnitOfWork> = scope.get().unwrap();
+scope.dispose(); // 逆序释放；之后解析返回 Err(ScopeDisposed)
+```
+
+> 逐条对照（含 MEDI 默认值差异与迁移动作）见
+> [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 
 ---
 

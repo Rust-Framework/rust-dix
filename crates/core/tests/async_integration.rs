@@ -248,18 +248,28 @@ async fn ecommerce_order_processing_full_lifecycle() {
     assert_eq!(repo2.db.pool_id, 1);
     assert_eq!(repo2.cache.cache_id, 1);
 
-    // ── Root scope: Scoped service resolved at root ──────────────────
-    let root_repo: Arc<UserRepository> = provider.get().unwrap();
-    assert!(!Arc::ptr_eq(&repo1, &root_repo));
-    assert!(!Arc::ptr_eq(&repo2, &root_repo));
-    assert_eq!(REPO_BUILDS.load(Ordering::SeqCst), 3);
+    // ── Strict scope validation: scoped cannot be resolved at root ────
+    match provider.get::<UserRepository>() {
+        Ok(_) => panic!("root provider must reject scoped resolution"),
+        Err(RdiError::ScopedFromRootProvider { .. }) => {}
+        Err(other) => panic!("expected ScopedFromRootProvider at root, got {other:?}"),
+    }
+    assert!(
+        provider.get_optional::<UserRepository>().is_none(),
+        "infallible lookups treat scoped-at-root as not resolvable"
+    );
+    assert_eq!(REPO_BUILDS.load(Ordering::SeqCst), 2);
 
     // ── Verify singleton identity ────────────────────────────────────
     // All scopes share the same DbPool and RedisCache (singletons)
+    let scope3 = provider.scope();
+    let repo3: Arc<UserRepository> = scope3.get().unwrap();
+    assert!(!Arc::ptr_eq(&repo1, &repo3));
+    assert!(!Arc::ptr_eq(&repo2, &repo3));
     assert!(Arc::ptr_eq(&repo1.db, &repo2.db));
-    assert!(Arc::ptr_eq(&repo1.db, &root_repo.db));
+    assert!(Arc::ptr_eq(&repo1.db, &repo3.db));
     assert!(Arc::ptr_eq(&repo1.cache, &repo2.cache));
-    assert!(Arc::ptr_eq(&repo1.cache, &root_repo.cache));
+    assert!(Arc::ptr_eq(&repo1.cache, &repo3.cache));
 
     // ── Verify factory execution counts ──────────────────────────────
     // Async singletons: executed exactly once during build_async
@@ -274,7 +284,7 @@ async fn ecommerce_order_processing_full_lifecycle() {
         "RedisCache factory should execute once"
     );
 
-    // Scoped UserRepository: once per scope (scope1, scope2, root) = 3 times
+    // Scoped UserRepository: once per scope (scope1, scope2, scope3) = 3 times
     assert_eq!(REPO_BUILDS.load(Ordering::SeqCst), 3);
 
     // Transient OrderService: 2 in scope1

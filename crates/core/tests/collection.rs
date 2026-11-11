@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,7 +19,9 @@ fn collection_scoped_builds() {
         .scoped(|_| Arc::new(common::MyService { value: 10 }))
         .build()
         .unwrap();
-    let svc: Arc<common::MyService> = p.get().unwrap();
+    // 0.8 default: scoped services resolve inside a scope (strict scope validation).
+    let scope = p.scope();
+    let svc: Arc<common::MyService> = scope.get().unwrap();
     assert_eq!(svc.value, 10);
 }
 

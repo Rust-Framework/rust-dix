@@ -30,7 +30,7 @@ compile-time validation — all with zero `unsafe` code.
 
 ```toml
 [dependencies]
-rust-dix = "0.7"
+rust-dix = "0.8"
 ```
 
 ### Sync applications
@@ -82,12 +82,33 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **Three lifetimes** | Singleton, Scoped, Transient |
 | **Keyed services** | Multiple implementations of the same trait by string key |
 | **Async support** | `build_async()` + `async_*` registration for services needing async init |
-| **Build-time validation** | Circular dependency detection, captive dependency rejection |
+| **Build-time validation** | Circular dependency detection, captive dependency rejection, constructor-time resolution rejection |
 | **Container injection** | `#[inject(provider)]`, `Arc<dyn ScopeFactory>`, `Arc<ServiceProvider>` — works in eager singletons and lazily resolved services |
 | **Cross-DLL support** | Named service registry for cdylib plugin systems |
 | **Layered containers** | Child-first resolution via `ServiceProviderWrapper` |
 | **Owned resolution** | `get_owned::<T>()` returns owned `T` for `&mut self` — no interior mutability |
-| **Scoped cleanup** | Cleanup closures + automatic `Drop` for scoped resource release |
+| **Deterministic disposal** | `Scope::dispose()` / `ServiceProvider::dispose()` release instances in reverse creation order |
+
+## Container semantics (0.8.0)
+
+rust-dix 0.8.0 aligns single-service resolution with MEDI while keeping build-time
+safety. The rules that most often surprise new users:
+
+| Rule | Behavior |
+|------|----------|
+| **Last registration wins** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` return the **last** registration of a service (same key for keyed). `try_add*` still means "only add if absent". |
+| **`get_all` is unkeyed-only** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` return **non-keyed** registrations in registration order. Use the new `get_all_keyed::<T>()` for keyed implementations. |
+| **Strict scope validation (default)** | Resolving a Scoped service from the root `ServiceProvider` (directly or through a transient chain) returns `Err(RdiError::ScopedFromRootProvider)`. Resolve Scoped services inside `provider.scope()`. APIs that cannot return an error (`get_optional`, `get_all`, `get_all_keyed`, `try_*`) treat that service as unresolvable (`None`/empty). **Exception**: `get_owned` / `try_get_owned` (and keyed owned) may resolve a Scoped service from the root — the instance is caller-owned, never cached or tracked; Scoped dependencies resolved *inside* its constructor still obey validation. |
+| **Opting into 0.7.x root-scope behavior** | `build_with(ServiceProviderOptions::lenient())` (i.e. `validate_scopes: false`) lets the root provider resolve and cache Scoped services as root-local singletons. |
+| **Dispose contracts** | `Scope::dispose()` / `Drop` releases the scope's instances in reverse creation order, then runs cleanup closures in reverse registration order; afterwards resolution returns `Err(RdiError::ScopeDisposed)`. `ServiceProvider::dispose()` does the same for singletons and root-scoped instances, clears the named registry, and afterwards returns `Err(RdiError::ProviderDisposed)`. Both are idempotent. |
+| **Deterministic build order** | Eager singletons are created in registration order (no longer `HashMap` iteration order), so construction and disposal order are reproducible. |
+| **Constructor-time resolution is rejected** | Resolving through an injected provider inside a build-time constructor returns a typed `FactoryPanic`; store the handle and resolve lazily in methods. |
+
+New in 0.8.0: `ServiceProviderOptions` (`validate_scopes`, `with_validate_scopes`,
+`lenient`), `build_with` / `build_async_with`, `is_registered::<T>()` /
+`is_registered_keyed::<T>(key)`, `get_all_keyed::<T>()`, `RdiError::{ScopedFromRootProvider,
+ProviderDisposed, ScopeDisposed}`. For a full MEDI comparison see
+[docs/rust-dix/01-introduction/medi-differences.md](docs/rust-dix/01-introduction/medi-differences.md).
 
 ## When should you use rust-dix?
 
@@ -128,10 +149,10 @@ pub trait INotificationChannel: Send + Sync {
     fn send(&self, msg: &str);
 }
 
-// Register three implementations of the same trait
+// Register two unkeyed implementations of the same trait, plus one keyed
 let provider = ServiceCollection::new()
     .singleton::<dyn INotificationChannel>(|_| Arc::new(EmailChannel))
-    .keyed_singleton::<dyn INotificationChannel>("sms", |_| Arc::new(SmsChannel))
+    .singleton::<dyn INotificationChannel>(|_| Arc::new(SmsChannel))
     .keyed_singleton::<dyn INotificationChannel>("push", |_| Arc::new(PushChannel))
     .build()
     .unwrap();
@@ -140,17 +161,21 @@ let provider = ServiceCollection::new()
 **Consumption side:**
 
 ```rust
-// Get the default (unkeyed) implementation
-let default: Arc<dyn INotificationChannel> = provider.get().unwrap();
+// Get the default (unkeyed) implementation — LAST registration wins
+let default: Arc<dyn INotificationChannel> = provider.get().unwrap(); // SmsChannel
 
 // Get a specific named implementation
-let sms: Arc<dyn INotificationChannel> = provider.get_keyed("sms").unwrap();
+let push: Arc<dyn INotificationChannel> = provider.get_keyed("push").unwrap();
 
-// Get ALL implementations at once (unkeyed + all keyed)
+// Get ALL unkeyed implementations at once (keyed implementations are NOT included)
 let all: Vec<Arc<dyn INotificationChannel>> = provider.get_all();
+assert_eq!(all.len(), 2);
 
-// Broadcast a message to every channel
-for channel in &all {
+// Keyed implementations: resolve all of them explicitly
+let keyed: Vec<Arc<dyn INotificationChannel>> = provider.get_all_keyed();
+
+// Broadcast a message to every channel (unkeyed + keyed)
+for channel in all.iter().chain(keyed.iter()) {
     channel.send("System alert: disk usage > 90%");
 }
 ```
@@ -236,8 +261,12 @@ impl OutboxWorker {
 
 ### Scoped services: per-request isolation
 
-Scoped services are created once per scope and cached within it. The root
-`ServiceProvider` itself acts as the root scope — use child scopes for request-level isolation.
+Scoped services are created once per scope and cached within it. Scoped services
+must be resolved from a child scope created with `provider.scope()` — the root
+provider does not resolve Scoped services by default (strict scope validation,
+`Err(RdiError::ScopedFromRootProvider)`). The exception is `get_owned` /
+`try_get_owned`: the owned instance is caller-owned and not cached, so it may be
+taken from the root, while its Scoped dependencies still obey validation.
 
 **Registration side:**
 
@@ -253,16 +282,20 @@ struct UnitOfWork {
     db: Arc<dyn IDbPool>,
 }
 
+#[rust_dix::inject(scoped)]           // register `dyn IUnitOfWork` as Scoped
+impl IUnitOfWork for UnitOfWork { /* ... */ }
+
 #[derive(Inject)]
 struct OrderService {
     #[inject]
     uow: Arc<dyn IUnitOfWork>,
 }
 
-let provider = ServiceCollection::new()
+#[rust_dix::inject(transient)]        // register `dyn IOrderService` as Transient
+impl IOrderService for OrderService { /* ... */ }
+
+let provider = ServiceCollection::from_injected()
     .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))    // global
-    .scoped::<dyn IUnitOfWork>(|r| __rdi_construct_UnitOfWork(r))   // per-scope
-    .transient::<dyn IOrderService>(|r| __rdi_construct_OrderService(r)) // fresh each time
     .build()
     .unwrap();
 ```
@@ -270,10 +303,8 @@ let provider = ServiceCollection::new()
 **Consumption side:**
 
 ```rust
-// ── Root scope: UoW is cached, always returns the same instance ──
-let uow1: Arc<dyn IUnitOfWork> = provider.get().unwrap();
-let uow2: Arc<dyn IUnitOfWork> = provider.get().unwrap();
-// uow1 and uow2 are the SAME instance (root scope cache)
+// ── Root provider: Scoped services are not resolvable with the default strict options ──
+let err = provider.get::<dyn IUnitOfWork>(); // Err(RdiError::ScopedFromRootProvider)
 
 // ── Child scope: each scope gets its own UoW instance ──
 let scope_a = provider.scope();
@@ -289,8 +320,15 @@ let uow_a2: Arc<dyn IUnitOfWork> = scope_a.get().unwrap();
 
 // ── Transient from scope: resolves Scoped deps within that scope ──
 let order_svc: Arc<dyn IOrderService> = scope_a.get().unwrap();
-// OrderService's IUnitOfWork is scope_a's UoW, not the root's
+// OrderService's IUnitOfWork is scope_a's UoW
+
+// Dropping (or explicitly disposing) the scope releases its scoped instances
+// in reverse creation order.
 ```
+
+Need the old 0.7 root-scope behavior? Build with
+`ServiceProviderOptions::lenient()` — see
+[the MEDI differences page](docs/rust-dix/01-introduction/medi-differences.md#2-scope-校验validatescopes).
 
 **Key rule**: Singleton must not depend on Scoped (enforced at build time).
 Scoped can depend on Singleton. Transient can depend on anything.
@@ -442,6 +480,7 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 
 - [crates/core — core library docs](./crates/core/README.md)
 - [crates/macros — procedural macro docs](./crates/macros/README.md)
+- [Differences from MEDI (scope validation, dispose, keyed, get_all)](docs/rust-dix/01-introduction/medi-differences.md) — read this if you come from .NET
 - [Business scenario tutorials](docs/rust-dix/08-best-practices/business-scenarios.md) — real-world patterns
 - [Integration tests](crates/core/tests/) — real-world usage patterns
 

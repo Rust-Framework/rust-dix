@@ -156,29 +156,52 @@ impl ServiceA {
 > 注意：在 build 期构造函数内通过注入的 provider 发起的解析会被拒绝（返回类型化
 > `FactoryPanic`），目的是避免绕过循环/囚徒依赖校验；把解析移到方法中即可。
 
-## 陷阱 5：根 Scope 与子 Scope 语义混淆
+## 陷阱 5：根 Provider 解析 Scoped（默认严格 scope 校验）
 
 ### 现象
 
-期望从根 Provider 每次解析 Scoped 都得到新实例，但实际拿到的是同一实例；或期望根级 Scoped 跨请求隔离，但实例被永久持有。
+0.8.0 起从根 Provider 解析 Scoped 服务直接报错，而不是像旧版本那样在根内缓存复用：
+
+```
+Err(RdiError::ScopedFromRootProvider { service: "…Session" })
+```
+
+或期望"根级 Scoped 跨请求隔离"，但服务根本解析不出来。
 
 ### 原因
 
-0.4.0 起，`ServiceProvider` 本身即 root scope。从根 Provider 解析 Scoped 服务时，实例缓存在 `root_scoped_cache`，**后续根级解析返回同一实例**（等同应用级单例），不会每次新建：
+0.8.0 默认开启严格 scope 校验（`ServiceProviderOptions::default()`，
+`validate_scopes: true`，对齐 ASP.NET Core 开发环境的 `ValidateScopes`）。root
+provider 解析 Scoped 服务（含经 Transient 链间接解析）返回
+`Err(ScopedFromRootProvider)`；不可返回错误的 API（`get_optional` / `get_all` /
+`get_all_keyed` / `try_*`）把该服务视为不可解析（`None` / 空）。
+
+> **例外**：`get_owned` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped ——
+> owned 实例归调用方、不进缓存/不被跟踪。但若该服务的构造函数内部还解析 Scoped 依赖，
+> 这些依赖在 root 上仍会报 `ScopedFromRootProvider`（详见陷阱 9）。
+
+> **注意 `Option` 注入 ≠ `get_optional`**：`#[inject] Option<Arc<Scoped>>` 在 strict root
+> 下**不会**变成 `None`，而是构造失败（typed `Err(ScopedFromRootProvider)`）；
+> 只有容器方法 `provider.get_optional::<Scoped>()` 才返回 `None`。可选 Scoped 依赖
+> 需在 `provider.scope()` 内构造/解析。
+
+0.7.x 的"根 Provider 即 root scope、Scoped 缓存在 `root_scoped_cache` 复用"行为，
+现在只能通过 `ServiceProviderOptions::lenient()` 显式开启：
 
 ```rust
-ServiceCollection::new()
+// 0.7.x 旧行为（显式开启）：root 解析 Scoped 并缓存为根内单例
+let provider = ServiceCollection::new()
     .scoped(|_| Arc::new(Session))
-    .build()
+    .build_with(ServiceProviderOptions::lenient())
     .unwrap();
 
-let s1: Arc<Session> = provider.get();  // 根 Provider → 缓存在 root_scoped_cache
-let s2: Arc<Session> = provider.get();  // s1 == s2（同一根 scope 实例）
+let s1: Arc<Session> = provider.get().unwrap(); // OK
+let s2: Arc<Session> = provider.get().unwrap(); // s1 == s2（根 scope 内缓存）
 ```
 
 ### 排查
 
-需要请求级隔离时，必须创建子 `Scope`：
+需要请求级隔离时，在子 `Scope` 内解析：
 
 ```rust
 let scope = provider.scope();
@@ -190,6 +213,9 @@ let scope2 = provider.scope();
 let s3: Arc<Session> = scope2.get().unwrap();
 // s3 != s1（跨子 Scope 独立）
 ```
+
+> 推荐始终用 `provider.scope()` 处理请求级服务；只有在确实需要"根级 Scoped 单例化"
+> 时才用 `lenient()`。详见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md#2-scope-校验validatescopes)。
 
 ## 陷阱 6：过程宏编译失败
 
@@ -314,9 +340,11 @@ Err(RdiError::…) — get_owned: not registered or Singleton: DbContext
 
 1. **Singleton 不可 owned**：Singleton 全局共享，refcount 恒 >1，无法 `try_unwrap`。
    `get_owned` 对 Singleton 返回 `Err`（`try_get_owned` 返回 `None`）。
-2. **Scoped owned 绕过缓存**：`get_owned` 对 Scoped 绕过 `scoped_cache` /
-   `root_scoped_cache`，每次调用创建新实例。这是有意为之——owned `&mut self`
-   与 scope 共享语义不兼容。
+2. **Scoped owned 绕过缓存**：`get_owned` 对 Scoped 绕过 `scoped_cache`，每次调用创建新实例。
+   这是有意为之——owned `&mut self` 与 scope 共享语义不兼容。**owned 解析是严格 scope
+   校验的例外**：root provider 上对 Scoped 调 `get_owned`/`try_get_owned` 是允许的
+   （实例归调用方、不进缓存/不被跟踪）；但若该服务的构造函数内部还解析 Scoped 依赖，
+   这些依赖在 root 上仍会返回 `Err(ScopedFromRootProvider)`，此时需在 `scope` 内取。
 3. **宏 owned 字段未注册或为 Singleton**：`#[derive(Inject)]` 的 `#[inject(owned)]` 裸 `T` 字段
    走 owned 路径，若该类型未注册或注册为 Singleton，构造失败返回 `Err`（含字段 `context`）。
 
@@ -328,9 +356,13 @@ let ctx: DbContext = provider.get_owned()?;  // Err
 
 // ❌ 期望 Scoped owned 缓存复用（实际每次新建）
 .scoped(|_| Arc::new(DbContext::new()))
-let a = provider.get_owned::<DbContext>();
+let a = provider.get_owned::<DbContext>();   // root 上允许（owned 不缓存）
 let b = provider.get_owned::<DbContext>();
-// a、b 是不同实例（绕过缓存）
+// a、b 是不同实例（owned 绕过缓存）
+
+// 若 DbContext 还依赖其他 Scoped 服务，则需要 scope：
+let scope = provider.scope();
+let c = scope.get_owned::<DbContext>();
 ```
 
 ### 排查
@@ -448,7 +480,10 @@ struct OutboxWorker {
 | `service not registered` | TypeId 不匹配 | 检查注册是否 `::<dyn Trait>` |
 | `keyed service not registered` | key 错误或未注册 | 检查 key 拼写 |
 | `SingletonDependsOnScoped` | Singleton 依赖 Scoped | build 阶段已拒绝，改 Singleton 只依赖 Singleton |
-| 根级 Scoped 不随请求变化 | root_scoped_cache 持久缓存 | 改用 `provider.scope()` 子 Scope 解析 |
+| `ScopedFromRootProvider` | 默认严格 scope 校验：从 root 解析 Scoped | 改用 `provider.scope()` 子 Scope 解析；确需旧行为用 `lenient()` 构建 |
+| `get_all` 拿不到某实现 | 该实现是 keyed 注册（`get_all` 只含非 keyed） | 改用 `get_all_keyed`，或把观察者/广播目标注册为非 keyed |
+| 后注册的实现没生效 | 0.8.0 为最后注册优先，先注册的被后注册覆盖 | 检查注册顺序；需要"未注册才添加"用 `try_add*` |
+| dispose 后解析报 `ScopeDisposed` / `ProviderDisposed` | 容器/作用域已释放 | 不要把已 dispose 的 provider/scope 继续传递使用 |
 | 栈溢出 | 循环依赖 | 重构或延迟解析 |
 | 编译失败 | 元组结构体 | 改命名结构体 |
 | `duplicate key` | key 重复 | 确保 key 唯一 |

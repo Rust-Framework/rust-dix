@@ -128,6 +128,15 @@
 //! - **Cross-DLL support**: named service registry for cdylib plugins
 //! - **Layered containers**: child-first resolution via `ServiceProviderWrapper`
 //! - **Build-time validation**: circular dependency detection during `build()`
+//! - **Scope validation**: scoped services cannot be resolved from the root
+//!   provider by default (MEDI `ValidateScopes` parity; opt out with
+//!   [`ServiceProviderOptions::lenient`])
+//! - **Deterministic lifecycle**: eager singletons are created in registration
+//!   order; [`ServiceProvider::dispose`] / [`Scope::dispose`] release cached
+//!   instances in reverse creation order
+//! - **MEDI registration semantics**: the last registration wins for a single
+//!   service; `get_all` returns unkeyed implementations in registration order
+//!   (`get_all_keyed` for keyed ones)
 //!
 //! # Crate layout
 //!
@@ -173,12 +182,16 @@ pub use collection::ServiceCollection;
 ///
 /// 兼具 MEDI 中 `IServiceProvider` 与 root scope 双重身份：
 /// - 作为 `IServiceProvider`：提供类型/键控/命名解析入口。
-/// - 作为 root scope：从根直接解析 Scoped 服务时，实例在根内缓存复用，
-///   语义等同于在根 scope 内单例化。通过 [`ServiceProvider::scope`] 创建的子 Scope
-///   拥有独立的 scoped 缓存，不回退到根。
+/// - 作为 root scope：**默认启用严格 scope 校验**（对齐 MEDI/ASP.NET Core 开发环境的
+///   `ValidateScopes`），从根解析 Scoped 服务返回 [`RdiError::ScopedFromRootProvider`]；
+///   在 [`ServiceProvider::scope`] 创建的 Scope 内解析则正常缓存复用。若确实需要
+///   0.7 的"根 scope 内单例化"行为，可用
+///   [`ServiceProviderOptions::lenient`] + [`ServiceCollection::build_with`]。
 /// - 与 MEDI 对齐，容器自身可作为内建服务解析：`provider.get::<ServiceProvider>()`
 ///   与 `#[inject] Arc<ServiceProvider>`（或专用 `#[inject(provider)]`）均可用，
 ///   eager singleton 与懒解析服务一致。
+/// - [`ServiceProvider::dispose`] 按创建逆序释放 singleton / root-scoped 实例并
+///   标记容器不可用（后续解析返回 [`RdiError::ProviderDisposed`]）。
 /// - ⚠️ singleton 持有 `Arc<ServiceProvider>` 会形成 `容器 → singleton → 容器` 的
 ///   强引用环，容器不再可能被回收；需要按任务创建 scope 的 singleton 应优先注入
 ///   [`ScopeFactory`]（内置实现为弱引用，无环）。构造函数内也不要通过注入的
@@ -186,6 +199,14 @@ pub use collection::ServiceCollection;
 ///
 /// Analogous to `IServiceProvider` in MEDI.
 pub use provider::ServiceProvider;
+
+/// Options for [`ServiceCollection::build_with`] /
+/// [`ServiceCollection::build_async_with`].
+///
+/// Defaults match MEDI/ASP.NET Core development-time scope validation:
+/// `validate_scopes = true`. Use [`ServiceProviderOptions::lenient`] to allow
+/// resolving scoped services from the root provider (pre-0.8 behavior).
+pub use provider::ServiceProviderOptions;
 
 /// Service descriptor containing registration metadata.
 pub use entry::ServiceDescriptor;

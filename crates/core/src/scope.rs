@@ -21,7 +21,7 @@ use std::sync::{Arc, Weak};
 /// 约定一致）。若需要强引用语义，可自行注册实现。
 pub trait ScopeFactory: Send + Sync {
     /// 创建一个独立 scope，共享 root 的 store/singleton_cache/named，
-    /// 独立 scoped_cache 和 disposables。
+    /// 独立 scoped 缓存和 disposables。
     fn create_scope(&self) -> Scope;
 }
 
@@ -63,20 +63,20 @@ pub(crate) fn builtin_scope_factory_any(factory: Arc<dyn ScopeFactory>) -> AnySe
 /// A scoped service provider — created via [`ServiceProvider::scope`].
 ///
 /// 内部持有一个 scope 范围的 `ServiceProvider`（由 `ServiceProvider::new_scope` 派生），
-/// 共享 root 的 store/singleton_cache/named，独立 `root_scoped_cache`。
+/// 共享 root 的 store/singleton_cache/named，独立 scoped 缓存。
 ///
 /// 所有解析方法委托给内嵌的 `scope_provider`，确保：
-/// - Scoped 服务在 scope 内缓存复用（命中 `scope_provider.root_scoped_cache`）。
+/// - Scoped 服务在 scope 内缓存复用。
 /// - Transient 依赖通过 `scope_provider` 解析，正确绑定到当前 scope（MEDI 语义）。
 /// - `#[inject(provider)]` 字段拿到的是 scope 范围的 provider，经该字段解析 Scoped
 ///   服务命中 scope 缓存——不泄漏到 root。
 ///
 /// # 资源释放
 ///
-/// 当 `Scope` 被 drop 时，其内部的 `scope_provider` 被释放，scoped 缓存中的
-/// `Arc<T>` 实例随之释放。若服务需要确定性资源释放（如关闭数据库连接），
-/// 可在工厂内通过 [`ServiceProvider::register_disposable`] 注册清理闭包，
-/// 并调用 [`Scope::dispose`] 在 scope 结束前执行显式清理。
+/// [`Scope::dispose`]（以及 `Drop` 安全网）会按 **创建逆序** 释放该 scope 创建的
+/// Scoped 实例（实例的 `Drop` 在最后一个引用释放时运行），并按注册逆序执行
+/// [`ServiceProvider::register_disposable`] 注册的清理闭包。释放后 scope 解析返回
+/// [`RdiError::ScopeDisposed`]。
 pub struct Scope {
     scope_provider: Arc<ServiceProvider>,
 }
@@ -97,28 +97,14 @@ impl Scope {
         &self.scope_provider
     }
 
-    /// Explicitly dispose all scoped services registered via [`ServiceProvider::register_disposable`].
+    /// Dispose the scope: release scoped instances in reverse creation order,
+    /// then run `register_disposable` cleanups in reverse registration order.
     ///
-    /// Services that need deterministic cleanup (e.g., database connections,
-    /// file handles) should register a cleanup closure in their factory:
-    ///
-    /// ```ignore
-    /// .scoped(|r| {
-    ///     let conn = Arc::new(DbConnection::connect());
-    ///     let conn_clone = Arc::clone(&conn);
-    ///     r.provider_arc().unwrap().register_disposable(Box::new(move || {
-    ///         conn_clone.close();
-    ///     }));
-    ///     conn
-    /// })
-    /// ```
-    ///
-    /// Called automatically on `Drop` as a safety net. Disposal waits for any
-    /// in-flight `register_disposable` call, then drains and runs cleanups
-    /// without holding the lock. Prefer calling [`Self::dispose`] explicitly
-    /// at a deterministic end-of-scope point.
+    /// Idempotent; also called by `Drop`. After disposal, resolution through
+    /// this scope returns [`RdiError::ScopeDisposed`] (or `None`/empty for
+    /// infallible lookups).
     pub fn dispose(&self) {
-        self.scope_provider.dispose_scoped();
+        self.scope_provider.dispose();
     }
 
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
@@ -170,9 +156,24 @@ impl Scope {
     pub fn try_get_keyed_owned<T: Send + Sync + 'static>(&self, key: &str) -> Option<T> {
         self.scope_provider.try_get_keyed_owned::<T>(key)
     }
-
+    /// Return all **unkeyed** registered instances (MEDI `GetServices<T>()`).
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
         self.scope_provider.get_all::<T>()
+    }
+
+    /// Return all **keyed** registered instances (MEDI `GetKeyedServices<T>()`).
+    pub fn get_all_keyed<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
+        self.scope_provider.get_all_keyed::<T>()
+    }
+
+    /// Whether `T` has a resolvable registration (MEDI `IServiceProviderIsService`).
+    pub fn is_registered<T: ?Sized + Send + Sync + 'static>(&self) -> bool {
+        self.scope_provider.is_registered::<T>()
+    }
+
+    /// Whether `T` has a registration under `key`.
+    pub fn is_registered_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> bool {
+        self.scope_provider.is_registered_keyed::<T>(key)
     }
 
     pub fn get_named_any(&self, name: &str) -> Option<Arc<dyn Any + Send + Sync>> {
@@ -212,8 +213,27 @@ impl IServiceResolver for Scope {
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_all_any(key)
     }
+    fn get_all_keyed_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        self.scope_provider.get_all_keyed_any(key)
+    }
+    fn get_all_any_result(&self, key: &str) -> Result<Vec<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.scope_provider.get_all_any_result(key)
+    }
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_owned_any(key)
+    }
+    fn try_get_any_result(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.scope_provider.try_get_any_result(key)
+    }
+    fn try_get_keyed_any_result(
+        &self,
+        key: &str,
+        variant: &str,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        self.scope_provider.try_get_keyed_any_result(key, variant)
     }
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         self.scope_provider.get_keyed_owned_any(key, variant)
@@ -221,7 +241,7 @@ impl IServiceResolver for Scope {
     fn provider_arc(&self) -> Option<Arc<ServiceProvider>> {
         // 返回 scope 范围的 provider（不是 root），符合 MEDI 语义：
         // 在 scope 内解析的服务经 #[inject(provider)] 拿到此 provider，
-        // 后续 get::<ScopedX>() 命中 scope 自己的 root_scoped_cache。
+        // 后续 get::<ScopedX>() 命中 scope 自己的 scoped 缓存。
         Some(Arc::clone(&self.scope_provider))
     }
 }
@@ -247,6 +267,22 @@ mod tests {
         let s2 = p.scope();
         let c = s2.get::<Sd>().unwrap();
         assert_ne!(a.0, c.0);
+    }
+
+    #[test]
+    fn disposed_scope_rejects_resolution() {
+        let p = ServiceCollection::new()
+            .scoped(|_| Arc::new(Sd(1)))
+            .build()
+            .unwrap();
+        let scope = p.scope();
+        assert!(scope.get::<Sd>().is_ok());
+        scope.dispose();
+        assert!(matches!(
+            scope.get::<Sd>(),
+            Err(crate::error::RdiError::ScopeDisposed)
+        ));
+        assert!(scope.get_optional::<Sd>().is_none());
     }
 
     #[test]
@@ -293,7 +329,7 @@ mod tests {
         assert_eq!(o1.mid.core.0, 0, "scope1 的 ScopedCore 应为序号 0");
 
         // scope1 内再次解析：OuterTransient/MidTransient 每次新建（Transient），
-        // 但 ScopedCore 应复用 scope1.scoped_cache（序号仍 0）。
+        // 但 ScopedCore 应复用 scope1 的 scoped 缓存（序号仍 0）。
         let o1b: Arc<OuterTransient> = scope1.get().unwrap();
         assert_eq!(o1b.mid.core.0, 0, "scope1 应复用同一 ScopedCore");
         assert!(
@@ -310,17 +346,17 @@ mod tests {
             "不同 scope 的 ScopedCore 必须独立"
         );
 
-        // 根 scope：第三个独立实例（序号 2），证明子 scope 未泄漏到根。
-        let root_c: Arc<ScopedCore> = provider.get().unwrap();
-        assert_eq!(root_c.0, 2, "根 scope 的 ScopedCore 应为序号 2");
-        assert!(!Arc::ptr_eq(&o1.mid.core, &root_c));
-        assert!(!Arc::ptr_eq(&o2.mid.core, &root_c));
+        // 严格 scope 校验（0.8 默认）：root 不允许解析 Scoped 服务。
+        assert!(matches!(
+            provider.get::<ScopedCore>(),
+            Err(crate::error::RdiError::ScopedFromRootProvider { .. })
+        ));
 
-        // 全程工厂只执行 3 次（scope1、scope2、根各一次）。
+        // 全程工厂只执行 2 次（scope1、scope2 各一次）。
         assert_eq!(
             CORE_CALLS.load(Ordering::SeqCst),
-            3,
-            "ScopedCore 工厂应执行 3 次（三 scope 各一次）"
+            2,
+            "ScopedCore 工厂应执行 2 次（两个子 scope 各一次）"
         );
     }
 }

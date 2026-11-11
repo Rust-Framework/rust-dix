@@ -21,9 +21,13 @@ impl ServiceProviderWrapper {
     }
 
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
-        let type_name = std::any::type_name::<T>();
-        self.try_get::<T>()
-            .ok_or_else(|| RdiError::not_found(type_name, None))
+        // Child-first, root-fallback. Errors other than "not registered" (e.g.
+        // root scope validation) must not be masked as ServiceNotFound.
+        match self.child.get::<T>() {
+            Ok(v) => Ok(v),
+            Err(RdiError::ServiceNotFound { .. }) => self.root.get::<T>(),
+            Err(err) => Err(err),
+        }
     }
     pub fn get_optional<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.try_get::<T>()
@@ -32,14 +36,32 @@ impl ServiceProviderWrapper {
         &self,
         key: &str,
     ) -> Result<Arc<T>, RdiError> {
-        let type_name = std::any::type_name::<T>();
-        self.try_get_keyed::<T>(key)
-            .ok_or_else(|| RdiError::keyed_not_found(type_name, key, None))
+        match self.child.get_keyed::<T>(key) {
+            Ok(v) => Ok(v),
+            Err(RdiError::KeyedServiceNotFound { .. }) => self.root.get_keyed::<T>(key),
+            Err(err) => Err(err),
+        }
     }
     pub fn get_all<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
         let mut r = self.child.get_all::<T>();
         r.extend(self.root.get_all::<T>());
         r
+    }
+    /// Unkeyed + keyed registrations are kept separate (MEDI parity): this
+    /// returns child-then-root **keyed** instances only.
+    pub fn get_all_keyed<T: ?Sized + Send + Sync + 'static>(&self) -> Vec<Arc<T>> {
+        let mut r = self.child.get_all_keyed::<T>();
+        r.extend(self.root.get_all_keyed::<T>());
+        r
+    }
+    /// Whether `T` is registered in the child or the root (MEDI
+    /// `IServiceProviderIsService` parity).
+    pub fn is_registered<T: ?Sized + Send + Sync + 'static>(&self) -> bool {
+        self.child.is_registered::<T>() || self.root.is_registered::<T>()
+    }
+    /// Whether `T` is registered under `key` in the child or the root.
+    pub fn is_registered_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> bool {
+        self.child.is_registered_keyed::<T>(key) || self.root.is_registered_keyed::<T>(key)
     }
     pub fn get_named<T: Send + Sync + 'static>(&self, name: &str) -> Option<Arc<T>> {
         self.child
@@ -116,15 +138,6 @@ impl ServiceProviderWrapper {
             .get_optional::<T>()
             .or_else(|| self.root.get_optional::<T>())
     }
-
-    fn try_get_keyed<T: ?Sized + Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
-        // Delegate to IServiceResolver which goes through the cache properly.
-        IServiceResolver::get_keyed_any(self.child.as_ref(), std::any::type_name::<T>(), key)
-            .or_else(|| {
-                IServiceResolver::get_keyed_any(self.root.as_ref(), std::any::type_name::<T>(), key)
-            })
-            .and_then(|arc| crate::provider::ServiceProvider::extract(arc))
-    }
 }
 
 impl IServiceResolver for ServiceProviderWrapper {
@@ -147,14 +160,46 @@ impl IServiceResolver for ServiceProviderWrapper {
             .or_else(|| self.root.get_keyed_by_type_id(tid, key))
     }
     fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
-        // 合并 child + root：与 inherent `get_all` 的 child-then-root 顺序一致。
+        // 合并 child + root（非 keyed）：与 inherent `get_all` 的 child-then-root 顺序一致。
         let mut result = IServiceResolver::get_all_any(self.child.as_ref(), key);
         result.extend(IServiceResolver::get_all_any(self.root.as_ref(), key));
         result
     }
+    fn get_all_keyed_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        let mut result = IServiceResolver::get_all_keyed_any(self.child.as_ref(), key);
+        result.extend(IServiceResolver::get_all_keyed_any(self.root.as_ref(), key));
+        result
+    }
+    fn get_all_any_result(&self, key: &str) -> Result<Vec<Arc<dyn Any + Send + Sync>>, RdiError> {
+        let mut result = IServiceResolver::get_all_any_result(self.child.as_ref(), key)?;
+        result.extend(IServiceResolver::get_all_any_result(
+            self.root.as_ref(),
+            key,
+        )?);
+        Ok(result)
+    }
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         IServiceResolver::get_owned_any(self.child.as_ref(), key)
             .or_else(|| IServiceResolver::get_owned_any(self.root.as_ref(), key))
+    }
+    fn try_get_any_result(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        match self.child.try_get_any_result(key) {
+            Ok(Some(v)) => Ok(Some(v)),
+            _ => self.root.try_get_any_result(key),
+        }
+    }
+    fn try_get_keyed_any_result(
+        &self,
+        key: &str,
+        variant: &str,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        match self.child.try_get_keyed_any_result(key, variant) {
+            Ok(Some(v)) => Ok(Some(v)),
+            _ => self.root.try_get_keyed_any_result(key, variant),
+        }
     }
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         IServiceResolver::get_keyed_owned_any(self.child.as_ref(), key, variant)

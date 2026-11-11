@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::Arc;
@@ -10,8 +10,12 @@ fn get_all_returns_all_entries() {
         .keyed_singleton("extra", |_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
+    // MEDI parity: get_all == GetServices (unkeyed only); keyed via get_all_keyed.
     let all: Vec<Arc<common::MyService>> = p.get_all();
-    assert_eq!(all.len(), 2);
+    assert_eq!(all.len(), 1);
+    let keyed: Vec<Arc<common::MyService>> = p.get_all_keyed();
+    assert_eq!(keyed.len(), 1);
+    assert_eq!(keyed[0].value, 2);
 }
 
 #[test]
@@ -40,8 +44,11 @@ fn scope_get_all_from_parent() {
         .build()
         .unwrap();
     let scope = p.scope();
+    // Only keyed registrations exist: unkeyed enumeration is empty, keyed has both.
     let all: Vec<Arc<common::MyService>> = scope.get_all();
-    assert_eq!(all.len(), 2);
+    assert!(all.is_empty());
+    let keyed: Vec<Arc<common::MyService>> = scope.get_all_keyed();
+    assert_eq!(keyed.len(), 2);
 }
 
 #[test]

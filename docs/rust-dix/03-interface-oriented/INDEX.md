@@ -6,10 +6,12 @@
 
 | 小节 | 内容 |
 |------|------|
-| [为什么面向接口](why-interface.md) | 接口开发的价值与 Rust trait 对比 |
-| [trait 定义与 contracts 层](contracts-layer.md) | 接口与 DTO 的分层组织 |
+| 为什么面向接口（规划中） | 接口开发的价值与 Rust trait 对比 |
+| trait 定义与 contracts 层（规划中） | 接口与 DTO 的分层组织 |
 | [dyn Trait 注册与解析](dyn-trait-registration.md) | 接口注册的核心模式 |
 | [多实现与键控服务](multiple-implementations.md) | 策略模式、多态实现 |
+
+> 标注"规划中"的小节尚未发布；本章已发布 dyn Trait 注册与多实现两页。
 
 ## 核心原则
 
@@ -56,4 +58,5 @@ ServiceCollection::new()
 
 ## 下一步
 
-从 [为什么面向接口](why-interface.md) 开始。
+从 [dyn Trait 注册与解析](dyn-trait-registration.md) 开始；随后阅读
+[多实现与键控服务](multiple-implementations.md)。

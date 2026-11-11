@@ -5,6 +5,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-11
+
+> **English** · **简体中文**
+
+### English
+
+#### Breaking changes
+- **Last-registration-wins resolution (MEDI parity)**: `get` / `get_optional` /
+  `get_owned` / `get_keyed*` / `get_async` now return the **last** registration of a
+  service (same key for keyed registrations). Previously the first registration won.
+  `try_add*` keeps the MEDI `TryAdd` meaning: add only if not already registered.
+- **`get_all` excludes keyed registrations (MEDI parity)**: `get_all::<T>()` and
+  `#[inject] Vec<Arc<T>>` now return only **non-keyed** registrations, in registration
+  order, matching MEDI `GetServices<T>()`. Use the new `get_all_keyed::<T>()` for keyed
+  implementations.
+- **Strict scope validation by default**: resolving a Scoped service from the root
+  `ServiceProvider` (directly or through a transient chain) returns
+  `Err(RdiError::ScopedFromRootProvider { service })`. APIs that
+  cannot return an error (`get_optional`, `get_all`, `get_all_keyed`, `try_*`) treat the
+  service as unresolvable (`None`/empty). Resolving inside `provider.scope()` is
+  unaffected. `get_owned` / `try_get_owned` (and keyed owned) are the **exception**:
+  they may resolve a Scoped service from the root — the instance is caller-owned, never
+  cached or tracked — while Scoped dependencies resolved inside its constructor still
+  obey validation. This matches MEDI/ASP.NET Core development `ValidateScopes = true`; a bare
+  MEDI `BuildServiceProvider()` defaults to `false`. Opt back into the 0.7.x root-scope
+  behavior with `build_with(ServiceProviderOptions::lenient())`
+  (`validate_scopes: false`), where the root provider resolves and caches Scoped
+  services as root-local singletons.
+- **Dispose contracts**: `Scope` now tracks the Scoped instances created in it; its
+  `dispose()`/`Drop` releases them in **reverse creation order**, then runs
+  `register_disposable` cleanup closures in **reverse registration order**. After
+  disposal, resolution returns `Err(RdiError::ScopeDisposed)` (non-fallible APIs return
+  `None`/empty). New `ServiceProvider::dispose()` releases all singletons and root-scoped
+  instances in reverse creation order, runs cleanups in reverse order, clears the named
+  registry, and marks the provider disposed; afterwards resolution returns
+  `Err(RdiError::ProviderDisposed)`. Both `dispose()` methods are idempotent. `get_owned`
+  instances are caller-owned and never enter container tracking/disposal.
+
+#### Added
+- `ServiceProviderOptions` (crate root): `#[non_exhaustive]`, field
+  `pub validate_scopes: bool`, `Default` = strict (`true`), `new()`,
+  `.with_validate_scopes(bool)`, convenience `lenient()` (= `false`).
+- `ServiceCollection::build_with(options)` / `build_async_with(options)`; `build()` and
+  `build_async()` are equivalent to the `Default` (strict) variants.
+- New `RdiError` variants `ScopedFromRootProvider { service }`, `ProviderDisposed`,
+  `ScopeDisposed`; `RdiError` is now `#[non_exhaustive]`.
+- `ServiceProvider::dispose()` and `Scope::dispose()` (idempotent; `Scope::Drop` still
+  auto-disposes).
+- `is_registered::<T>()` / `is_registered_keyed::<T>(key)` on `ServiceProvider`, `Scope`
+  and `ServiceProviderWrapper`.
+- `get_all_keyed::<T>()` on `ServiceProvider`, `Scope` and `ServiceProviderWrapper`;
+  `IServiceResolver::get_all_keyed_any`.
+- `get_async` / `get_keyed_async` now fall back to the synchronous path for services
+  registered with the synchronous `scoped` / `transient` builders (previously
+  `ServiceNotFound`).
+- Async Scoped/Transient resolution detects self/cross recursion per-poll and returns
+  `RdiError::CircularDependency` instead of dead-locking on the per-key async cache lock;
+  legitimate concurrent resolution is not misreported.
+- New infallible trait helpers `IServiceResolver::try_get_any_result` /
+  `try_get_keyed_any_result` (used by `try_get` / `try_get_keyed`, so strict-root scope
+  violations and disposed containers return `None` instead of panicking); plus
+  `get_all_keyed_any` / `get_all_any_result`.
+- `build_async` initializes async singletons in registration order; resolving a
+  not-yet-initialized async singleton reports an actionable `FactoryPanic` (register
+  dependencies before their dependents).
+
+#### Fixed
+- Registration-order semantics now match the documentation and MEDI: single-service
+  resolution is last-registration-wins (0.7.x implementations resolved first-registration
+  despite documenting otherwise in places).
+- Eager singleton creation order during `build()` is now deterministic (registration
+  order) instead of depending on `HashMap` iteration order, so construction and disposal
+  order are reproducible.
+- `try_add*` semantics clarified and documented: "only add if absent", unaffected by the
+  last-registration rule.
+- Dispose ordering is deterministic and documented (reverse creation order for
+  instances, reverse registration order for cleanup closures).
+
+#### Migration from 0.7.x
+- **Root Scoped resolution**: replace `provider.get::<Scoped>()` with
+  `provider.scope()` + `scope.get::<Scoped>()`. `get_owned` / `try_get_owned` remain
+  callable for Scoped services at the root (caller-owned, not cached); only their
+  constructor's Scoped dependencies obey validation. If you truly need the old root-scope
+  behavior, build with `ServiceCollection::build_with(ServiceProviderOptions::lenient())`.
+- **First-registration reliance**: code that registered a default first and relied on it
+  winning must switch to `try_add*` (add only if absent) or reorder registrations so the
+  desired implementation is registered last.
+- **Keyed multi-implementation collection**: replace `get_all()` over keyed registrations
+  with `get_all_keyed::<T>()` (or register broadcast targets as non-keyed).
+- **Dispose**: call `provider.dispose()` on application shutdown; never resolve from a
+  provider/scope after disposal (typed `ProviderDisposed` / `ScopeDisposed` now).
+- **Error matching**: add a wildcard arm where `RdiError` is matched exhaustively —
+  `RdiError` is now `#[non_exhaustive]`.
+
+### 简体中文
+
+#### 破坏性变更
+- **单服务解析改为"最后注册优先"（对齐 MEDI）**：`get` / `get_optional` / `get_owned` /
+  `get_keyed*` / `get_async` 返回该服务**最后注册**的实现（keyed 同 key 也是后注册生效）。
+  0.7.x 为"先注册优先"。`try_add*` 保持 MEDI `TryAdd` 语义：未注册才添加。
+- **`get_all` 不再包含 keyed 注册（对齐 MEDI）**：`get_all::<T>()` 与
+  `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册（按注册顺序），对齐 MEDI
+  `GetServices<T>()`；keyed 实现改用新增的 `get_all_keyed::<T>()`。
+- **默认严格 scope 校验**：从 root `ServiceProvider` 解析 Scoped 服务（直接、或经 Transient
+  链间接）返回 `Err(RdiError::ScopedFromRootProvider { service })`；不可返回错误的 API
+  （`get_optional` / `get_all` / `get_all_keyed` / `try_*`）视为不可解析（`None`/空）。
+  在 `provider.scope()` 内解析不受影响。**例外**：`get_owned` / `try_get_owned`
+  （含 keyed owned）允许从 root 解析 Scoped —— 实例归调用方、不进缓存/不被跟踪，
+  但其构造函数内部解析的 Scoped 依赖仍受校验。默认严格对应 MEDI/ASP.NET Core 开发环境的
+  `ValidateScopes = true`；裸 MEDI `BuildServiceProvider()` 默认关闭。需要 0.7.x 的
+  root-scope 旧行为时用 `build_with(ServiceProviderOptions::lenient())`
+  （`validate_scopes: false`），root 会直接解析 Scoped 并缓存为根内单例。
+- **dispose 契约**：`Scope` 现在跟踪该 scope 创建的 Scoped 实例，`dispose()`/Drop 按
+  **创建逆序**释放实例，再按**注册逆序**执行 `register_disposable` 清理闭包；dispose
+  后解析返回 `Err(RdiError::ScopeDisposed)`（不可返回错误的 API 为 `None`/空）。新增
+  `ServiceProvider::dispose()`：按创建逆序释放全部 singleton 与 root scoped 实例、逆序
+  执行清理、清空 named 注册并标记 provider 已释放，之后解析返回
+  `Err(RdiError::ProviderDisposed)`。两个 `dispose()` 均幂等。`get_owned` 实例归调用方
+  所有，不进入容器跟踪/释放。
+
+#### 新增
+- `ServiceProviderOptions`（crate 根导出）：`#[non_exhaustive]`，字段
+  `pub validate_scopes: bool`，`Default` 为严格（`true`），`new()`、
+  `.with_validate_scopes(bool)`、便捷 `lenient()`（= `false`）。
+- `ServiceCollection::build_with(options)` / `build_async_with(options)`；`build()` 与
+  `build_async()` 等价于 `Default`（严格）版本。
+- `RdiError` 新变体 `ScopedFromRootProvider { service }`、`ProviderDisposed`、
+  `ScopeDisposed`；`RdiError` 标记 `#[non_exhaustive]`。
+- `ServiceProvider::dispose()` 与 `Scope::dispose()`（幂等；`Scope` 的 Drop 仍自动 dispose）。
+- `ServiceProvider` / `Scope` / `ServiceProviderWrapper` 新增
+  `is_registered::<T>()` / `is_registered_keyed::<T>(key)`。
+- `ServiceProvider` / `Scope` / `ServiceProviderWrapper` 新增
+  `get_all_keyed::<T>()`；`IServiceResolver::get_all_keyed_any`。
+- **`get_async` / `get_keyed_async` 回退同步路径**：对用同步 `scoped` / `transient`
+  注册的服务，异步解析会回退到同步解析路径（此前返回 `ServiceNotFound`）。
+- **async 递归检测**：Scoped/Transient 的异步解析按"单次 poll"检测自引用/交叉递归，
+  返回 `RdiError::CircularDependency`，而不是在 per-key async 缓存锁上死锁；合法的并发
+  解析不会被误报。
+- **新增不失败的 trait 辅助方法**：`IServiceResolver::try_get_any_result` /
+  `try_get_keyed_any_result`（供 `try_get` / `try_get_keyed` 使用，使 strict-root
+  scope 校验与已 dispose 容器返回 `None` 而不 panic）；以及 `get_all_keyed_any` /
+  `get_all_any_result`。
+- **async singleton 注册顺序**：`build_async` 按注册顺序初始化 async singleton；解析
+  尚未初始化的 async singleton 会返回可操作的 `FactoryPanic`（依赖须先注册/先初始化）。
+
+#### 修复
+- 注册顺序语义与文档、MEDI 对齐：单服务解析为最后注册优先（0.7.x 实现为首注册优先，
+  与部分文档表述不符）。
+- `build()` 期 eager singleton 创建顺序确定（按注册顺序），不再依赖 `HashMap` 迭代
+  顺序，构建与释放顺序可复现。
+- `try_add*` 语义澄清并写入文档："未注册才添加"，不受最后注册优先规则影响。
+- dispose 顺序确定并文档化（实例按创建逆序、清理闭包按注册逆序）。
+
+#### 从 0.7.x 迁移
+- **root 解析 Scoped**：`provider.get::<Scoped>()` 改为 `provider.scope()` +
+  `scope.get::<Scoped>()`。`get_owned` / `try_get_owned` 对 Scoped 仍可从 root 调用
+  （实例归调用方、不缓存），只有其构造函数内的 Scoped 依赖受校验。确需旧行为时用
+  `ServiceCollection::build_with(ServiceProviderOptions::lenient())`。
+- **依赖首注册优先**：先注册默认实现并依赖其生效的代码，改用 `try_add*`（未注册才添加）
+  或调整注册顺序，让期望的实现最后注册。
+- **keyed 多实现收集**：用 `get_all()` 收集 keyed 注册的代码改为 `get_all_keyed::<T>()`
+  （或把广播目标注册为非 keyed）。
+- **释放**：应用关闭时调用 `provider.dispose()`；dispose 后不要再解析（类型化
+  `ProviderDisposed` / `ScopeDisposed`）。
+- **错误匹配**：穷举匹配 `RdiError` 的地方补 `_ =>` 分支——`RdiError` 已标记
+  `#[non_exhaustive]`。
+
 ## [0.7.1] - 2026-11-10
 
 > **English** · **简体中文**
@@ -271,6 +438,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.8.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.0
 [0.7.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.7.0
 [0.6.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.6.1

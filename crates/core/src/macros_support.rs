@@ -68,6 +68,10 @@ pub fn resolve_option_keyed_arc<T: ?Sized + Send + Sync + 'static>(
 }
 
 /// Polymorphic `Vec<Arc<T>>` inject field.
+///
+/// Semantics match MEDI `IEnumerable<T>` constructor injection: **unkeyed**
+/// implementations only, in registration order. Keyed implementations must be
+/// requested explicitly (`provider.get_all_keyed::<T>()`).
 #[doc(hidden)]
 pub fn resolve_vec_arc<T: ?Sized + Send + Sync + 'static>(
     resolver: &dyn IServiceResolver,
@@ -77,7 +81,7 @@ pub fn resolve_vec_arc<T: ?Sized + Send + Sync + 'static>(
     let ty = std::any::type_name::<T>();
     let ctx = field_context(consumer, field);
     let mut out = Vec::new();
-    for a in resolver.get_all_any(ty) {
+    for a in resolver.get_all_any_result(ty)? {
         let d = a.downcast::<Arc<T>>().map_err(|_| RdiError::FactoryPanic {
             service: ty.to_string(),
             payload: format!("polymorphic inject type mismatch for {ctx}"),

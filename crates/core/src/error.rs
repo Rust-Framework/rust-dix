@@ -1,7 +1,12 @@
 use std::any::Any;
 use thiserror::Error;
 
+/// Errors returned by the container.
+///
+/// The enum is `#[non_exhaustive]`: future releases may add variants without a
+/// semver-major break. Match with a wildcard arm (`_ => …`) when handling errors.
 #[derive(Error, Debug, Clone)]
+#[non_exhaustive]
 pub enum RdiError {
     #[error("service not registered: {ty}{}", context.as_ref().map(|c| format!(" (while resolving {c})")).unwrap_or_default())]
     ServiceNotFound {
@@ -26,6 +31,22 @@ pub enum RdiError {
         "async service '{service}' cannot be built with build(); use ServiceCollection::build_async() instead"
     )]
     AsyncServiceRequiresBuildAsync { service: String },
+    /// 严格 scope 校验下从 root provider 解析 Scoped 服务。
+    ///
+    /// 等价于 MEDI `ValidateScopes` 的
+    /// `InvalidOperationException("Cannot resolve scoped service from root provider.")`。
+    #[error(
+        "scoped service '{service}' cannot be resolved from the root provider; \
+         create a scope with provider.scope() and resolve it there, or build with \
+         ServiceProviderOptions{{ validate_scopes: false }} to restore 0.7 root-scope behavior"
+    )]
+    ScopedFromRootProvider { service: String },
+    /// provider 已被显式 [`dispose`](crate::ServiceProvider::dispose) 或已销毁。
+    #[error("the service provider has been disposed; resolution is no longer allowed")]
+    ProviderDisposed,
+    /// scope 已被显式 [`dispose`](crate::Scope::dispose) 或 `Drop` 释放。
+    #[error("the scope has been disposed; resolution is no longer allowed")]
+    ScopeDisposed,
 }
 
 impl RdiError {
@@ -47,6 +68,13 @@ impl RdiError {
             key: key.into(),
             ty,
             context: context.into(),
+        }
+    }
+
+    /// Build a [`ScopedFromRootProvider`](Self::ScopedFromRootProvider) for `service`.
+    pub fn scoped_from_root(service: &'static str) -> Self {
+        Self::ScopedFromRootProvider {
+            service: service.to_string(),
         }
     }
 

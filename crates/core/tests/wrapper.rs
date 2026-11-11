@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::Arc;
@@ -69,8 +69,29 @@ fn wrapper_get_all_combines_both() {
         .build()
         .unwrap();
     let w = ServiceProviderWrapper::new(child, root);
+    // MEDI parity: unkeyed enumeration excludes keyed registrations.
     let all: Vec<Arc<common::MyService>> = w.get_all();
-    assert_eq!(all.len(), 2);
+    assert_eq!(all.len(), 0);
+    let keyed: Vec<Arc<common::MyService>> = w.get_all_keyed();
+    assert_eq!(keyed.len(), 2);
+}
+
+#[test]
+fn wrapper_propagates_root_scope_validation_error() {
+    let root = ServiceCollection::new()
+        .scoped(|_| Arc::new(common::MyService { value: 1 }))
+        .build()
+        .unwrap();
+    let child = ServiceCollection::new().build().unwrap();
+    let w = ServiceProviderWrapper::new(child, root);
+
+    match w.get::<common::MyService>() {
+        Ok(_) => panic!("scoped service must not resolve from the strict root"),
+        Err(RdiError::ScopedFromRootProvider { .. }) => {}
+        Err(other) => panic!("expected ScopedFromRootProvider, got {other:?}"),
+    }
+    // Infallible lookup reports absence instead.
+    assert!(w.get_optional::<common::MyService>().is_none());
 }
 
 #[test]

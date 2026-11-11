@@ -235,19 +235,20 @@ impl ServiceCollection {
     }
 
     pub fn build(self) -> Result<Arc<crate::provider::ServiceProvider>, crate::error::RdiError> {
-        let mut s = crate::entry::ServiceStore::new();
-        for (n, d) in self.descriptors.into_iter().enumerate() {
-            let e = crate::entry::ServiceEntry {
-                cache_key: n,
-                key: d.key,
-                type_name: d.type_name,
-                factory: d.factory,
-                async_factory: d.async_factory,
-                lifetime: d.lifetime,
-            };
-            s.entry(d.type_id).or_default().push(e);
-        }
-        crate::provider::ServiceProvider::new(s)
+        self.build_with(crate::provider::ServiceProviderOptions::default())
+    }
+
+    /// Build with explicit [`ServiceProviderOptions`](crate::ServiceProviderOptions).
+    ///
+    /// `build()` equals `build_with(ServiceProviderOptions::default())`, i.e.
+    /// strict scope validation is enabled by default (MEDI `ValidateScopes`).
+    /// Use [`crate::ServiceProviderOptions::lenient`] to restore the ≤ 0.7 root-scope
+    /// behavior where the root provider caches scoped services.
+    pub fn build_with(
+        self,
+        options: crate::provider::ServiceProviderOptions,
+    ) -> Result<Arc<crate::provider::ServiceProvider>, crate::error::RdiError> {
+        crate::provider::ServiceProvider::new_with(self.into_store(), options)
     }
 
     /// Build the provider, executing async factories for singleton services.
@@ -264,6 +265,23 @@ impl ServiceCollection {
     pub async fn build_async(
         self,
     ) -> Result<Arc<crate::provider::ServiceProvider>, crate::error::RdiError> {
+        self.build_async_with(crate::provider::ServiceProviderOptions::default())
+            .await
+    }
+
+    /// Async variant of [`build_with`](Self::build_with).
+    pub async fn build_async_with(
+        self,
+        options: crate::provider::ServiceProviderOptions,
+    ) -> Result<Arc<crate::provider::ServiceProvider>, crate::error::RdiError> {
+        crate::provider::ServiceProvider::new_async_with(self.into_store(), options).await
+    }
+
+    /// Materialize descriptors into the by-TypeId `ServiceStore`.
+    ///
+    /// `cache_key` is the descriptor index (registration order); it drives
+    /// deterministic eager initialization and reverse-order disposal.
+    fn into_store(self) -> crate::entry::ServiceStore {
         let mut s = crate::entry::ServiceStore::new();
         for (n, d) in self.descriptors.into_iter().enumerate() {
             let e = crate::entry::ServiceEntry {
@@ -276,7 +294,7 @@ impl ServiceCollection {
             };
             s.entry(d.type_id).or_default().push(e);
         }
-        crate::provider::ServiceProvider::new_async(s).await
+        s
     }
 
     /// Build a `ServiceCollection` from all `#[rust_dix::inject]` annotations
@@ -442,7 +460,12 @@ mod tests {
             .keyed_singleton("y", |_| Arc::new(C { v: 2 }))
             .build()
             .unwrap();
-        assert_eq!(p.get_all::<C>().len(), 2);
+        assert!(
+            p.get_all::<C>().is_empty(),
+            "get_all excludes keyed registrations (MEDI GetServices)"
+        );
+        let keyed: Vec<i32> = p.get_all_keyed::<C>().iter().map(|c| c.v).collect();
+        assert_eq!(keyed, vec![1, 2]);
     }
     #[test]
     fn try_add_skips() {

@@ -268,15 +268,12 @@ mod tests {
 
     #[test]
     fn test_place_order() {
-        let provider = ServiceCollection::new()
+        // 0.8.0：后注册的 mock 覆盖默认实现（最后注册优先）；
+        // OrderService 由 #[inject(transient)] impl 自动注册，无需手写工厂。
+        let provider = ServiceCollection::from_injected()
             .singleton::<dyn IUserService>(|_| Arc::new(MockUserService))
             .singleton::<dyn IInventoryService>(|_| Arc::new(MockInventoryService))
             .keyed_singleton::<dyn IPaymentGateway>("wechat", |_| Arc::new(MockPaymentGateway))
-            .transient::<dyn IOrderService>(|p| Arc::new(OrderService::new(
-                p.get().unwrap(),
-                p.get().unwrap(),
-                Arc::clone(p.provider_arc().as_ref().unwrap()),
-            )))
             .build()
             .unwrap();
 
@@ -510,15 +507,13 @@ mod tests {
         }
     }
 
-    // 2. 测试容器工厂
+    // 2. 测试容器工厂：from_injected() 收集 #[inject] 自动注册，
+    //    后注册的 mock 覆盖默认实现（0.8.0 最后注册优先）。
     fn test_provider() -> ServiceProvider {
-        ServiceCollection::new()
+        ServiceCollection::from_injected()
             .singleton::<dyn IUserRepo>(|_| Arc::new(MockUserRepo {
                 users: std::sync::Mutex::new(vec![]),
             }))
-            .transient::<dyn IUserService>(|p| Arc::new(UserService::new(
-                p.get().unwrap(),
-            )))
             .build()
             .unwrap()
     }
@@ -595,9 +590,22 @@ impl OutboxWorker {
 | 捕获 | worker 不得保存 `DbContext` / `Scope` / 任何 Scoped 服务 |
 | 清理 | 每个 scope 结束（显式 `dispose()` 或 drop） |
 | 注入 | 优先 `Arc<dyn ScopeFactory>`；用 `#[inject(provider)]` 时自行建 scope，并注意强引用环 |
+| 关闭 | 先停止 worker，再 `provider.dispose()`（按创建逆序释放 singleton/root scoped） |
 | 测试 | 直接调用 tick / 处理函数，验证跨 tick 状态不泄漏 |
 
 ---
+
+## 0.8.0 语义要点（贯穿所有场景）
+
+| 主题 | 0.8.0 行为 | 场景中的影响 |
+|------|-----------|--------------|
+| 单服务解析 | 最后注册优先 | 测试/组合根用"后注册 mock"覆盖默认实现；需要"未注册才添加"用 `try_add*` |
+| 多实现收集 | `get_all` 仅非 keyed；keyed 用 `get_all_keyed` | 观察者广播（场景 4/5）把广播目标注册为非 keyed |
+| Scope 校验 | 默认严格：root 解析 Scoped 报 `ScopedFromRootProvider` | 场景 1/3 的请求级服务必须在 `provider.scope()` 内解析 |
+| 释放契约 | `Scope::dispose()` / Drop 逆序释放；新增 `ServiceProvider::dispose()` | Web 服务器关闭、后台 worker 停止时显式释放 |
+| 构建顺序 | eager singleton 按注册顺序创建 | 异步基础设施（场景 1 的 DbPool/Redis）初始化顺序可依赖 |
+
+> 逐条差异与迁移见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 
 ## 生命周期选择速查
 
@@ -629,4 +637,4 @@ impl OutboxWorker {
 
 ---
 
-下一节：[性能优化建议](performance-tips.md)
+下一节：性能优化建议（**规划中**，尚未发布；可先阅读 [用法指南](usage-guide.md) 的容器使用规则）。

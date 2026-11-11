@@ -1,4 +1,4 @@
-﻿//! Tests for owned service resolution (`get_owned::<T>() -> T`).
+//! Tests for owned service resolution (`get_owned::<T>() -> T`).
 //!
 //! Covers: Transient/Scoped/Singleton owned semantics, scope dependency
 //! binding, keyed owned, #[derive(Inject)] owned/Option/keyed fields,
@@ -42,10 +42,11 @@ fn transient_get_owned_returns_fresh_owned() {
 fn scoped_get_owned_bypasses_cache() {
     let p = ServiceCollection::new()
         .scoped(|_| Arc::new(common::MyService { value: 0 }))
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
-    // get() caches in root_scoped_cache.
+    // get() caches in root_scoped_cache (lenient root-scope mode: 0.8 默认严格
+    // scope 校验会拒绝 root 解析 Scoped，本测试验证的是 root-scope 缓存/owned 语义).
     let a = p.get::<common::MyService>().unwrap();
     let b = p.get::<common::MyService>().unwrap();
     assert!(Arc::ptr_eq(&a, &b), "get() must cache scoped in root");

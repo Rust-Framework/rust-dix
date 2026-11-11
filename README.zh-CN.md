@@ -29,7 +29,7 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 ```toml
 [dependencies]
-rust-dix = "0.7"
+rust-dix = "0.8"
 ```
 
 ### 同步应用
@@ -81,12 +81,32 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 | **三种生命周期** | Singleton、Scoped、Transient |
 | **键控服务** | 同一 trait 可通过字符串键注册多个实现 |
 | **异步支持** | `build_async()` + `async_*` 注册，用于需要异步初始化的服务 |
-| **构建期校验** | 循环依赖检测、受控依赖（captive dependency）拒绝 |
+| **构建期校验** | 循环依赖检测、受控依赖（captive dependency）拒绝、构造期解析拒绝 |
 | **容器注入** | `#[inject(provider)]`、`Arc<dyn ScopeFactory>`、`Arc<ServiceProvider>` —— eager singleton 与懒解析服务均可用 |
 | **跨 DLL 支持** | 面向 cdylib 插件系统的具名服务注册表 |
 | **分层容器** | 通过 `ServiceProviderWrapper` 实现子容器优先解析 |
 | **拥有式解析** | `get_owned::<T>()` 为 `&mut self` 返回拥有型 `T` —— 无需内部可变性 |
-| **作用域清理** | 清理闭包 + 自动 `Drop`，用于作用域资源释放 |
+| **确定性释放** | `Scope::dispose()` / `ServiceProvider::dispose()` 按创建逆序释放实例 |
+
+## 容器语义（0.8.0）
+
+rust-dix 0.8.0 将单服务解析对齐 MEDI，同时保留构建期安全。以下是最容易踩坑的语义规则：
+
+| 规则 | 行为 |
+|------|------|
+| **最后注册优先** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 返回该服务**最后注册**的实现（keyed 同 key 也是后注册生效）。`try_add*` 仍是"未注册才添加"。 |
+| **`get_all` 不含 keyed** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册，按注册顺序。keyed 实现用新增的 `get_all_keyed::<T>()`。 |
+| **默认严格 scope 校验** | 从 root `ServiceProvider` 解析 Scoped 服务（直接、或经 Transient 链间接）返回 `Err(RdiError::ScopedFromRootProvider)`；应在 `provider.scope()` 内解析 Scoped。不可返回错误的 API（`get_optional`、`get_all`、`get_all_keyed`、`try_*`）把该服务视为不可解析（`None`/空）。**例外**：`get_owned` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped —— 实例归调用方、不进缓存/不被跟踪；但其构造函数内部解析的 Scoped 依赖仍受校验。 |
+| **回到 0.7.x 的 root-scope 行为** | `build_with(ServiceProviderOptions::lenient())`（即 `validate_scopes: false`）允许 root 解析 Scoped 并缓存为根内单例。 |
+| **dispose 契约** | `Scope::dispose()` / Drop 按**创建逆序**释放 scope 内实例，再按**注册逆序**执行清理闭包；之后解析返回 `Err(RdiError::ScopeDisposed)`。`ServiceProvider::dispose()` 对 singleton 与 root scoped 实例做同样处理、清空 named 注册，之后解析返回 `Err(RdiError::ProviderDisposed)`。两者均幂等。 |
+| **确定性构建顺序** | build 期 eager singleton 按注册顺序创建（不再依赖 `HashMap` 迭代顺序），构建与释放顺序可复现。 |
+| **构造期解析被拒绝** | 在 build 期构造函数内通过注入的 provider 解析服务会返回类型化 `FactoryPanic`；请保存句柄、在方法中延迟解析。 |
+
+0.8.0 新增：`ServiceProviderOptions`（`validate_scopes`、`with_validate_scopes`、`lenient`）、
+`build_with` / `build_async_with`、`is_registered::<T>()` / `is_registered_keyed::<T>(key)`、
+`get_all_keyed::<T>()`、`RdiError::{ScopedFromRootProvider, ProviderDisposed, ScopeDisposed}`。
+与 MEDI 的逐条差异见
+[docs/rust-dix/01-introduction/medi-differences.md](docs/rust-dix/01-introduction/medi-differences.md)。
 
 ## 什么时候应该使用 rust-dix？
 
@@ -123,10 +143,10 @@ pub trait INotificationChannel: Send + Sync {
     fn send(&self, msg: &str);
 }
 
-// 注册同一 trait 的三个实现
+// 同一 trait 注册两个非 keyed 实现 + 一个 keyed 实现
 let provider = ServiceCollection::new()
     .singleton::<dyn INotificationChannel>(|_| Arc::new(EmailChannel))
-    .keyed_singleton::<dyn INotificationChannel>("sms", |_| Arc::new(SmsChannel))
+    .singleton::<dyn INotificationChannel>(|_| Arc::new(SmsChannel))
     .keyed_singleton::<dyn INotificationChannel>("push", |_| Arc::new(PushChannel))
     .build()
     .unwrap();
@@ -135,17 +155,21 @@ let provider = ServiceCollection::new()
 **消费端：**
 
 ```rust
-// 获取默认（无键）实现
-let default: Arc<dyn INotificationChannel> = provider.get().unwrap();
+// 获取默认（无键）实现 —— 最后注册优先
+let default: Arc<dyn INotificationChannel> = provider.get().unwrap(); // SmsChannel
 
 // 获取特定的具名实现
-let sms: Arc<dyn INotificationChannel> = provider.get_keyed("sms").unwrap();
+let push: Arc<dyn INotificationChannel> = provider.get_keyed("push").unwrap();
 
-// 一次性获取全部实现（无键 + 所有有键）
+// 一次性获取全部“非 keyed”实现（不包含 keyed）
 let all: Vec<Arc<dyn INotificationChannel>> = provider.get_all();
+assert_eq!(all.len(), 2);
 
-// 向每个通道广播消息
-for channel in &all {
+// keyed 实现需显式取全部
+let keyed: Vec<Arc<dyn INotificationChannel>> = provider.get_all_keyed();
+
+// 向每个通道广播消息（非 keyed + keyed）
+for channel in all.iter().chain(keyed.iter()) {
     channel.send("系统告警：磁盘使用率 > 90%");
 }
 ```
@@ -227,8 +251,11 @@ impl OutboxWorker {
 
 ### 作用域服务：按请求隔离
 
-作用域服务每个作用域创建一次，并在其中缓存。根
-`ServiceProvider` 本身即充当根作用域 —— 如需请求级隔离，请使用子作用域。
+作用域服务每个作用域创建一次，并在其中缓存。Scoped 服务必须从
+`provider.scope()` 创建的子作用域解析 —— 默认严格 scope 校验下，root provider
+不解析 Scoped 服务（`Err(RdiError::ScopedFromRootProvider)`）。例外是
+`get_owned` / `try_get_owned`：owned 实例归调用方、不进缓存，可从 root 取；
+但其 Scoped 依赖仍受校验。
 
 **注册端：**
 
@@ -244,16 +271,20 @@ struct UnitOfWork {
     db: Arc<dyn IDbPool>,
 }
 
+#[rust_dix::inject(scoped)]           // 将 dyn IUnitOfWork 注册为 Scoped
+impl IUnitOfWork for UnitOfWork { /* ... */ }
+
 #[derive(Inject)]
 struct OrderService {
     #[inject]
     uow: Arc<dyn IUnitOfWork>,
 }
 
-let provider = ServiceCollection::new()
+#[rust_dix::inject(transient)]        // 将 dyn IOrderService 注册为 Transient
+impl IOrderService for OrderService { /* ... */ }
+
+let provider = ServiceCollection::from_injected()
     .singleton::<dyn IDbPool>(|_| Arc::new(DbPool::new()))    // 全局
-    .scoped::<dyn IUnitOfWork>(|r| __rdi_construct_UnitOfWork(r))   // 每作用域
-    .transient::<dyn IOrderService>(|r| __rdi_construct_OrderService(r)) // 每次都新建
     .build()
     .unwrap();
 ```
@@ -261,10 +292,8 @@ let provider = ServiceCollection::new()
 **消费端：**
 
 ```rust
-// ── 根作用域：UoW 被缓存，始终返回同一实例 ──
-let uow1: Arc<dyn IUnitOfWork> = provider.get().unwrap();
-let uow2: Arc<dyn IUnitOfWork> = provider.get().unwrap();
-// uow1 和 uow2 是同一实例（根作用域缓存）
+// ── 根 provider：默认严格 options 下无法解析 Scoped ──
+let err = provider.get::<dyn IUnitOfWork>(); // Err(RdiError::ScopedFromRootProvider)
 
 // ── 子作用域：每个作用域获得自己的 UoW 实例 ──
 let scope_a = provider.scope();
@@ -280,8 +309,13 @@ let uow_a2: Arc<dyn IUnitOfWork> = scope_a.get().unwrap();
 
 // ── 从作用域解析 Transient：在该作用域内解析其 Scoped 依赖 ──
 let order_svc: Arc<dyn IOrderService> = scope_a.get().unwrap();
-// OrderService 的 IUnitOfWork 是 scope_a 的 UoW，而非根作用域的
+// OrderService 的 IUnitOfWork 是 scope_a 的 UoW
+
+// 作用域 Drop（或显式 dispose）时，按创建逆序释放其 scoped 实例。
 ```
+
+需要 0.7.x 的 root-scope 旧行为？用 `ServiceProviderOptions::lenient()` 构建 —— 见
+[与 MEDI 的差异清单](docs/rust-dix/01-introduction/medi-differences.md#2-scope-校验validatescopes)。
 
 **关键规则**：Singleton 不能依赖 Scoped（在构建时强制执行）。
 Scoped 可以依赖 Singleton。Transient 可以依赖任何东西。
@@ -432,6 +466,7 @@ async fn main() {
 
 - [crates/core —— 核心库文档](./crates/core/README.md)
 - [crates/macros —— 过程宏文档](./crates/macros/README.md)
+- [与 MEDI 的差异清单（scope 校验、dispose、keyed、get_all）](docs/rust-dix/01-introduction/medi-differences.md) —— .NET 迁移必读
 - [业务场景教程](docs/rust-dix/08-best-practices/business-scenarios.md) —— 真实模式
 - [集成测试](crates/core/tests/) —— 真实用法范例
 

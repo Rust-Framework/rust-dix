@@ -1,4 +1,4 @@
-﻿use rust_dix::*;
+use rust_dix::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -54,10 +54,11 @@ fn no_circular_dependency_valid() {
 
 #[test]
 fn scoped_cached_at_root_scope() {
-    // ServiceProvider 即 root scope：从根解析 Scoped 服务应在根内缓存复用。
+    // 0.8 默认严格 scope 校验拒绝 root 解析 Scoped；lenient 模式保留 0.7 的
+    // root-scope 缓存语义：从根解析 Scoped 服务在根内缓存复用。
     let provider = ServiceCollection::new()
         .scoped(|_| Arc::new(ServiceA))
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
     let a1: Arc<ServiceA> = provider.get().unwrap();
@@ -70,7 +71,7 @@ fn scoped_isolated_between_root_and_child_scope() {
     // 根 root scope 与子 scope 的 Scoped 实例相互独立（MEDI 语义）。
     let provider = ServiceCollection::new()
         .scoped(|_| Arc::new(ServiceA))
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
     let root_a: Arc<ServiceA> = provider.get().unwrap();
@@ -95,7 +96,7 @@ fn root_scope_scoped_factory_executed_once() {
             let n = SCOPED_CALLS.fetch_add(1, Ordering::SeqCst);
             Arc::new(ScopedService(n))
         })
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
     // 首次解析：工厂执行，计数 0 → 1，实例携带序号 0。
@@ -156,7 +157,7 @@ fn scoped_factory_not_triggered_at_build() {
             BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
             Arc::new(S)
         })
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
     assert_eq!(
@@ -315,7 +316,7 @@ fn root_scope_scoped_factory_executed_once_under_concurrency() {
             let n = SCOPED_CALLS.fetch_add(1, Ordering::SeqCst);
             Arc::new(ScopedService(n))
         })
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
     let mut handles = Vec::new();
@@ -386,4 +387,50 @@ fn validation_does_not_leak_transient_to_runtime_cache() {
         !Arc::ptr_eq(&t1, &t2),
         "Transient 每次解析应返回新实例，无缓存泄漏"
     );
+}
+
+#[test]
+fn overridden_duplicate_singleton_is_still_validated() {
+    // 0.8 last-wins: the earlier registration is overridden for resolution, but
+    // eager build validates *every* registration under its own cache key, so a
+    // panicking overridden factory fails the build deterministically.
+    #[derive(Debug)]
+    struct Dup;
+
+    let result = ServiceCollection::new()
+        .singleton::<Dup>(|_| panic!("first factory panics"))
+        .singleton(|_| Arc::new(Dup))
+        .build();
+    match result {
+        Err(RdiError::FactoryPanic { payload, .. }) => {
+            assert!(
+                payload.contains("first factory panics"),
+                "payload={payload}"
+            );
+        }
+        Ok(_) => panic!("overridden factory must still be validated"),
+        Err(other) => panic!("expected FactoryPanic, got {other:?}"),
+    }
+}
+
+#[test]
+fn validation_error_is_deterministic_registration_order() {
+    // Two failing singletons: the first registered one is reported, regardless
+    // of HashMap iteration order.
+    #[derive(Debug)]
+    struct FailingA;
+    #[derive(Debug)]
+    struct FailingB;
+
+    let result = ServiceCollection::new()
+        .singleton::<FailingA>(|_| panic!("A fails"))
+        .singleton::<FailingB>(|_| panic!("B fails"))
+        .build();
+    match result {
+        Err(RdiError::FactoryPanic { payload, .. }) => {
+            assert!(payload.contains("A fails"), "payload={payload}");
+        }
+        Ok(_) => panic!("expected deterministic FactoryPanic for A"),
+        Err(other) => panic!("expected deterministic FactoryPanic for A, got {other:?}"),
+    }
 }

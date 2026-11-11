@@ -21,6 +21,9 @@ use std::sync::{Arc, Mutex, RwLock};
 /// result depend on store iteration order. Store the handle and resolve lazily in
 /// methods instead (see [`crate::provider::BuildFactoryGuard`]).
 ///
+/// Single-service lookups follow the runtime contract: **last registration
+/// wins** (MEDI semantics).
+///
 /// The `catch_unwind` in `validate_dependencies` only catches user factory
 /// panics (triggered by `None` returns from this resolver), not framework errors.
 pub(crate) struct ValidationResolver<'a> {
@@ -80,6 +83,28 @@ impl<'a> ValidationResolver<'a> {
                     .to_string()
             })
             .unwrap_or_else(|| format!("service {}", cache_key))
+    }
+
+    /// Last unkeyed registration for `tid` (MEDI: later registrations override
+    /// earlier ones when resolving a single service).
+    fn unkeyed_entry(&self, tid: TypeId) -> Option<&ServiceEntry> {
+        self.store.get(&tid)?.iter().rev().find(|e| e.key.is_none())
+    }
+
+    /// Last registration for `tid` + `variant`.
+    fn keyed_entry(&self, tid: TypeId, variant: &str) -> Option<&ServiceEntry> {
+        self.store
+            .get(&tid)?
+            .iter()
+            .rev()
+            .find(|e| e.key.as_deref() == Some(variant))
+    }
+
+    fn tid_by_name(&self, key: &str) -> Option<TypeId> {
+        self.type_names
+            .iter()
+            .find(|(_, name)| **name == key)
+            .map(|(tid, _)| *tid)
     }
 
     /// Captive dependency（囚徒依赖）检测。
@@ -174,21 +199,33 @@ impl<'a> ValidationResolver<'a> {
 
         Some(result)
     }
+
+    /// Resolve an entry, consulting the cache first (singletons built earlier in
+    /// the validation pass).
+    fn resolve_entry_cached(&self, entry: &ServiceEntry) -> Option<Arc<dyn Any + Send + Sync>> {
+        if let Some(cached) = self.cache.get(entry.cache_key) {
+            return Some(cached);
+        }
+        self.resolve_via_factory(entry)
+    }
+
+    /// Validate exactly `entry` (used by the build-time validation pass).
+    ///
+    /// Resolving the entry directly (instead of looking it up by type name)
+    /// keeps overridden duplicate registrations validated individually and
+    /// avoids resolving the *last* registration while validating an earlier one.
+    pub(crate) fn validate_entry(
+        &self,
+        entry: &ServiceEntry,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.resolve_entry_cached(entry)
+    }
 }
 
 impl IServiceResolver for ValidationResolver<'_> {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        if let Some(tid) = self
-            .type_names
-            .iter()
-            .find(|(_, name)| **name == key)
-            .map(|(tid, _)| *tid)
-        {
-            if let Some(entry) = self
-                .store
-                .get(&tid)
-                .and_then(|entries| entries.iter().find(|e| e.key.is_none()))
-            {
+        if let Some(tid) = self.tid_by_name(key) {
+            if let Some(entry) = self.unkeyed_entry(tid) {
                 if let Some(cached) = self.cache.get(entry.cache_key) {
                     return Some(cached);
                 }
@@ -210,41 +247,77 @@ impl IServiceResolver for ValidationResolver<'_> {
     }
 
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self
-            .store
-            .get(tid)?
+        let tid = self.tid_by_name(key)?;
+        let entry = self.keyed_entry(tid, variant)?;
+        self.resolve_entry_cached(entry)
+    }
+
+    fn get_all_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        let Some(tid) = self.tid_by_name(key) else {
+            return Vec::new();
+        };
+        let Some(entries) = self.store.get(&tid) else {
+            return Vec::new();
+        };
+        entries
             .iter()
-            .find(|e| e.key.as_deref() == Some(variant))?;
+            .filter(|e| e.key.is_none())
+            .filter_map(|entry| self.resolve_entry_cached(entry))
+            .collect()
+    }
 
-        if let Some(cached) = self.cache.get(entry.cache_key) {
-            return Some(cached);
+    fn get_all_keyed_any(&self, key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        let Some(tid) = self.tid_by_name(key) else {
+            return Vec::new();
+        };
+        let Some(entries) = self.store.get(&tid) else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .filter(|e| e.key.is_some())
+            .filter_map(|entry| self.resolve_entry_cached(entry))
+            .collect()
+    }
+
+    fn get_all_any_result(&self, key: &str) -> Result<Vec<Arc<dyn Any + Send + Sync>>, RdiError> {
+        let mut out = Vec::new();
+        let Some(tid) = self.tid_by_name(key) else {
+            return Ok(out);
+        };
+        let Some(entries) = self.store.get(&tid) else {
+            return Ok(out);
+        };
+        for entry in entries.iter().filter(|e| e.key.is_none()) {
+            match self.resolve_entry_cached(entry) {
+                Some(v) => out.push(v),
+                None => {
+                    return Err(self
+                        .take_error()
+                        .unwrap_or_else(|| RdiError::not_found(entry.type_name, None)))
+                }
+            }
         }
-
-        self.resolve_via_factory(entry)
+        Ok(out)
     }
 
     fn get_owned_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self.store.get(tid)?.iter().find(|e| e.key.is_none())?;
+        let tid = self.tid_by_name(key)?;
+        let entry = self.unkeyed_entry(tid)?;
         // 与运行时一致：Singleton 不能 owned（create_owned_any_by_entry 返回 None）
         if entry.lifetime == ServiceLifetime::Singleton {
             return None;
         }
-        self.resolve_via_factory(entry)
+        self.resolve_entry_cached(entry)
     }
 
     fn get_keyed_owned_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        let tid = self.type_names.iter().find(|(_, name)| **name == key)?.0;
-        let entry = self
-            .store
-            .get(tid)?
-            .iter()
-            .find(|e| e.key.as_deref() == Some(variant))?;
+        let tid = self.tid_by_name(key)?;
+        let entry = self.keyed_entry(tid, variant)?;
         if entry.lifetime == ServiceLifetime::Singleton {
             return None;
         }
-        self.resolve_via_factory(entry)
+        self.resolve_entry_cached(entry)
     }
 
     /// The real container is available during validation: eager singletons that

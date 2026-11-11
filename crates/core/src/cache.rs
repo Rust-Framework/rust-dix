@@ -2,7 +2,11 @@
 //!
 //! [`LazyCache`] 用 per-key [`OnceLock`] 保证多线程下工厂只执行一次，
 //! 且工厂在无全局锁状态下执行，避免递归解析（Scoped 依赖 Scoped）时死锁。
-//! 统一用于 [`crate::provider::ServiceProvider`] 的 singleton 缓存与 root scope 缓存。
+//! 统一用于 [`crate::provider::ServiceProvider`] 的 singleton 缓存与 scoped 缓存。
+//!
+//! 除缓存值外，本结构还记录 **首次创建顺序**：容器释放时按创建逆序释放实例
+//! （LIFO，先建依赖、后建依赖者，等价于 MEDI 的逆序 Dispose 语义），
+//! 使 `Drop` 顺序可预测、可测试。
 
 use futures::lock::Mutex as FuturesMutex;
 use std::any::Any;
@@ -13,19 +17,36 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// 类型擦除的服务实例。
 pub(crate) type AnyService = Arc<dyn Any + Send + Sync>;
 
+struct CacheInner {
+    cells: HashMap<usize, Arc<OnceLock<AnyService>>>,
+    /// 首次创建顺序（cache_key 去重，仅记录一次）。
+    order: Vec<usize>,
+}
+
+impl CacheInner {
+    fn new() -> Self {
+        Self {
+            cells: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+}
+
 /// 懒初始化缓存。
 ///
-/// 结构：`RwLock<HashMap<cache_key, Arc<OnceLock<AnyService>>>>`
+/// 结构：`RwLock<CacheInner { cells: HashMap<cache_key, Arc<OnceLock<AnyService>>>, order }>`
 ///
 /// - **读快速路径**：读锁查 cell，`OnceLock::get` 命中即 clone Arc 返回。
-/// - **写慢路径**：cell 不存在时，写锁插入空 `OnceLock`，立即释放写锁，
-///   再在无锁状态下 `OnceLock::get_or_init` 执行工厂。
+/// - **写慢路径**：cell 不存在时，写锁插入空 `OnceLock` 并记录创建顺序，
+///   立即释放写锁，再在无锁状态下 `OnceLock::get_or_init` 执行工厂。
 /// - **并发安全**：`OnceLock::get_or_init` 保证多线程下工厂只执行一次，
 ///   彻底消除 check-then-act 竞态（TOCTOU）。
 /// - **无死锁**：工厂执行时不持有任何全局锁，递归解析依赖可安全获取
 ///   相同 `LazyCache` 的其他 key（不同 cell，无锁竞争）。
+/// - **确定性释放**：`drain_reverse` 按创建逆序返回实例；调用方必须在
+///   释放锁之后再丢弃返回值（本方法自身不持有锁返回）。
 pub(crate) struct LazyCache {
-    cells: RwLock<HashMap<usize, Arc<OnceLock<AnyService>>>>,
+    inner: RwLock<CacheInner>,
     /// Per-key async factory 执行锁：保证 async factory 只执行一次。
     /// 仅 `get_or_init_with_async` 使用，sync 路径不受影响。
     async_locks: RwLock<HashMap<usize, Arc<FuturesMutex<Option<AnyService>>>>>,
@@ -34,29 +55,38 @@ pub(crate) struct LazyCache {
 impl LazyCache {
     pub fn new() -> Self {
         Self {
-            cells: RwLock::new(HashMap::new()),
+            inner: RwLock::new(CacheInner::new()),
             async_locks: RwLock::new(HashMap::new()),
         }
     }
 
     /// 查询已缓存的实例，不执行工厂。
     pub fn get(&self, key: usize) -> Option<AnyService> {
-        self.cells
+        self.inner
             .read()
             .unwrap()
+            .cells
             .get(&key)
             .and_then(|cell| cell.get().cloned())
     }
 
     /// 预填充：build 阶段 validation 已构建实例，直接填入。
-    /// 若 cell 已初始化则 no-op（validation 单线程，不会冲突）。
+    ///
+    /// 若 cell 已初始化则保留首个值（validation 单线程执行，不会冲突）。
+    /// 新 cell 会记录创建顺序（用于确定性释放）。
     pub fn prefill(&self, key: usize, instance: AnyService) {
         let cell = {
-            let mut cells = self.cells.write().unwrap();
-            cells
+            let mut inner = self.inner.write().unwrap();
+            let is_new = !inner.cells.contains_key(&key);
+            let cell = inner
+                .cells
                 .entry(key)
                 .or_insert_with(|| Arc::new(OnceLock::new()))
-                .clone()
+                .clone();
+            if is_new {
+                inner.order.push(key);
+            }
+            cell
         };
         let _ = cell.set(instance);
     }
@@ -71,25 +101,31 @@ impl LazyCache {
     {
         // Fast path: 读锁查已初始化的 cell。
         {
-            let cells = self.cells.read().unwrap();
-            if let Some(cell) = cells.get(&key) {
+            let inner = self.inner.read().unwrap();
+            if let Some(cell) = inner.cells.get(&key) {
                 if let Some(instance) = cell.get() {
                     return instance.clone();
                 }
                 // cell 存在但未初始化：另一线程正在初始化。
                 // clone Arc 后释放读锁，通过 get_or_init 等待。
                 let cell = cell.clone();
-                drop(cells);
+                drop(inner);
                 return cell.get_or_init(factory).clone();
             }
         }
-        // Slow path: cell 不存在，写锁创建空 cell 后立即释放。
+        // Slow path: cell 不存在，写锁创建空 cell、记录顺序，然后立即释放。
         let cell = {
-            let mut cells = self.cells.write().unwrap();
-            cells
+            let mut inner = self.inner.write().unwrap();
+            let is_new = !inner.cells.contains_key(&key);
+            let cell = inner
+                .cells
                 .entry(key)
                 .or_insert_with(|| Arc::new(OnceLock::new()))
-                .clone()
+                .clone();
+            if is_new {
+                inner.order.push(key);
+            }
+            cell
         };
         // 无锁状态下 get_or_init：工厂执行期间不持有任何全局锁，
         // 递归解析依赖可安全获取相同 LazyCache 的其他 key。
@@ -146,6 +182,34 @@ impl LazyCache {
         self.prefill(key, instance.clone());
         Ok(instance)
     }
+
+    /// 按创建逆序取出全部缓存实例并清空缓存。
+    ///
+    /// 返回的 `Vec` 由调用方持有并通过 `drop` 触发实例释放；本方法在返回前
+    /// 已释放内部锁，调用方在锁外丢弃即可，避免用户 `Drop` 回调重入缓存。
+    ///
+    /// 注意：与并发解析不构成同步点。容器释放期间不应并发解析服务
+    /// （与 MEDI 相同：已释放的 provider 不可再用）。
+    pub(crate) fn drain_reverse(&self) -> Vec<AnyService> {
+        let (order, cells) = {
+            let mut inner = self.inner.write().unwrap();
+            let order = std::mem::take(&mut inner.order);
+            let cells = std::mem::take(&mut inner.cells);
+            (order, cells)
+        };
+        self.async_locks.write().unwrap().clear();
+
+        let mut drained = Vec::with_capacity(order.len());
+        for key in order.into_iter().rev() {
+            if let Some(cell) = cells.get(&key) {
+                if let Some(instance) = cell.get() {
+                    drained.push(instance.clone());
+                }
+            }
+        }
+        // `cells`（仍持有 Arc 引用）在函数返回时释放；`drained` 交给调用方。
+        drained
+    }
 }
 
 impl Default for LazyCache {
@@ -200,5 +264,24 @@ mod tests {
     fn get_returns_none_for_missing() {
         let cache = LazyCache::new();
         assert!(cache.get(0).is_none());
+    }
+
+    #[test]
+    fn drain_reverse_follows_creation_order() {
+        let cache = LazyCache::new();
+        cache.get_or_init_with(10, || Arc::new(1_u64) as AnyService);
+        cache.get_or_init_with(20, || Arc::new(2_u64) as AnyService);
+        cache.prefill(30, Arc::new(3_u64) as AnyService);
+        // 重复解析不重复记录顺序
+        let _ = cache.get_or_init_with(10, || Arc::new(99_u64) as AnyService);
+
+        let drained: Vec<u64> = cache
+            .drain_reverse()
+            .iter()
+            .map(|a| *a.downcast_ref::<u64>().unwrap())
+            .collect();
+        assert_eq!(drained, vec![3, 2, 1], "按创建逆序释放");
+        assert!(cache.get(10).is_none(), "释放后缓存清空");
+        assert!(cache.drain_reverse().is_empty(), "二次释放为空");
     }
 }

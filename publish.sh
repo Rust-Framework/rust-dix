@@ -67,15 +67,22 @@ else
 fi
 
 echo "    Running tests..."
-cargo test 2>&1 | tail -3
+cargo test --workspace 2>&1 | tail -3
 echo ""
 
-# Clippy is advisory only — don't block publish
-if cargo clippy 2>/dev/null; then
-    echo "    ✓ clippy"
-else
-    echo "    (clippy found issues — proceeding anyway)"
+echo "    Running clippy (blocking)..."
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
+    echo "    ERROR: cargo clippy failed. Fix warnings before publishing."
+    exit 1
 fi
+echo "    ✓ clippy"
+
+echo "    Building docs (rustdoc warnings are errors)..."
+if ! RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps; then
+    echo "    ERROR: rustdoc emitted warnings. Fix docs before publishing."
+    exit 1
+fi
+echo "    ✓ cargo doc"
 
 echo ""
 echo "    ✓ All checks passed"

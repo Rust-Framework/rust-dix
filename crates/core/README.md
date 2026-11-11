@@ -19,7 +19,7 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dix = "0.7"
+rust-dix = "0.8"
 ```
 
 ---
@@ -39,12 +39,12 @@ let svc = MyService::new(
     Arc::new(Cache::new(1024)),
 );
 
-// With DI: declare once, resolve anywhere
-// (`MyService` uses `#[derive(Inject)]`; its definition is omitted here)
-let provider = ServiceCollection::new()
+// With DI: declare once, resolve anywhere.
+// `MyService` is annotated with `#[rust_dix::inject(transient)]`, so it is
+// registered automatically (its definition is omitted here).
+let provider = ServiceCollection::from_injected()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))
-    .transient(|p| __rdi_construct_MyService(p))
     .build()
     .unwrap();
 
@@ -59,9 +59,10 @@ service.
 ```rust
 #[cfg(test)]
 fn test_provider() -> ServiceProvider {
-    ServiceCollection::new()
+    // `MyApi` is annotated with `#[rust_dix::inject(transient)]` and collected by
+    // `from_injected()`; only the mock has to be registered here.
+    ServiceCollection::from_injected()
         .singleton(|_| Arc::new(MockDatabase::new()))
-        .transient(|p| __rdi_construct_MyApi(p))
         .build()
         .unwrap()
 }
@@ -118,8 +119,8 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
   as fallback.
 - **Named services**: register services by string name — critical for cdylib
   plugins where Rust's `TypeId` differs across compilation units.
-- **`IServiceLocator`**: pass a unified DI interface to external modules that
-  don't depend on rust-dix directly.
+- **`IProvider`**: pass a unified DI interface (resolution + named registry) to
+  external modules that don't depend on rust-dix directly.
 
 ---
 
@@ -137,17 +138,26 @@ let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
 | `.keyed_scoped(k, f)` | Scoped | Named instances scoped per request |
 | `.keyed_transient(k, f)` | Transient | Named instances created fresh each time |
 | `.instance(arc)` | Singleton | You already have a built `Arc<T>` |
-| `.try_add(f)` | Singleton | Only register if not already present |
+| `.try_add(f)` | Singleton | Only register if not already present (MEDI `TryAdd`) |
+| `.try_add_scoped(f)` | Scoped | Only register if not already present |
+| `.try_add_transient(f)` | Transient | Only register if not already present |
 | `.singleton_value(v)` | Singleton | Register a plain value (wraps in `Arc`) |
 | `.add(lt, f)` | *any* | Specify lifetime explicitly |
+| `.build()` | — | Build the provider with default (strict) scope validation |
+| `.build_with(options)` | — | Build with explicit `ServiceProviderOptions` (`lenient()` restores 0.7.x root-scope behavior) |
+| `.build_async()` / `.build_async_with(options)` | — | Async build; required when any `async_*` registration exists |
 
-The factory closure `f` receives `&dyn IServiceResolver` so you can resolve
-dependencies:
+The factory closure `f` receives `&dyn IServiceResolver`. Generic `get::<T>()`
+requires `Self: Sized`, so it cannot be called on that trait object: let the
+inject macros generate the constructor (internal `__rdi_construct_*`,
+`#[doc(hidden)]`), or resolve with `get_any` + downcast:
 
 ```rust
 ServiceCollection::new()
     .singleton(|_| Arc::new(Pool::new()))
-    .transient(|p| Arc::new(Repo::new(p.get::<Pool>().unwrap())))
+    // `Repo` is `#[derive(Inject)]` with `#[inject] pool: Arc<Pool>`; the
+    // generated constructor resolves its fields during registration.
+    .transient(|r| __rdi_construct_Repo(r))
     .build()
     .unwrap();
 ```
@@ -204,7 +214,7 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 | Placement | What it registers | Reuses constructor? |
 |-----------|-------------------|---------------------|
 | `#[inject]` on struct | Concrete type `T` | Generates its own |
-| `#[inject]` on `impl Trait for T` | `dyn Trait` | Reuses `__rdi_construct_T` |
+| `#[inject]` on `impl Trait for T` | `dyn Trait` | Reuses the generated constructor (internal `__rdi_construct_T`, `#[doc(hidden)]`) |
 | `#[derive(Inject)]` on struct | *(nothing — constructor only)* | — |
 
 **Choose one site, don't double-register:** `#[inject]` generally goes on
@@ -220,17 +230,30 @@ For trait-oriented services (handlers, services, repositories), prefer
 
 | Method | Returns | Behavior |
 |--------|---------|----------|
-| `.get::<T>()` | `Result<Arc<T>, RdiError>` | Returns Err if not registered; use `.unwrap()` for required services |
+| `.get::<T>()` | `Result<Arc<T>, RdiError>` | Returns Err if not registered; **last registration wins** |
 | `.get_optional::<T>()` | `Option<Arc<T>>` | Returns `None` if not registered |
 | `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | Returns Err if key not found; use `.unwrap()` for required keys |
 | `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | Returns `None` if key not found |
-| `.get_all::<T>()` | `Vec<Arc<T>>` | All registered instances (keyed + unkeyed) |
+| `.get_all::<T>()` | `Vec<Arc<T>>` | All **non-keyed** registrations, in registration order (keyed excluded) |
+| `.get_all_keyed::<T>()` | `Vec<Arc<T>>` | All **keyed** registrations of `T`, in registration order (0.8.0+) |
 | `.get_named::<T>(name)` | `Option<Arc<T>>` | Named resolution (cross-DLL), returns `None` if missing |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | Named, returns `None` if missing |
-| `.get_owned::<T>()` | `Result<T, RdiError>` | Owned instance; Singleton returns Err; use `.unwrap()` for transient/scoped |
+| `.get_owned::<T>()` | `Result<T, RdiError>` | Owned instance; Singleton returns Err; **Scoped is allowed from the root** (caller-owned, never cached — its Scoped dependencies still obey scope validation) |
 | `.try_get_owned::<T>()` | `Option<T>` | `None` if unregistered or Singleton |
 | `.get_keyed_owned::<T>(key)` | `Result<T, RdiError>` | Owned keyed instance; Singleton returns Err |
+| `.is_registered::<T>()` | `bool` | Whether `T` has a non-keyed registration (does not instantiate) |
+| `.is_registered_keyed::<T>(key)` | `bool` | Whether `T` is registered under `key` |
 | `.scope()` | `Scope` | New scope for scoped services |
+| `.dispose()` | `()` | Idempotent; releases instances in reverse creation order, later resolution returns `Err(ProviderDisposed)` (0.8.0+) |
+
+> **0.8.0 semantics**: single-service resolution is MEDI-style "last registration
+> wins"; `get_all` is unkeyed-only (use `get_all_keyed` for keyed); and scope
+> validation is **strict by default** — resolving a Scoped service from the root
+> provider returns `Err(RdiError::ScopedFromRootProvider)` (the exception is
+> `get_owned` / `try_get_owned`: the owned instance is caller-owned and not cached,
+> while its Scoped dependencies still obey validation).
+> Build with `build_with(ServiceProviderOptions::lenient())` to keep the 0.7.x
+> root-scope behavior. See the [MEDI differences page](../../docs/rust-dix/01-introduction/medi-differences.md).
 
 `T` can be a concrete type or `dyn Trait`:
 
@@ -289,8 +312,8 @@ assert_eq!(ctx.total(), 1);
 | Lifetime | `get_owned` behavior |
 |----------|----------------------|
 | **Transient** | New instance each call ✓ |
-| **Scoped** | Bypasses cache, new instance each call ✓ |
-| **Singleton** | Panics (shared instance cannot be owned); use `try_get_owned` for `None` |
+| **Scoped** | Bypasses cache, new instance each call ✓ (callable from the root too: the owned instance is not subject to root scope validation, but its Scoped dependencies are) |
+| **Singleton** | `Err(OwnedNotSupported)` (shared instance cannot be owned); use `try_get_owned` for `None` |
 
 **With `#[derive(Inject)]`**: mark bare `T` fields with `#[inject(owned)]`
 and `Arc<T>` fields with `#[inject]`. `Option<T>` → `try_get_owned`,
@@ -310,9 +333,13 @@ h.ctx.add();                 // ✓ owned field is mutable
 ```
 
 **Limitations**:
-- Singleton cannot be owned — `get_owned` panics, `try_get_owned` returns `None`.
+- Singleton cannot be owned — `get_owned` returns `Err`, `try_get_owned` returns `None`.
 - Scoped `get_owned` bypasses the scope cache (each call is fresh). This is
   intentional: owned `&mut self` is incompatible with scope-shared semantics.
+  Owned resolution is the exception to strict scope validation: `get_owned` /
+  `try_get_owned` may resolve a Scoped service from the **root** (the instance is
+  caller-owned, never cached or tracked) — but Scoped dependencies resolved inside
+  its constructor still return `Err(ScopedFromRootProvider)` at the root.
 - Trait bound remains `T: Send + Sync + 'static` (reuses the existing factory,
   no separate owned-factory path).
 
@@ -359,8 +386,10 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await.unwrap();
 ```
 
-For sync services, you can still use `get()`. The async methods are only needed
-for services registered with `async_*`.
+For sync-registered services you can use either `get()` or `get_async()`: `get_async()`
+falls back to the synchronous resolution path for services registered with the sync
+`scoped` / `transient` builders (0.8.0+). Async registration (`async_*`) is only needed
+for services that require **asynchronous initialization**.
 
 #### Mixing sync and async
 
@@ -371,10 +400,8 @@ are validated and initialized alongside async ones during `build_async()`:
 let provider = ServiceCollection::new()
     .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
     .singleton(|_| Arc::new(AppConfig::new()))       // sync OK
-    .scoped(|r| {                                     // sync OK
-        let db = r.get::<DbPool>().unwrap();
-        Arc::new(UserRepository { db })
-    })
+    // `UserRepository` is `#[derive(Inject)]`; its constructor resolves DbPool.
+    .scoped(|r| __rdi_construct_UserRepository(r))   // sync OK
     .build_async()
     .await
     .unwrap();
@@ -389,10 +416,7 @@ initialized alongside async ones.
 ```rust
 let provider = ServiceCollection::new()
     .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
-    .scoped(|r| {
-        let db = r.get::<DbPool>().unwrap();
-        Arc::new(UserRepository { db })
-    })
+    .scoped(|r| __rdi_construct_UserRepository(r))
     .build_async().await.unwrap();
 
 // Each request gets its own scope
@@ -400,7 +424,7 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
     let scope = provider.scope();
     let repo: Arc<UserRepository> = scope.get().unwrap();
     // ... process request ...
-    // scope dropped → scoped instances released
+    // scope dropped → scoped instances released (reverse creation order)
 }
 ```
 
@@ -411,11 +435,13 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
 #### 🔹 Three-layered architecture (Controller → Service → Repository)
 
 ```rust
+// `UserRepo` / `UserService` / `UserController` are `#[derive(Inject)]`; the
+// generated constructors wire the dependencies for each layer.
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(DbPool::new(&config)))
-    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>().unwrap())))
-    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>().unwrap())))
-    .transient(|p| Arc::new(UserController::new(p.get::<UserService>().unwrap())))
+    .transient(|r| __rdi_construct_UserRepo(r))
+    .transient(|r| __rdi_construct_UserService(r))
+    .transient(|r| __rdi_construct_UserController(r))
     .build()
     .unwrap();
 ```
@@ -499,8 +525,8 @@ let provider: Arc<dyn IProvider> = provider as Arc<dyn IProvider>;
 │                   ▼                           │
 │              ServiceProvider                  │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
-│  │  .get()  │ │.get_keyed│ │ .create_scope│ │
-│  │ .get_all │ │.get_named│ │              │ │
+│  │  .get()  │ │.get_keyed│ │  .scope()   │ │
+│  │ .get_all │ │.get_named│ │             │ │
 │  └──────────┘ └──────────┘ └──────┬───────┘ │
 │                                    │         │
 └────────────────────────────────────┼─────────┘

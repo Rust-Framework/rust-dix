@@ -6,9 +6,12 @@
 
 | 小节 | 内容 |
 |------|------|
-| [什么是 rust-dix](what-is-rust-dix.md) | 框架定位与核心价值 |
-| [核心概念与 MEDI 对照](core-concepts.md) | ServiceCollection、ServiceProvider、生命周期 |
-| [适用场景与边界](who-should-use.md) | 推荐使用场景与不推荐场景 |
+| 什么是 rust-dix（规划中） | 框架定位与核心价值 |
+| 核心概念与 MEDI 对照（规划中） | ServiceCollection、ServiceProvider、生命周期 |
+| [与 MEDI 的差异清单](medi-differences.md) | 逐条差异：scope 校验、dispose、keyed、get_all 等 |
+| 适用场景与边界（规划中） | 推荐使用场景与不推荐场景 |
+
+> 标注"规划中"的小节尚未发布；本章当前仅发布《与 MEDI 的差异清单》。
 
 ## rust-dix 是什么
 
@@ -25,30 +28,49 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 
 | 价值 | 说明 |
 |------|------|
-| **松耦合** | 依赖接口而非具体实现 |
+| **松耦合** | 依赖接口而非具体类型 |
 | **可测试** | 测试时轻松替换 mock |
 | **可扩展** | 增加新实现无需修改消费方 |
 | **开闭原则** | 对扩展开放，对修改关闭 |
 
-## 与 MEDI 对照
+## 与 MEDI 对照（0.8.0 语义）
 
-| MEDI (.NET) | rust-dix (Rust) |
-|-------------|-------------------|
-| `IServiceCollection` | `ServiceCollection` |
-| `IServiceProvider` | `ServiceProvider` |
-| `IServiceScope` | `Scope` / `ServiceScope` |
-| `ServiceLifetime.Singleton` | `ServiceLifetime::Singleton` |
-| `ServiceLifetime.Scoped` | `ServiceLifetime::Scoped` |
-| `ServiceLifetime.Transient` | `ServiceLifetime::Transient` |
-| `AddSingleton<T>()` | `.singleton::<T>(f)` |
-| `AddScoped<T>()` | `.scoped::<T>(f)` |
-| `AddTransient<T>()` | `.transient::<T>(f)` |
-| `AddKeyedSingleton<T>(key)` | `.keyed_singleton::<T>(key, f)` |
-| `GetRequiredService<T>()` | `.get::<T>()` |
-| `GetService<T>()` | `.get_optional::<T>()` |
-| `GetServices<T>()` | `.get_all::<T>()` |
-| `CreateScope()` | `.scope()` |
+> 完整差异（含默认值、边界与迁移动作）见 [与 MEDI 的差异清单](medi-differences.md)。
+
+| MEDI (.NET) | rust-dix 0.8.0 | 语义说明 |
+|-------------|----------------|----------|
+| `IServiceCollection` | `ServiceCollection` | 注册端 |
+| `IServiceProvider` | `ServiceProvider` | 解析端（root） |
+| `IServiceScope` | `Scope` / `ServiceScope` | 子作用域 |
+| `IServiceScopeFactory` | `dyn ScopeFactory` | 内置弱引用实现，无需注册 |
+| `CreateScope()` | `.scope()` | 创建独立作用域 |
+| `ServiceLifetime.Singleton` | `ServiceLifetime::Singleton` | |
+| `ServiceLifetime.Scoped` | `ServiceLifetime::Scoped` | |
+| `ServiceLifetime.Transient` | `ServiceLifetime::Transient` | |
+| `AddSingleton<T>()` | `.singleton::<T>(f)` | 工厂闭包式 |
+| `AddScoped<T>()` | `.scoped::<T>(f)` | |
+| `AddTransient<T>()` | `.transient::<T>(f)` | |
+| `AddKeyedSingleton<T>(key)` | `.keyed_singleton::<T>(key, f)` | key 为字符串 |
+| `GetRequiredService<T>()` | `.get::<T>()` | `Result`；**最后注册优先** |
+| `GetService<T>()` | `.get_optional::<T>()` | `Option` |
+| `GetServices<T>()` | `.get_all::<T>()` | **仅非 keyed**，按注册顺序 |
+| `GetKeyedServices<T>(key)` | `.get_keyed::<T>(key)` / `.get_all_keyed::<T>()` | 按 key 单实例解析；批量枚举全部 keyed（对应 `AnyKey`） |
+| `TryAddSingleton` / `TryAddScoped` / `TryAddTransient` | `.try_add_singleton(...)`（别名 `.try_add`）/ `.try_add_scoped(...)` / `.try_add_transient(...)` | 未注册才添加 |
+| `ServiceProviderOptions.ValidateScopes` | `ServiceProviderOptions::validate_scopes` | 默认 `true`（严格）；`lenient()` 关闭 |
+| `BuildServiceProvider(options)` | `.build_with(options)` / `.build_async_with(options)` | `build()` == `build_with(Default)` |
+| `IServiceProviderIsService` | `.is_registered::<T>()` / `.is_registered_keyed::<T>(key)` | 只查询不实例化 |
+| `ServiceProvider.Dispose()` | `.dispose()` | 幂等；之后解析 `Err(ProviderDisposed)` |
+| `IServiceScope.Dispose()` | `.dispose()`（Drop 自动） | 逆序释放；之后解析 `Err(ScopeDisposed)` |
+
+> 两处最容易被 .NET 经验误导的差异：
+> 1. **scope 校验默认开启**：rust-dix 0.8.0 默认拒绝从 root 解析 Scoped
+>    （`Err(ScopedFromRootProvider)`），等价 ASP.NET Core 开发环境的 `ValidateScopes = true`；
+>    裸 MEDI `BuildServiceProvider()` 默认关闭。例外：`get_owned` / `try_get_owned`
+>    可从 root 取 Scoped（owned 不缓存、不跟踪，但其 Scoped 依赖仍受校验）。
+> 2. **`get_all` 不含 keyed**：keyed 多实现要用 `get_all_keyed::<T>()`。
 
 ## 下一步
 
-从 [什么是 rust-dix](what-is-rust-dix.md) 开始深入了解。
+本章已发布的正文是 [与 MEDI 的差异清单](medi-differences.md)；随后可前往
+[第二章 快速上手](../02-quickstart/INDEX.md) 或
+[第八章 用法指南](../08-best-practices/usage-guide.md)。

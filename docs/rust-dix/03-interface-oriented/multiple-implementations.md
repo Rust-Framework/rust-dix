@@ -68,18 +68,28 @@ if let Some(gateway) = provider.try_get_keyed::<dyn IPaymentGateway>("credit") {
 }
 ```
 
-### 批量获取：get_all
+### 批量获取：get_all / get_all_keyed
+
+`get_all` **只返回非 keyed 注册**（0.8.0 起，对齐 MEDI `GetServices`）；keyed 实现
+要用 `get_all_keyed`：
 
 ```rust
-// 获取所有实现
+// 非 keyed 实现：上面的例子只注册了 1 个默认实现（WechatPay）
 let all: Vec<Arc<dyn IPaymentGateway>> = provider.get_all();
-assert_eq!(all.len(), 3);  // wechat + alipay + credit
+assert_eq!(all.len(), 1);
 
-// 遍历所有实现（如检查所有网关可用性）
-for gateway in &all {
+// keyed 实现：一次取该类型的全部 keyed 注册（按注册顺序）
+let keyed: Vec<Arc<dyn IPaymentGateway>> = provider.get_all_keyed();
+assert_eq!(keyed.len(), 3);  // wechat + alipay + credit
+
+// 需要“全部实现”时按业务语义合并
+for gateway in all.iter().chain(keyed.iter()) {
     println!("可用网关: {}", gateway.name());
 }
 ```
+
+> 单服务解析（`get` / `get_keyed`）为"最后注册优先"：默认实现（非 keyed）多次注册时
+> 只有最后一个会被 `get` 返回，但 `get_all` 仍按注册顺序返回全部非 keyed 注册。
 
 ## 多态实现模式
 
@@ -142,14 +152,14 @@ struct ConsoleOutput;
 struct RemoteOutput { endpoint: String }
 
 let provider = ServiceCollection::new()
-    .keyed::<dyn ILogOutput>("file", |_| Arc::new(FileOutput { path: "/var/log/app.log" }))
-    .keyed::<dyn ILogOutput>("console", |_| Arc::new(ConsoleOutput))
-    .keyed::<dyn ILogOutput>("remote", |_| Arc::new(RemoteOutput { endpoint: "log-server" }))
+    .keyed_singleton::<dyn ILogOutput>("file", |_| Arc::new(FileOutput { path: "/var/log/app.log" }))
+    .keyed_singleton::<dyn ILogOutput>("console", |_| Arc::new(ConsoleOutput))
+    .keyed_singleton::<dyn ILogOutput>("remote", |_| Arc::new(RemoteOutput { endpoint: "log-server" }))
     .build()
     .unwrap();
 
-// 组合多个输出
-let outputs: Vec<Arc<dyn ILogOutput>> = provider.get_all();
+// 组合多个输出：全是 keyed 注册，所以用 get_all_keyed（get_all 只会返回空 Vec）
+let outputs: Vec<Arc<dyn ILogOutput>> = provider.get_all_keyed();
 for output in &outputs {
     output.write(LogLevel::Info, "服务启动");
 }
@@ -163,8 +173,8 @@ trait IStorage: Send + Sync {
 }
 
 let provider = ServiceCollection::new()
-    .keyed::<dyn IStorage>("tenant_a", |_| Arc::new(PostgresStorage))
-    .keyed::<dyn IStorage>("tenant_b", |_| Arc::new(MysqlStorage))
+    .keyed_singleton::<dyn IStorage>("tenant_a", |_| Arc::new(PostgresStorage))
+    .keyed_singleton::<dyn IStorage>("tenant_b", |_| Arc::new(MysqlStorage))
     .build()
     .unwrap();
 
@@ -195,9 +205,9 @@ storage.save(tenant_id, data);
 |--------|--------|
 | 默认 + keyed 组合 | 只 keyed 无默认导致 `get()` 返回 `Err(ServiceNotFound)` |
 | key 名称语义明确（如 "wechat"） | key 名称模糊（如 "impl1"） |
-| 用 get_all 批量处理观察者 | 手动逐个 get_keyed |
+| 用 `get_all` / `get_all_keyed` 批量处理观察者 | 手动逐个 `get_keyed` 或误以为 `get_all` 含 keyed |
 | 策略选择逻辑集中封装 | 分散在各处的 if/else |
 
 ## 下一步
 
-下一节：[第五章 设计模式实践](05-design-patterns/INDEX.md) — 看策略模式如何与 DI 容器配合。
+下一节：[第五章 设计模式实践](../05-design-patterns/INDEX.md) — 看策略模式如何与 DI 容器配合（具体模式小节规划中）。

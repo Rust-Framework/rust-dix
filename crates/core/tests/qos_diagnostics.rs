@@ -1,6 +1,7 @@
 //! Diagnostics & quality-of-service tests for rust-dix 0.7.
 
 #![allow(non_snake_case)]
+#![allow(dead_code)]
 
 mod common;
 
@@ -68,7 +69,8 @@ fn try_add_scoped_skips_when_present() {
         .try_add_scoped(|_| Arc::new(common::MyService { value: 2 }))
         .build()
         .unwrap();
-    assert_eq!(p.get::<common::MyService>().unwrap().value, 1);
+    let scope = p.scope();
+    assert_eq!(scope.get::<common::MyService>().unwrap().value, 1);
 }
 
 #[test]

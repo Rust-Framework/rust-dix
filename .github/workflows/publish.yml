@@ -25,6 +25,8 @@ jobs:
       - name: Pre-publish gates
         run: |
           cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
           cargo test --workspace
 
       - name: Publish crates (dependency order, idempotent + index wait)

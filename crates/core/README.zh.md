@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.7"
+rust-dix = "0.8"
 ```
 
 ---
@@ -38,11 +38,11 @@ let svc = MyService::new(
     Arc::new(Cache::new(1024)),
 );
 
-// 用 DI：声明一次，随处解析（`MyService` 使用 `#[derive(Inject)]`）
-let provider = ServiceCollection::new()
+// 用 DI：声明一次，随处解析。
+// `MyService` 标注了 `#[rust_dix::inject(transient)]`，会自动注册（定义此处省略）。
+let provider = ServiceCollection::from_injected()
     .singleton(|_| Arc::new(Logger::new("app")))
     .singleton(|_| Arc::new(Cache::new(1024)))
-    .transient(|p| __rdi_construct_MyService(p))
     .build()
     .unwrap();
 
@@ -56,9 +56,10 @@ let svc: Arc<MyService> = provider.get().unwrap();
 ```rust
 #[cfg(test)]
 fn test_provider() -> ServiceProvider {
-    ServiceCollection::new()
+    // `MyApi` 标注了 `#[rust_dix::inject(transient)]`，由 from_injected() 收集；
+    // 这里只需要注册 mock。
+    ServiceCollection::from_injected()
         .singleton(|_| Arc::new(MockDatabase::new()))
-        .transient(|p| __rdi_construct_MyApi(p))
         .build()
         .unwrap()
 }
@@ -112,7 +113,8 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
   插件自己的服务优先可见，宿主服务作为回退。
 - **命名服务**：通过字符串名称注册服务 — 对于 cdylib 插件至关重要，
   因为 Rust 的 `TypeId` 跨编译单元不一致。
-- **`IServiceLocator`**：将统一的 DI 接口传递给不直接依赖 rust-dix 的外部模块。
+- **`IProvider`**：将统一的 DI 接口（解析 + 命名注册表）传递给不直接依赖 rust-dix 的
+  外部模块。
 
 ---
 
@@ -130,16 +132,25 @@ let fresh2: Arc<dyn Strategy> = provider.get_keyed("fresh").unwrap();  // 不同
 | `.keyed_scoped(k, f)` | Scoped | Scope 内策略实例 |
 | `.keyed_transient(k, f)` | Transient | 每次新建策略实例 |
 | `.instance(arc)` | Singleton | 已有构建好的 `Arc<T>` |
-| `.try_add(f)` | Singleton | 只注册不存在的类型 |
+| `.try_add(f)` | Singleton | 只注册不存在的类型（MEDI `TryAdd`） |
+| `.try_add_scoped(f)` | Scoped | 只注册不存在的类型 |
+| `.try_add_transient(f)` | Transient | 只注册不存在的类型 |
 | `.singleton_value(v)` | Singleton | 注册普通值（自动包 `Arc`） |
 | `.add(lt, f)` | *任意* | 显式指定生命周期 |
+| `.build()` | — | 用默认（严格）scope 校验构建 provider |
+| `.build_with(options)` | — | 用显式 `ServiceProviderOptions` 构建（`lenient()` 恢复 0.7.x root-scope 行为） |
+| `.build_async()` / `.build_async_with(options)` | — | 异步构建；存在任何 `async_*` 注册时必须使用 |
 
-工厂闭包 `f` 接收 `&dyn IServiceResolver`，可以解析依赖：
+工厂闭包 `f` 接收 `&dyn IServiceResolver`。泛型 `get::<T>()` 带 `Self: Sized`
+约束，不能直接在 trait object 上调用：请让注入宏生成构造函数（内部
+`__rdi_construct_*`，`#[doc(hidden)]`），或用 `get_any` + downcast 解析：
 
 ```rust
 ServiceCollection::new()
     .singleton(|_| Arc::new(Pool::new()))
-    .transient(|p| Arc::new(Repo::new(p.get::<Pool>().unwrap())))
+    // `Repo` 使用 #[derive(Inject)]，字段 `#[inject] pool: Arc<Pool>`；
+    // 生成的构造函数在注册时完成依赖解析。
+    .transient(|r| __rdi_construct_Repo(r))
     .build()
     .unwrap();
 ```
@@ -190,7 +201,7 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 | 放置位置 | 注册为 | 是否复用构造函数 |
 |---------|--------|----------------|
 | `#[inject]` 在 struct 上 | 具体类型 `T` | 自行生成 |
-| `#[inject]` 在 `impl Trait for T` 上 | `dyn Trait` | 复用 `__rdi_construct_T` |
+| `#[inject]` 在 `impl Trait for T` 上 | `dyn Trait` | 复用生成的构造函数（内部 `__rdi_construct_T`，`#[doc(hidden)]`） |
 | `#[derive(Inject)]` 在 struct 上 | *（不注册，仅生成构造函数）* | — |
 
 **二选一，避免双重注册**：`#[inject]` 一般只放一处——struct 上或 impl 上，不要同时放。
@@ -203,17 +214,29 @@ impl Default for RoleAuthorizer { fn default() -> Self { Self } }
 
 | 方法 | 返回 | 行为 |
 |--------|---------|------|
-| `.get::<T>()` | `Result<Arc<T>, RdiError>` | 未注册返回 Err；必选服务用 `.unwrap()` |
+| `.get::<T>()` | `Result<Arc<T>, RdiError>` | 未注册返回 Err；**最后注册优先** |
 | `.get_optional::<T>()` | `Option<Arc<T>>` | 未注册返回 `None` |
 | `.get_keyed::<T>(key)` | `Result<Arc<T>, RdiError>` | 找不到 key 返回 Err；必选 key 用 `.unwrap()` |
 | `.try_get_keyed::<T>(key)` | `Option<Arc<T>>` | 找不到 key 返回 `None` |
-| `.get_all::<T>()` | `Vec<Arc<T>>` | 所有已注册实例 |
+| `.get_all::<T>()` | `Vec<Arc<T>>` | 仅**非 keyed** 注册，按注册顺序（不含 keyed） |
+| `.get_all_keyed::<T>()` | `Vec<Arc<T>>` | 该类型**全部 keyed** 注册，按注册顺序（0.8.0+） |
 | `.get_named::<T>(name)` | `Option<Arc<T>>` | 命名解析（跨 DLL），未注册返回 `None` |
 | `.get_named_any::<T>(name)` | `Option<Arc<T>>` | 命名解析，不 panic |
-| `.get_owned::<T>()` | `Result<T, RdiError>` | Owned 实例；Singleton 返回 Err；Transient/Scoped 用 `.unwrap()` |
+| `.get_owned::<T>()` | `Result<T, RdiError>` | Owned 实例；Singleton 返回 Err；**Scoped 允许从 root 取**（归调用方、不缓存——但构造函数内的 Scoped 依赖仍受 scope 校验） |
 | `.try_get_owned::<T>()` | `Option<T>` | 未注册或 Singleton 返回 `None` |
 | `.get_keyed_owned::<T>(key)` | `Result<T, RdiError>` | Owned 键控实例；Singleton 返回 Err |
+| `.is_registered::<T>()` | `bool` | 是否存在非 keyed 注册（不创建实例） |
+| `.is_registered_keyed::<T>(key)` | `bool` | 指定 key 是否已注册 |
 | `.scope()` | `Scope` | 新建作用域 |
+| `.dispose()` | `()` | 幂等；按创建逆序释放实例，之后解析返回 `Err(ProviderDisposed)`（0.8.0+） |
+
+> **0.8.0 语义**：单服务解析对齐 MEDI 的"最后注册优先"；`get_all` 仅含非 keyed
+> （keyed 用 `get_all_keyed`）；scope 校验**默认严格**——从 root provider 解析
+> Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`（例外：`get_owned` /
+> `try_get_owned` 的 owned 实例归调用方、不进缓存，可从 root 取；但其 Scoped 依赖
+> 仍受校验）。需要 0.7.x 的 root-scope 旧行为时用
+> `build_with(ServiceProviderOptions::lenient())`。逐条差异见
+> [与 MEDI 的差异清单](../../docs/rust-dix/01-introduction/medi-differences.md)。
 
 `T` 支持具体类型和 trait object：
 
@@ -268,8 +291,8 @@ assert_eq!(ctx.total(), 1);
 | 生命周期 | `get_owned` 行为 |
 |----------|----------------|
 | **Transient** | 每次调用新建实例 ✓ |
-| **Scoped** | 绕过缓存，每次调用新建 ✓ |
-| **Singleton** | panic（共享实例无法 owned）；用 `try_get_owned` 返回 `None` |
+| **Scoped** | 绕过缓存，每次调用新建 ✓（root 上也可调用：owned 实例本身不受 root scope 校验，但其 Scoped 依赖受校验） |
+| **Singleton** | `Err(OwnedNotSupported)`（共享实例无法 owned）；用 `try_get_owned` 返回 `None` |
 
 **配合 `#[derive(Inject)]`**：裸 `T` 字段用 `#[inject(owned)]` 标记按 owned 解析；
 `Arc<T>` 字段用 `#[inject]` 保持共享。`Option<T>` → `try_get_owned`，
@@ -289,9 +312,12 @@ h.ctx.add();                 // ✓ owned 字段可变
 ```
 
 **限制说明**：
-- Singleton 不可 owned —— `get_owned` panic，`try_get_owned` 返回 `None`。
+- Singleton 不可 owned —— `get_owned` 返回 `Err`，`try_get_owned` 返回 `None`。
 - Scoped 的 `get_owned` 绕过作用域缓存（每次 fresh）。这是有意为之：
-  owned `&mut self` 与 scope 共享语义不兼容。
+  owned `&mut self` 与 scope 共享语义不兼容。owned 解析是严格 scope 校验的**例外**：
+  `get_owned` / `try_get_owned` 可以从 **root** 解析 Scoped（实例归调用方、不进缓存/
+  不被跟踪）——但其构造函数内部解析的 Scoped 依赖在 root 上仍会返回
+  `Err(ScopedFromRootProvider)`。
 - Trait bound 保持 `T: Send + Sync + 'static`（复用现有工厂，无独立 owned 工厂路径）。
 
 ---
@@ -336,7 +362,9 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await.unwrap();
 ```
 
-同步服务仍可使用 `get()`。异步方法仅用于 `async_*` 注册的服务。
+同步注册的服务既可 `get()` 也可 `get_async()`：0.8.0 起 `get_async()` 对用同步
+`scoped` / `transient` 注册的服务会**回退到同步解析路径**。`async_*` 注册只用于需要
+**异步初始化**的服务。
 
 #### 混合同步与异步
 
@@ -346,10 +374,8 @@ let gateway: Arc<dyn IPaymentGateway> = provider.get_keyed_async("wechat").await
 let provider = ServiceCollection::new()
     .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
     .singleton(|_| Arc::new(AppConfig::new()))       // 同步 OK
-    .scoped(|r| {                                     // 同步 OK
-        let db = r.get::<DbPool>().unwrap();
-        Arc::new(UserRepository { db })
-    })
+    // `UserRepository` 使用 #[derive(Inject)]，构造函数解析 DbPool
+    .scoped(|r| __rdi_construct_UserRepository(r))   // 同步 OK
     .build_async()
     .await
     .unwrap();
@@ -362,10 +388,7 @@ let provider = ServiceCollection::new()
 ```rust
 let provider = ServiceCollection::new()
     .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
-    .scoped(|r| {
-        let db = r.get::<DbPool>().unwrap();
-        Arc::new(UserRepository { db })
-    })
+    .scoped(|r| __rdi_construct_UserRepository(r))
     .build_async().await.unwrap();
 
 // 每个请求独立 Scope
@@ -373,7 +396,7 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
     let scope = provider.scope();
     let repo: Arc<UserRepository> = scope.get().unwrap();
     // ... 处理请求 ...
-    // scope 离开作用域 → scoped 实例释放
+    // scope 离开作用域 → 按创建逆序释放 scoped 实例
 }
 ```
 
@@ -384,11 +407,13 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
 #### 🔹 三层架构（Controller → Service → Repository）
 
 ```rust
+// `UserRepo` / `UserService` / `UserController` 使用 #[derive(Inject)]，
+// 生成的构造函数按层完成依赖装配。
 let provider = ServiceCollection::new()
     .singleton(|_| Arc::new(DbPool::new(&config)))
-    .transient(|p| Arc::new(UserRepo::new(p.get::<DbPool>().unwrap())))
-    .transient(|p| Arc::new(UserService::new(p.get::<UserRepo>().unwrap())))
-    .transient(|p| Arc::new(UserController::new(p.get::<UserService>().unwrap())))
+    .transient(|r| __rdi_construct_UserRepo(r))
+    .transient(|r| __rdi_construct_UserService(r))
+    .transient(|r| __rdi_construct_UserController(r))
     .build()
     .unwrap();
 ```
@@ -509,8 +534,8 @@ let provider: Arc<dyn IProvider> = provider as Arc<dyn IProvider>;
 │                   ▼                           │
 │              ServiceProvider                  │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
-│  │  .get()  │ │.get_keyed│ │ .create_scope│ │
-│  │ .get_all │ │.get_named│ │              │ │
+│  │  .get()  │ │.get_keyed│ │  .scope()   │ │
+│  │ .get_all │ │.get_named│ │             │ │
 │  └──────────┘ └──────────┘ └──────┬───────┘ │
 │                                    │         │
 └────────────────────────────────────┼─────────┘

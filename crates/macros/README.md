@@ -21,7 +21,7 @@ as possible.
 
 ```toml
 [dependencies]
-rust-dix = "0.7"       # re-exports all macros — you usually don't need rust-dix-macros directly
+rust-dix = "0.8"       # re-exports all macros — you usually don't need rust-dix-macros directly
 ```
 
 > **Note**: You rarely need to add `rust-dix-macros` as a direct dependency.
@@ -122,23 +122,20 @@ it reuses the one already produced by the struct placement.
 then generates a factory function `__rdi_construct_{TypeName}()` that resolves
 each marked field from the container. Unmarked fields use `Default::default()`.
 
+> The generated function is `#[doc(hidden)]` internal surface: the macros use it
+> to wire `#[rust_dix::inject]` / `from_injected()` auto-registration. Call it
+> directly only when registering a custom factory closure — prefer
+> `#[rust_dix::inject]` + `from_injected()` in application code.
+
 > **Note**: This derive macro is subsumed by `#[rust_dix::inject]` on a
 > struct. You only need `#[derive(Inject)]` if you want to generate the
 > constructor without automatic registration (e.g., to register manually
 > with a custom factory closure).
 
-**Without it**, you write factory closures manually:
-
-```rust
-let provider = ServiceCollection::new()
-    .singleton(|p| {
-        Arc::new(MyService::new(
-            p.get::<Logger>(),
-            p.get_keyed::<Cache>("main"),
-        ))
-    })
-    .build().unwrap();
-```
+**Without it**, you hand-write the factory closure and resolve every dependency
+yourself. Note that the closure receives `&dyn IServiceResolver`, where the
+generic `get::<T>()` is not callable (`Self: Sized`); manual resolution needs
+`get_any` + downcast, or capturing already-resolved `Arc`s in the closure.
 
 **With it**, the macro generates the exact same code:
 
@@ -177,7 +174,7 @@ driven by the field type (`Option<...>`), not by a marker.
 | `#[inject(owned)]` | bare `T` | Required owned — `Err` if not registered or Singleton |
 | `#[inject(owned)]` | `Option<T>` | Optional owned — `None` if not registered or Singleton |
 | `#[inject(owned, key = "k")]` | bare `T` / `Option<T>` | Keyed owned |
-| `#[inject]` | `Vec<Arc<T>>` | Polymorphic — collects all registered implementations (default + keyed); key not supported |
+| `#[inject]` | `Vec<Arc<T>>` | Polymorphic — collects all **non-keyed** registrations in registration order (keyed implementations need `get_all_keyed` on the provider); no `key` attribute |
 | `#[inject(provider)]` | `Arc<ServiceProvider>` | Injects the provider for on-demand resolution |
 
 > Type checking is strict: `#[inject]` accepts `Arc<T>`, `Option<Arc<T>>`, or
@@ -266,6 +263,28 @@ rust_dix::register!(singleton: MyService);
 > allow an attribute macro and a function-like macro to share the same name
 > in the same crate). This freed up the name `inject` for the attribute macro
 > described above.
+
+---
+
+### Behavior notes (0.8.0)
+
+The macros themselves are unchanged in 0.8.0, but the container semantics they
+feed into are:
+
+- **Single-service resolution is "last registration wins"** (MEDI parity). If the
+  same type is registered twice — e.g. an `#[rust_dix::inject]` auto-registration
+  plus a manual `singleton` override — the *last* registration is what `get()`
+  returns. Use `try_add*` when you want "only add if absent".
+- **`Vec<Arc<T>>` injection only collects non-keyed registrations** (registration
+  order). Keyed implementations are resolved explicitly with `get_all_keyed::<T>()`.
+- **Strict scope validation is the default**: resolving a Scoped service from the
+  root provider returns `Err(RdiError::ScopedFromRootProvider)`. Annotate
+  request-scoped services with `#[inject(scoped)]` and resolve them inside
+  `provider.scope()`.
+- **Dispose is explicit and ordered**: `Scope::dispose()` / Drop releases scoped
+  instances in reverse creation order; `ServiceProvider::dispose()` releases
+  singletons and root-scoped instances. Constructor-time resolution through an
+  injected provider is rejected with a typed `FactoryPanic`.
 
 ---
 

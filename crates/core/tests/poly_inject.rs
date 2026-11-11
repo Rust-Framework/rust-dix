@@ -1,4 +1,4 @@
-﻿//! Polymorphic injection tests — `Vec<Arc<T>>` field collects all registered
+//! Polymorphic injection tests — `Vec<Arc<T>>` field collects all registered
 //! implementations of a trait (or concrete type), equivalent to C# MEDI
 //! `IEnumerable<IFoo>` constructor injection.
 //!
@@ -54,11 +54,14 @@ fn get_all_baseline() {
         .build()
         .unwrap();
 
+    // MEDI parity: get_all == GetServices<T>() -> unkeyed only.
     let all: Vec<Arc<dyn IFoo>> = p.get_all();
-    assert_eq!(all.len(), 3, "1 default + 2 keyed");
+    assert_eq!(all.len(), 1, "only the unkeyed registration");
+    assert_eq!(all[0].name(), "A");
 
-    let names: Vec<&str> = all.iter().map(|f| f.name()).collect();
-    assert!(names.contains(&"A"));
+    let keyed: Vec<Arc<dyn IFoo>> = p.get_all_keyed();
+    assert_eq!(keyed.len(), 2);
+    let names: Vec<&str> = keyed.iter().map(|f| f.name()).collect();
     assert!(names.contains(&"B"));
     assert!(names.contains(&"C"));
 }
@@ -73,16 +76,22 @@ struct FooConsumer {
 
 #[test]
 fn vec_inject_collects_all_implementations() {
+    // Vec<Arc<T>> injection follows MEDI IEnumerable<T>: unkeyed registrations,
+    // in registration order. Keyed implementations are not included.
     let p = ServiceCollection::new()
         .singleton::<dyn IFoo>(|_| Arc::new(FooA))
-        .keyed_singleton::<dyn IFoo>("b", |_| Arc::new(FooB))
-        .keyed_singleton::<dyn IFoo>("c", |_| Arc::new(FooC))
+        .singleton::<dyn IFoo>(|_| Arc::new(FooB))
+        .singleton::<dyn IFoo>(|_| Arc::new(FooC))
         .transient(|r| __rdi_construct_FooConsumer(r))
         .build()
         .unwrap();
 
     let consumer: FooConsumer = p.get_owned().unwrap();
-    assert_eq!(consumer.foos.len(), 3, "should collect default + 2 keyed");
+    assert_eq!(
+        consumer.foos.len(),
+        3,
+        "unkeyed implementations are collected"
+    );
 
     let names: Vec<&str> = consumer.foos.iter().map(|f| f.name()).collect();
     assert!(names.contains(&"A"));
@@ -128,14 +137,14 @@ struct WidgetConsumer {
 #[test]
 fn vec_inject_concrete_type() {
     let p = ServiceCollection::new()
-        .keyed_singleton::<Widget>("w1", |_| Arc::new(Widget { id: 1 }))
-        .keyed_singleton::<Widget>("w2", |_| Arc::new(Widget { id: 2 }))
+        .singleton::<Widget>(|_| Arc::new(Widget { id: 1 }))
+        .singleton::<Widget>(|_| Arc::new(Widget { id: 2 }))
         .transient(|r| __rdi_construct_WidgetConsumer(r))
         .build()
         .unwrap();
 
     let consumer: WidgetConsumer = p.get_owned().unwrap();
-    assert_eq!(consumer.widgets.len(), 2, "2 keyed Widgets collected");
+    assert_eq!(consumer.widgets.len(), 2, "both unkeyed Widgets collected");
 
     let ids: Vec<u32> = consumer.widgets.iter().map(|w| w.id).collect();
     assert!(ids.contains(&1));
@@ -157,14 +166,14 @@ struct ScopedFooConsumer {
 fn vec_inject_works_through_scope() {
     let p = ServiceCollection::new()
         .singleton::<dyn IFoo>(|_| Arc::new(FooA))
-        .keyed_scoped::<dyn IFoo>("b", |_| Arc::new(FooB))
+        .scoped::<dyn IFoo>(|_| Arc::new(FooB))
         .transient(|r| __rdi_construct_ScopedFooConsumer(r))
         .build()
         .unwrap();
 
     let scope = p.scope();
     let consumer: ScopedFooConsumer = scope.get_owned().unwrap();
-    assert_eq!(consumer.foos.len(), 2, "1 singleton + 1 scoped");
+    assert_eq!(consumer.foos.len(), 2, "1 singleton + 1 scoped, unkeyed");
 
     let names: Vec<&str> = consumer.foos.iter().map(|f| f.name()).collect();
     assert!(names.contains(&"A"));

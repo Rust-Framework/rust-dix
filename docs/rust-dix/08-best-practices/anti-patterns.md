@@ -272,11 +272,12 @@ fn main() {
 
 ---
 
-## 反模式 8：根 Provider 解析 Scoped 期望每请求独立
+## 反模式 8：从根 Provider 解析 Scoped（或仍按 0.7.x root-scope 语义设计）
 
-### ⚠️ 语义澄清
+### ⚠️ 语义澄清（0.8.0）
 
-0.4.0 起，`ServiceProvider` 本身即 root scope。从根 Provider 解析 Scoped 服务时，实例缓存在 `root_scoped_cache` 中，**后续所有根级解析返回同一实例**（等同于应用级单例）。
+0.8.0 默认开启严格 scope 校验（`ServiceProviderOptions::validate_scopes = true`）。
+从根 Provider 解析 Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`：
 
 ```rust
 // Session 注册为 Scoped
@@ -285,14 +286,17 @@ ServiceCollection::new()
     .build()
     .unwrap();
 
-// 从根 Provider 解析 — 缓存在 root_scoped_cache
-let session: Arc<Session> = provider.get();
-let session2: Arc<Session> = provider.get();
-// session 与 session2 是同一实例（根 scope 缓存）
+// 从根 Provider 解析 — 默认严格校验下直接失败
+let session = provider.get::<Session>();       // Err(ScopedFromRootProvider)
+let session2 = provider.get::<Session>();      // 同样 Err
 ```
 
-**反模式**：期望根 Provider 每次 `get::<Scoped>()` 返回不同实例（误以为是 Transient 语义）。
-**问题**：根 scope 缓存永远不会释放，请求级数据被永久持有，无法实现"每请求一个 Session"。
+**反模式**：
+- 仍按 0.7.x 的"根 Provider 即 root scope、根级 Scoped 缓存复用"设计代码；
+- 期望根 Provider 每次 `get::<Scoped>()` 返回不同实例（误以为是 Transient 语义）；
+- 在应用级代码里用 `lenient()` 掩盖"本该用 scope"的结构问题。
+
+**问题**：请求级数据被当成根级单例、作用域边界消失；严格模式下则直接解析失败。
 
 ### ✅ 正确做法
 
@@ -301,14 +305,18 @@ let session2: Arc<Session> = provider.get();
 ```rust
 // 从子 Scope 解析 Scoped 服务
 let scope = provider.scope();
-let session1: Arc<Session> = scope.get();
-let session2: Arc<Session> = scope.get();
+let session1: Arc<Session> = scope.get().unwrap();
+let session2: Arc<Session> = scope.get().unwrap();
 // session1 与 session2 是同一实例（子 Scope 内缓存）
 
-let scope2 = provider.create_scope();
-let session3: Arc<Session> = scope2.get();
+let scope2 = provider.scope();
+let session3: Arc<Session> = scope2.get().unwrap();
 // session3 与 session1 不同（跨 Scope 独立）
 ```
+
+> 若确实需要 0.7.x 的 root-scope 行为（root 解析 Scoped 并缓存为根内单例），必须显式
+> `build_with(ServiceProviderOptions::lenient())`，并在文档中说明为何需要根级共享。
+> 详见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md#2-scope-校验validatescopes)。
 
 ---
 
@@ -422,10 +430,11 @@ impl IUserHandler for UserHandler {
 | 传递 Provider | 依赖不透明 | 显式依赖字段 |
 | Singleton 依赖 Scoped | 生命周期混乱 | Singleton 只依赖 Singleton |
 | 每次重建容器 | 性能开销 | 构建一次 Arc 持有 |
-| 根 Provider 解析 Scoped | Scope 语义丢失 | 从 Scope 解析 |
+| 从根 Provider 解析 Scoped | 默认严格校验下解析失败；旧语义导致作用域丢失 | 从 `scope()` 解析；确需旧行为显式 `lenient()` |
+| 误以为 `get_all` 含 keyed | 观察者/广播漏掉 keyed 实现 | 非 keyed 用 `get_all`，keyed 用 `get_all_keyed` |
 | Handler 直接调用 | 绕过 DI | 通过 Mediator 或注入服务 |
 | struct 与 impl 同时用 `#[inject]` | 双重注册，可绕过接口 | struct 用 `#[derive(Inject)]`，impl 用 `#[inject]` |
 
 ---
 
-下一节：[性能优化建议](performance-tips.md)
+下一节：性能优化建议（**规划中**，尚未发布；可先阅读 [用法指南](usage-guide.md) 的容器使用规则）。

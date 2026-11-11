@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.7"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
+rust-dix = "0.8"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
 ```
 
 > **注意**：你很少需要直接添加 `rust-dix-macros` 依赖。`rust-dix` crate 已经重新导出了
@@ -111,21 +111,16 @@ struct NamedService {
 `__rdi_construct_{类型名}()`，自动从容器中解析每个**标记的**字段。
 未标记字段使用 `Default::default()` 作为内部状态。
 
+> 生成的函数是 `#[doc(hidden)]` 内部面：宏用它来支撑 `#[rust_dix::inject]` /
+> `from_injected()` 的自动注册。只有在你需要注册自定义工厂闭包时才直接调用它——
+> 应用代码优先用 `#[rust_dix::inject]` + `from_injected()`。
+
 > **注意**：此派生宏已被 struct 上的 `#[rust_dix::inject]` 包含。仅当你需要生成
 > 构造函数但不想自动注册时（例如手动用自定义工厂闭包注册），才使用 `#[derive(Inject)]`。
 
-**不使用宏**，需要手动写工厂闭包：
-
-```rust
-let provider = ServiceCollection::new()
-    .singleton(|p| {
-        Arc::new(MyService::new(
-            p.get::<Logger>(),
-            p.get_keyed::<Cache>("main"),
-        ))
-    })
-    .build().unwrap();
-```
+**不使用宏**，需要手写工厂闭包并自行解析每个依赖。注意闭包参数是
+`&dyn IServiceResolver`，泛型 `get::<T>()` 在其上不可调用（`Self: Sized`）：
+手动解析需用 `get_any` + downcast，或在闭包外解析好依赖后以 `Arc` 捕获。
 
 **使用宏**，自动生成完全相同的代码：
 
@@ -163,7 +158,7 @@ let provider = ServiceCollection::new()
 | `#[inject(owned)]` | 裸 `T` | 必选 owned — 未注册或 Singleton 返回 `Err` |
 | `#[inject(owned)]` | `Option<T>` | 可选 owned — 未注册或 Singleton 返回 `None` |
 | `#[inject(owned, key = "k")]` | 裸 `T` / `Option<T>` | 键控 owned |
-| `#[inject]` | `Vec<Arc<T>>` | 多态注入 — 收集所有注册实现（default + keyed）；不支持 key |
+| `#[inject]` | `Vec<Arc<T>>` | 多态注入 — 按注册顺序收集**全部非 keyed** 实现（keyed 实现需在 provider 上调用 `get_all_keyed`）；不支持 `key` 属性 |
 | `#[inject(provider)]` | `Arc<ServiceProvider>` | 注入 provider 供按需解析 |
 
 > 严格类型校验：`#[inject]` 接受 `Arc<T>`、`Option<Arc<T>>` 或 `Vec<Arc<T>>`，
@@ -243,6 +238,24 @@ rust_dix::register!(singleton: MyService);
 > **迁移说明**：函数式宏从 `inject!()` 改名为 `register!()`，以规避过程宏命名空间冲突
 > （Rust 不允许同一 crate 中属性宏和函数式宏同名）。这释放了 `inject` 这个名字给前面
 > 描述的属性宏使用。
+
+---
+
+### 行为说明（0.8.0）
+
+宏本身在 0.8.0 没有变化，但它们接入的容器语义变了：
+
+- **单服务解析为"最后注册优先"**（对齐 MEDI）。同一类型注册两次（例如
+  `#[rust_dix::inject]` 自动注册 + 手动 `singleton` 覆盖）时，`get()` 返回
+  **后注册**的实现；需要"未注册才添加"请用 `try_add*`。
+- **`Vec<Arc<T>>` 注入只收集非 keyed 注册**（按注册顺序）。keyed 实现需显式调用
+  `get_all_keyed::<T>()`。
+- **默认严格 scope 校验**：从 root provider 解析 Scoped 服务返回
+  `Err(RdiError::ScopedFromRootProvider)`。请求级服务标注 `#[inject(scoped)]`，
+  并在 `provider.scope()` 内解析。
+- **dispose 显式且有序**：`Scope::dispose()` / Drop 按创建逆序释放 scoped 实例；
+  `ServiceProvider::dispose()` 释放 singleton 与 root scoped 实例。构造期通过注入
+  provider 解析服务会返回类型化 `FactoryPanic`。
 
 ---
 

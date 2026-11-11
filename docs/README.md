@@ -20,10 +20,14 @@ docs/
         └── 08-best-practices/     # 最佳实践
 ```
 
+> **发布状态**：第 4、6、7 章及部分小节（01/02/03/05/08 的未发布子页）仍在**规划中**，
+> 尚未发布；`docs/rust-dix/INDEX.md` 只对已发布页面提供链接，未发布条目以非链接形式标注。
+
 ## 阅读
 
 - [前言](rust-dix/FOREWORD.md) — 了解本书定位、读者画像与阅读路径
 - [全书目录](rust-dix/INDEX.md)
+- [与 MEDI 的差异清单](rust-dix/01-introduction/medi-differences.md) — .NET 迁移必读：scope 校验、dispose、keyed、get_all 逐条对照
 
 ## 阅读建议
 

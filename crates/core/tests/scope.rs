@@ -1,4 +1,4 @@
-﻿mod common;
+mod common;
 
 use rust_dix::*;
 use std::sync::Arc;
@@ -92,7 +92,7 @@ fn scope_transient_scoped_dependency_binds_to_child_scope() {
             let s: Arc<ScopedDep> = Arc::clone(&*outer);
             Arc::new(TransientSvc { scoped: s })
         })
-        .build()
+        .build_with(ServiceProviderOptions::lenient())
         .unwrap();
 
     let scope1 = provider.scope();

@@ -119,7 +119,8 @@ let logger: Arc<dyn ILogger> = provider.get()?;  // Err: TypeId 不匹配
 |------|---------|
 | 默认策略 | `.singleton::<dyn Trait>(...)` |
 | 替代策略 | `.keyed_singleton::<dyn Trait>("name", ...)` |
-| 批量获取 | `.get_all::<dyn Trait>()` |
+| 批量获取（非 keyed） | `.get_all::<dyn Trait>()` |
+| 批量获取（全部 keyed） | `.get_all_keyed::<dyn Trait>()`（0.8.0+） |
 
 ```rust
 // ✅ 多实现注册
@@ -213,6 +214,7 @@ pub struct RequestHandler {
 | `Arc::new(provider)` 传递 | 传递 ServiceCollection |
 | 需要时解析服务 | 传递 Provider 到处使用 |
 | 后台任务注入 `Arc<dyn ScopeFactory>` 每 tick 建 scope | 让 Singleton 持有 Scoped 实例或 `Scope` |
+| 应用关闭显式 `provider.dispose()`（逆序释放） | 依赖 `Arc` 最后一个引用释放来清理 |
 
 ```rust
 // ✅ 正确
@@ -232,8 +234,9 @@ fn handle(req: Request, provider: &ServiceProvider) {
 
 | ✅ 应该 | ❌ 避免 |
 |--------|--------|
-| 请求开始创建子 Scope | 期望根 Provider 每次 `get::<Scoped>()` 返回新实例 |
+| 请求开始创建子 Scope | 从 root Provider 解析 Scoped（默认严格校验会报 `ScopedFromRootProvider`） |
 | 子 Scope 内缓存 Scoped 服务 | 在根 Provider 上解析 Scoped 期望请求级隔离 |
+| 请求结束显式 `scope.dispose()` 或让其 Drop | 长期持有 `Scope` 或 scoped 实例 |
 
 ```rust
 // ✅ 正确：Web 请求处理
@@ -242,17 +245,29 @@ fn handle_request(provider: &Arc<ServiceProvider>, req: Request) {
     let uow: Arc<UnitOfWork> = scope.get().unwrap();  // Scope 内共享
     let handler: Arc<dyn IRequestHandler> = scope.get().unwrap();
     handler.handle(&uow, req);
-}
+} // scope Drop → 按创建逆序释放 scoped 实例
 
-// ⚠️ 注意：根 Provider 即 root scope，根级解析 Scoped 会缓存到 root_scoped_cache
+// ❌ 错误：0.8.0 默认严格 scope 校验下，root provider 解析 Scoped 返回 Err
 let provider = ServiceCollection::new()
     .scoped(|_| Arc::new(Session))
     .build()
     .unwrap();
 
-let session: Arc<Session> = provider.get().unwrap();   // 缓存在 root_scoped_cache
-let session2: Arc<Session> = provider.get().unwrap();  // session == session2（根 scope 单例语义）
-// 根级 Scoped 不会随请求变化，需要请求级隔离必须用 scope()
+let session = provider.get::<Session>();        // Err(ScopedFromRootProvider)
+let session2 = provider.get::<Session>();       // 同样 Err
+
+// ✅ 需要请求级隔离：用 scope()
+let scope = provider.scope();
+let session: Arc<Session> = scope.get().unwrap();
+// 同一 scope 内缓存；跨 scope 独立
+
+// ⚠️ 仅当确需 0.7.x 的 root-scope 语义（root 解析 Scoped 并缓存）时：
+let provider = ServiceCollection::new()
+    .scoped(|_| Arc::new(Session))
+    .build_with(ServiceProviderOptions::lenient())
+    .unwrap();
+let s1: Arc<Session> = provider.get().unwrap();
+let s2: Arc<Session> = provider.get().unwrap(); // s1 == s2（根 scope 缓存）
 ```
 
 ## 五、测试规则
@@ -264,13 +279,15 @@ let session2: Arc<Session> = provider.get().unwrap();  // session == session2（
 | 注册为 trait 才可替换 | 注册为具体类型无法替换 |
 | 测试容器只改注册 | 修改业务代码 |
 | Mock 实现 trait | Mock 继承具体类型 |
+| 覆盖注册放在最后（**最后注册优先**） | 依赖"先注册优先"的旧行为 |
 
 ```rust
-// ✅ 正确：测试中替换
+// ✅ 正确：测试中替换（后注册的 mock 覆盖默认实现）
 #[cfg(test)]
 fn test_provider() -> ServiceProvider {
     ServiceCollection::new()
-        .singleton::<dyn IUserService>(|_| Arc::new(MockUserService))
+        .singleton::<dyn IUserService>(|_| Arc::new(RealUserService)) // 默认
+        .singleton::<dyn IUserService>(|_| Arc::new(MockUserService)) // 生效
         .singleton::<dyn IDbContext>(|_| Arc::new(MockDbContext))
         .build()
         .unwrap()
@@ -279,7 +296,7 @@ fn test_provider() -> ServiceProvider {
 #[test]
 fn test_create_user() {
     let p = test_provider();
-    let handler: Arc<dyn IRequestHandler> = p.get();
+    let handler: Arc<dyn IRequestHandler> = p.get().unwrap();
     // 使用 mock 验证
 }
 ```

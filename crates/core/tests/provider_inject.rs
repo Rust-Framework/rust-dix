@@ -80,12 +80,10 @@ fn provider_inject_works_through_scope() {
         Arc::ptr_eq(&s1, &s2),
         "scope 内 Scoped 应缓存复用（同一 Arc）"
     );
-    // scope 与 root 应有独立 Scoped 实例（不同 Arc），证明未泄漏到 root。
-    let root_svc: Arc<common::MyService> = p.get().unwrap();
-    assert!(
-        !Arc::ptr_eq(&s1, &root_svc),
-        "scope 与 root 的 Scoped 实例应独立"
-    );
+    // 另一 scope 应有独立 Scoped 实例（不同 Arc），证明未泄漏到 root。
+    let scope2 = p.scope();
+    let other: Arc<common::MyService> = scope2.get().unwrap();
+    assert!(!Arc::ptr_eq(&s1, &other), "不同 scope 的 Scoped 实例应独立");
 }
 
 #[test]
@@ -119,12 +117,14 @@ fn scope_provider_resolves_scoped_within_scope() {
     assert_ne!(a.0, c.0, "scope2 应有独立 ScopedSvc 实例");
     assert!(!Arc::ptr_eq(&a, &c), "不同 scope 的 ScopedSvc 必须独立");
 
-    // 根 scope：第三个独立实例，证明子 scope 未泄漏到根。
-    let root_svc: Arc<ScopedSvc> = p.get().unwrap();
-    assert_ne!(a.0, root_svc.0);
-    assert_ne!(c.0, root_svc.0);
+    // 第三个独立 scope：证明子 scope 未互相泄漏。
+    let scope3 = p.scope();
+    let h3: HandlerWithProvider = scope3.get_owned().unwrap();
+    let third: Arc<ScopedSvc> = h3.provider.get().unwrap();
+    assert_ne!(a.0, third.0);
+    assert_ne!(c.0, third.0);
 
-    // 全程工厂只执行 3 次（scope1、scope2、根各一次）。
+    // 全程工厂只执行 3 次（三个 scope 各一次）。
     assert_eq!(
         CALLS.load(Ordering::SeqCst),
         3,

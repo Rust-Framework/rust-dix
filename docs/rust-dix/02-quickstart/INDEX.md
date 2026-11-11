@@ -6,9 +6,11 @@
 
 | 小节 | 内容 |
 |------|------|
-| [安装与依赖配置](installation.md) | Cargo.toml 配置 |
-| [第一个 DI 容器](first-container.md) | 基础示例 |
-| [生命周期选择](lifetime-choice.md) | Singleton/Scoped/Transient 决策 |
+| 安装与依赖配置（规划中） | Cargo.toml 配置 |
+| 第一个 DI 容器（规划中） | 基础示例 |
+| 生命周期选择（规划中） | Singleton/Scoped/Transient 决策 |
+
+> 本章的独立小节页尚未发布；下方为章节页内置的快速上手内容。
 
 ## 安装
 
@@ -16,15 +18,15 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.7"
+rust-dix = "0.8"
 ```
 
 如果使用过程宏：
 
 ```toml
 [dependencies]
-rust-dix = "0.7"
-rust-dix-macros = "0.7"
+rust-dix = "0.8"
+rust-dix-macros = "0.8"
 ```
 
 ## 导入约定
@@ -64,7 +66,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 解析服务
-let logger: Arc<dyn ILogger> = provider.get();
+let logger: Arc<dyn ILogger> = provider.get().unwrap();
 logger.log("Hello, rust-dix!");
 ```
 
@@ -75,6 +77,18 @@ logger.log("Hello, rust-dix!");
 | 全局配置、连接池 | Singleton |
 | 请求上下文、事务 | Scoped |
 | 无状态轻量服务 | Transient |
+
+## 0.8.0 关键语义（先记住这五条）
+
+| 规则 | 说明 |
+|------|------|
+| **最后注册优先** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 返回**最后注册**的实现；`try_add*` 仍是"未注册才添加" |
+| **`get_all` 不含 keyed** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` 只含非 keyed 注册；keyed 用 `get_all_keyed::<T>()` |
+| **默认严格 scope 校验** | 从 root provider 解析 Scoped 返回 `Err(RdiError::ScopedFromRootProvider)`；请求级服务必须在 `provider.scope()` 内解析（例外：`get_owned`/`try_get_owned` 可从 root 取 Scoped，owned 不缓存，但其 Scoped 依赖仍受校验） |
+| **需要旧行为时显式开启** | `build_with(ServiceProviderOptions::lenient())` 恢复 0.7.x 的 root-scope 语义 |
+| **显式释放** | `Scope::dispose()`（Drop 兜底）/ `ServiceProvider::dispose()` 按创建逆序释放；dispose 后解析分别返回 `ScopeDisposed` / `ProviderDisposed` |
+
+> 逐条差异（含 MEDI 默认值对照）见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 
 ## 异步容器（推荐 Web 应用使用）
 
@@ -99,23 +113,34 @@ let provider = ServiceCollection::new()
 let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 ```
 
-混合同步与异步注册：
+混合同步与异步注册（依赖注入用 `#[inject]` 字段完成，闭包内不要调用 `r.get::<T>()`）：
 
 ```rust
-let provider = ServiceCollection::new()
-    .async_singleton(|_| Box::pin(async { Arc::new(DbPool::new()) }))
+use rust_dix::*;
+use std::sync::Arc;
+
+struct DbPool;
+struct AppConfig { port: u16 }
+
+// #[inject(scoped)] 注册为 Scoped；#[inject] 字段自动从容器解析
+#[rust_dix::inject(scoped)]
+struct UserRepository {
+    #[inject]
+    db: Arc<DbPool>,
+}
+
+let provider = ServiceCollection::from_injected()
+    .async_singleton(|_| Box::pin(async { Arc::new(DbPool) }))
     .singleton(|_| Arc::new(AppConfig { port: 8080 }))
-    .scoped(|r| {
-        let db = r.get::<DbPool>().unwrap();
-        Arc::new(UserRepository { db })
-    })
     .build_async()
     .await
     .unwrap();
 ```
 
-> **关键规则**：一旦使用 `async_*` 注册，必须调用 `build_async()`。同步 `build()` 会返回 `Err(RdiError::AsyncServiceRequiresBuildAsync)`（0.7+），而不会在后续 sync `get()` 时才 panic。
+> **关键规则**：一旦使用 `async_*` 注册，必须调用 `build_async()`。同步 `build()` 会返回 `Err(RdiError::AsyncServiceRequiresBuildAsync)`（0.7+），而不会推迟到后续 sync `get()` 才报错。
 
 ## 下一步
 
-从 [安装与依赖配置](installation.md) 开始。
+独立小节页规划中；关于导入约定与场景选择，可继续阅读
+[用法指南与决策矩阵](../08-best-practices/usage-guide.md)，
+或了解 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。

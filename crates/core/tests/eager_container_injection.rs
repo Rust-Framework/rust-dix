@@ -106,19 +106,22 @@ fn eager_singleton_injects_service_provider() {
 
     let worker: Arc<EagerProviderWorker> = provider.get().unwrap();
 
-    // The injected provider is the root provider: resolving a scoped service
-    // through it caches in the root scope (MEDI root-scope semantics).
-    let from_root: Arc<common::MyService> = worker.provider.get().unwrap();
-    assert_eq!(from_root.value, 42);
+    // The injected provider is the root provider. Under default (strict) scope
+    // validation the root may not resolve scoped services...
+    match worker.provider.get::<common::MyService>() {
+        Ok(_) => panic!("root provider must reject scoped resolution"),
+        Err(RdiError::ScopedFromRootProvider { .. }) => {}
+        Err(other) => panic!("root provider must reject scoped resolution, got {other:?}"),
+    }
 
-    // Per-task isolation still comes from explicit scopes, as documented.
+    // ...per-task isolation comes from explicit scopes.
     let scope = worker.provider.scope();
     let scoped: Arc<common::MyService> = scope.get().unwrap();
     assert_eq!(scoped.value, 42);
-    assert!(
-        !Arc::ptr_eq(&from_root, &scoped),
-        "scope must not reuse the root-scope instance"
-    );
+    assert!(Arc::ptr_eq(
+        &scoped,
+        &scope.get::<common::MyService>().unwrap()
+    ));
 }
 
 #[test]

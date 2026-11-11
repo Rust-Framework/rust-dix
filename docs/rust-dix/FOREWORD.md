@@ -48,42 +48,44 @@ composition_root/   # 组合根：基础设施配置
 
 **规则**：
 - Handler 只依赖 `Arc<dyn IUserService>`，不依赖具体类型
-- Service 实现用 `#[rust_dix::inject(singleton)]` 注册结构体，再用 `#[rust_dix::inject] impl Trait for Type` 注册为 `dyn Trait`
+- 面向接口时：struct 用 `#[derive(Inject)]` 仅生成构造函数，`#[rust_dix::inject] impl Trait for Type` 注册为 `dyn Trait`（struct 与 impl 不重复用 `#[inject]`）
 - 组合根只注册 DI 无法自动构造的类型（配置、DbContext）
 
 ### 设计模式 = keyed + get_all + 闭包工厂
 
 | 设计模式 | rust-dix 实现 |
 |---------|-----------------|
-| 策略模式 | `keyed::<dyn Trait>("name", \|_| Arc::new(Impl))` + `get_keyed` |
+| 策略模式 | `keyed_singleton::<dyn Trait>("name", \|_| Arc::new(Impl))` + `get_keyed` |
 | 工厂模式 | 闭包工厂或 keyed 工厂 |
-| 观察者模式 | 多个 keyed 注册 + `get_all::<dyn Trait>()` |
-| 裣饰器模式 | 工厂闭包链式包装 |
+| 观察者模式 | 非 keyed 多实现 + `get_all::<dyn Trait>()`（keyed 实现用 `get_all_keyed`） |
+| 装饰器模式 | 工厂闭包链式包装 |
 | 责任链模式 | keyed 处理器 + 配置驱动顺序 |
 
 ## 阅读顺序建议
 
 ### 快速入门路径（1-2 小时）
 
-1. [什么是 rust-dix](01-introduction/what-is-rust-dix.md)
-2. [第一个 DI 容器](02-quickstart/first-container.md)
-3. [为什么面向接口](03-interface-oriented/why-interface.md)
-4. [策略模式实践](05-design-patterns/strategy-pattern.md)
+1. [第一章 认识 rust-dix](01-introduction/INDEX.md) —— 含已发布的 [与 MEDI 的差异清单](01-introduction/medi-differences.md)
+2. [第二章 快速上手](02-quickstart/INDEX.md)（章节页；安装 / 第一个容器 / 生命周期小节规划中）
+3. [第三章 面向接口编程范式](03-interface-oriented/INDEX.md) —— 已发布 [dyn Trait 注册与解析](03-interface-oriented/dyn-trait-registration.md)、[多实现与键控服务](03-interface-oriented/multiple-implementations.md)
+4. [第八章 最佳实践](08-best-practices/INDEX.md) —— 已发布 [用法指南](08-best-practices/usage-guide.md)、[业务场景实战](08-best-practices/business-scenarios.md)
 
 ### 深度学习路径（半天）
 
-1. 第一、二章（基础概念）
-2. 第三章（面向接口范式）
-3. 第四章（DI 核心模式）
-4. 第五章（设计模式实践）
-5. 第八章（最佳实践）
+1. [第一章 认识 rust-dix](01-introduction/INDEX.md) / [第二章 快速上手](02-quickstart/INDEX.md)（基础概念；部分小节规划中）
+2. [第三章 面向接口编程范式](03-interface-oriented/INDEX.md)（面向接口范式）
+3. [第五章 设计模式实践](05-design-patterns/INDEX.md)（章节页；策略 / 工厂 / 装饰器等小节规划中）
+4. [第八章 最佳实践](08-best-practices/INDEX.md)（最佳实践）
+
+> 第四章「服务注册与解析」、第六章「测试策略」、第七章「高级特性」整体**规划中**，尚未发布。
 
 ### 架构设计路径
 
-1. 第三章（contracts 层设计）
-2. 第五章（设计模式选型）
-3. 第七章（插件系统）
-4. 第八章（反模式警示）
+1. [第三章 面向接口编程范式](03-interface-oriented/INDEX.md)（contracts 层设计；小节规划中）
+2. [第五章 设计模式实践](05-design-patterns/INDEX.md)（设计模式选型；小节规划中）
+3. [第八章 最佳实践](08-best-practices/INDEX.md)（含 [反模式警示](08-best-practices/anti-patterns.md)）
+
+> 第七章「高级特性（插件系统）」规划中，尚未发布。
 
 ## 本书的特色
 
@@ -94,7 +96,9 @@ composition_root/   # 组合根：基础设施配置
 
 ## 版本说明
 
-本书基于 rust-dix 0.2.6 版本编写。API 变化时会更新对应章节。
+本书基于 rust-dix **0.8.0** 版本编写。0.8.0 的核心语义变化（单服务解析最后注册优先、
+`get_all` 不含 keyed、默认严格 scope 校验、确定性 dispose）已同步到全书；与 MEDI 的
+逐条差异见 [与 MEDI 的差异清单](01-introduction/medi-differences.md)。
 
 ---
 

@@ -40,32 +40,73 @@ pub type ServiceStore = HashMap<TypeId, Vec<ServiceEntry>>;
 /// Service resolver trait — the core DI resolution interface.
 ///
 /// Provides both type-erased and generic resolution methods.
+///
+/// # Panic contract of `Option`-returning lookups
+///
+/// [`Self::get_any`], [`Self::get_keyed_any`], [`Self::get_by_type_id`] and
+/// [`Self::get_keyed_by_type_id`] return `Option` because they answer "found or
+/// not". For a *registered* service that must not be resolved at this point
+/// (root scope validation under `validate_scopes`, a disposed provider/scope,
+/// circular dependency) implementations panic with a **typed [`RdiError`]**
+/// payload instead of returning `None`, so required-resolution APIs
+/// ([`Self::get`], `ServiceProvider::get`, …) can catch it and surface a precise
+/// `Err`. Constructor injection relies on this to propagate the real cause
+/// through user factories.
+///
+/// Infallible probing must use [`Self::try_get_any_result`] /
+/// [`Self::try_get_keyed_any_result`] (or `try_get` / `try_get_keyed`), which
+/// map such failures to `None`/`Err` without panicking.
 pub trait IServiceResolver: Send + Sync {
     fn get_any(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>>;
     fn get_keyed_any(&self, key: &str, variant: &str) -> Option<Arc<dyn Any + Send + Sync>>;
 
     /// TypeId 直查（默认 `None`，`ServiceProvider` 等覆盖为 O(1) 直查）。
     ///
-    /// 外部实现者若需优化可覆盖；不覆盖则 [`Self::get`] / [`Self::try_get`]
-    /// 等默认实现 fallback 到 [`Self::get_any`] 字符串路径。
+    /// 外部实现者若需优化可覆盖；不覆盖则 [`Self::get`] 默认实现 fallback
+    /// 到 [`Self::get_any`] 字符串路径。
+    ///
+    /// 覆盖实现须遵循 trait 级 panic 契约（注册但当前不可解析 → typed
+    /// [`RdiError`] payload panic，供 required API 捕获；可选探测请用
+    /// [`Self::try_get_any_result`]）。
     fn get_by_type_id(&self, _tid: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
         None
     }
     /// TypeId 直查 keyed 版本（默认 `None`）。
+    ///
+    /// 覆盖实现须遵循 trait 级 panic 契约（见 [`Self::get_by_type_id`]）。
     fn get_keyed_by_type_id(&self, _tid: TypeId, _key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
         None
     }
 
-    /// Type-erased polymorphic resolution: return all registered instances
-    /// (default + keyed) of the given type.
+    /// Type-erased polymorphic resolution: return all **unkeyed** registered
+    /// instances of the given type, in registration order.
     ///
-    /// Used by `Vec<Arc<T>>` field injection (`#[inject]` on `Vec<Arc<T>>`)
-    /// to collect all implementations — equivalent to C# MEDI
-    /// `IEnumerable<IFoo>` constructor injection.
+    /// Equivalent to C# MEDI `GetServices<T>()` / `IEnumerable<IFoo>`
+    /// constructor injection, which also excludes keyed services.
+    /// Keyed implementations are enumerated with [`Self::get_all_keyed_any`].
     ///
     /// Default empty `Vec` keeps external implementors backward-compatible.
     fn get_all_any(&self, _key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
         Vec::new()
+    }
+
+    /// Type-erased polymorphic resolution over **keyed** registrations only
+    /// (MEDI `GetKeyedServices<T>(KeyedService.AnyKey)`).
+    ///
+    /// Default empty `Vec` keeps external implementors backward-compatible.
+    fn get_all_keyed_any(&self, _key: &str) -> Vec<Arc<dyn Any + Send + Sync>> {
+        Vec::new()
+    }
+
+    /// Error-reporting variant of [`Self::get_all_any`], used by the inject
+    /// macros for `Vec<Arc<T>>` fields.
+    ///
+    /// Containers that can fail (scope validation, disposal, factory errors)
+    /// override it so constructor injection surfaces a typed [`RdiError`]
+    /// instead of silently returning a partial/empty list. The default keeps
+    /// external implementors source-compatible.
+    fn get_all_any_result(&self, key: &str) -> Result<Vec<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_all_any(key))
     }
 
     /// Return an `Arc<ServiceProvider>` for on-demand service resolution.
@@ -102,16 +143,34 @@ pub trait IServiceResolver: Send + Sync {
             .ok_or_else(|| RdiError::not_found(type_name, None))
     }
 
-    /// Resolve a service by type, returning `None` if not registered.
+    /// Resolve a service by type, returning `None` if it is not registered or
+    /// not resolvable at this point (e.g. a scoped service under root scope
+    /// validation, or a disposed provider/scope).
+    ///
+    /// Uses [`Self::try_get_any_result`]; containers override it with an
+    /// infallible lookup so `try_get` never panics for framework-level failures.
     fn try_get<T: ?Sized + Sync + Send + 'static>(&self) -> Option<Arc<T>>
     where
         Self: Sized,
     {
         let type_name = std::any::type_name::<T>();
-        let tid = TypeId::of::<T>();
-        self.get_by_type_id(tid)
-            .or_else(|| self.get_any(type_name))
+        self.try_get_any_result(type_name)
+            .ok()
+            .flatten()
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
+    }
+
+    /// Fallible, type-erased lookup used by [`Self::try_get`].
+    ///
+    /// Default implementation delegates to [`Self::get_any`] (so external
+    /// resolvers keep working); containers that can fail override it so
+    /// infallible lookups can distinguish "absent" from "resolution error"
+    /// without panicking.
+    fn try_get_any_result(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_any(key))
     }
 
     /// Resolve a keyed service by type and key. Returns `Err` if not found.
@@ -130,24 +189,40 @@ pub trait IServiceResolver: Send + Sync {
             .ok_or_else(|| RdiError::keyed_not_found(type_name, variant, None))
     }
 
-    /// Resolve a keyed service by type and key, returning `None` if not found.
+    /// Resolve a keyed service by type and key, returning `None` if not found or
+    /// not resolvable at this point (e.g. root scope validation, disposed
+    /// provider/scope). Never panics for framework-level failures.
     fn try_get_keyed<T: ?Sized + Sync + Send + 'static>(&self, variant: &str) -> Option<Arc<T>>
     where
         Self: Sized,
     {
         let type_name = std::any::type_name::<T>();
-        let tid = TypeId::of::<T>();
-        self.get_keyed_by_type_id(tid, variant)
-            .or_else(|| self.get_keyed_any(type_name, variant))
+        self.try_get_keyed_any_result(type_name, variant)
+            .ok()
+            .flatten()
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
     }
 
-    /// Resolve all registered instances of `T` (default + keyed).
+    /// Fallible, type-erased keyed lookup used by [`Self::try_get_keyed`].
     ///
-    /// Equivalent to C# MEDI `GetServices<T>()`. Types implementing `IServiceResolver`
-    /// get this for free via `get_all_any`; types with an inherent `get_all<T>`
-    /// method (e.g. `ServiceProvider`, `Scope`) use that instead — Rust's method
-    /// resolution gives inherent methods priority over trait methods.
+    /// Default implementation delegates to [`Self::get_keyed_any`]; containers
+    /// override it to return `None`/`Err` without panicking.
+    fn try_get_keyed_any_result(
+        &self,
+        key: &str,
+        variant: &str,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, RdiError> {
+        Ok(self.get_keyed_any(key, variant))
+    }
+
+    /// Resolve all **unkeyed** registered instances of `T`, in registration
+    /// order.
+    ///
+    /// Equivalent to C# MEDI `GetServices<T>()` (which also excludes keyed
+    /// services). Types implementing `IServiceResolver` get this for free via
+    /// `get_all_any`; types with an inherent `get_all<T>` method (e.g.
+    /// `ServiceProvider`, `Scope`) use that instead — Rust's method resolution
+    /// gives inherent methods priority over trait methods.
     fn get_all<T: ?Sized + Sync + Send + 'static>(&self) -> Vec<Arc<T>>
     where
         Self: Sized,
