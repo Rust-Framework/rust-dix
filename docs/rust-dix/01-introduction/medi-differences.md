@@ -1,6 +1,6 @@
 # 与 MEDI 的差异清单
 
-> 适用版本：**rust-dix 0.9.0**。本文逐条列出 rust-dix
+> 适用版本：**rust-dix 0.9.1**（0.9.0 行为 + 文档补丁）。本文逐条列出 rust-dix
 > 与 Microsoft.Extensions.DependencyInjection（下称 MEDI，.NET 的依赖注入抽象）在**可观察行为**上的
 > 相同点与差异点，重点标注那些"看起来一样、实际不一样"的语义，供 .NET 迁移、评审与
 > 排障时对照。
@@ -26,7 +26,7 @@
 |----|------|
 | **MEDI 行为** | `GetRequiredService<T>()` / `GetService<T>()` 返回**最后注册**的那个实现（`IEnumerable<T>` 与 keyed 是例外，见 1.2）。 |
 | **rust-dix 0.9.x** | ✅ 同 MEDI。`get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 等**所有单实例路径**都遵循"最后注册优先"；同一 key 的 keyed 重复注册同样是后注册生效。 |
-| **是否对齐** | ✅ 对齐（0.7.x 曾按"先注册优先"，0.8.0 起修正）。 |
+| **是否对齐** | ✅ 对齐（0.7.x 曾按"先注册优先"，0.8.0 起（0.9.x 同样适用）修正）。 |
 | **迁移建议** | 0.7.x 中依赖"先注册优先"做覆盖的代码，改用 `try_add*`（未注册才添加）或调整注册顺序。 |
 
 ### 1.2 多实现：`get_all` 不含 keyed
@@ -136,7 +136,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 >   只在 dispose 时 drain 一次（dispose 幂等且之后 provider 已标记释放），因此请在
 >   dispose 之前注册。
 
-> **确定性构建顺序**：build 期**同步 singleton 按注册顺序创建**（0.8.0 起）、
+> **确定性构建顺序**：build 期**同步 singleton 按注册顺序创建**（0.8.0 起（0.9.x 同样适用））、
 > **async singleton 按依赖优先拓扑序递归初始化**（0.8.1 起），两者均确定、不依赖
 > `HashMap` 迭代顺序；释放按**创建逆序**进行，即"**后建的先释放、先建的后释放**"，
 > 构建与释放顺序均可复现。
@@ -342,7 +342,7 @@ let _ = provider.get::<AppConfig>(); // Err(ProviderDisposed)
 | `get_all` 含 keyed | `get_all` 仅非 keyed | keyed 实现改用 `get_all_keyed` |
 | root 直接解析 Scoped 并缓存 | 默认 `Err(ScopedFromRootProvider)` | 改用 `provider.scope()`；确需旧行为用 `ServiceProviderOptions::lenient()` |
 | `dispose` 仅覆盖显式注册的清理闭包 | Scope 自动逆序释放 Scoped 实例 + 逆序清理；新增 provider dispose | 应用关闭时显式 `provider.dispose()` |
-| 0.7.x singleton 初始化顺序不确定（HashMap） | 同步 singleton 按注册顺序；async singleton 依赖优先拓扑序（0.8.1+），两者均确定 | 依赖构建顺序的初始化逻辑可写文档化断言 |
+| 0.7.x singleton 初始化顺序不确定（HashMap） | 同步 singleton 按注册顺序；async singleton 依赖优先拓扑序（0.8.1 起，0.9.x 同样适用），两者均确定 | 依赖构建顺序的初始化逻辑可写文档化断言 |
 | `RdiError` 可被穷举匹配 | `#[non_exhaustive]` | 匹配处补 `_ =>` 分支 |
 | async singleton 要求依赖先注册（0.8.0 限制） | 0.8.1 起**注册顺序无关**、依赖驱动递归初始化；有环返回 `CircularDependency` | 无需迁移；原先合法的失败配置现在可构建 |
 | 从 root `get_owned` Scoped | **行为不变**：仍允许（owned 不缓存、不跟踪）；失败的是其 Scoped 依赖 | 无需迁移；依赖仍受严格校验，需要依赖时在 scope 内取 |

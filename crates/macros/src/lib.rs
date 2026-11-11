@@ -1,4 +1,51 @@
-//! rust-di procedural macros.
+//! Procedural macros for [`rust-dix`](https://docs.rs/rust-dix)
+//! (`rust-dix-macros`).
+//!
+//! This crate is an implementation detail of `rust-dix`; depend on
+//! `rust-dix`, which re-exports these macros (do not depend on this crate
+//! directly unless you have a specific reason).
+//!
+//! # Macros
+//!
+//! - [`macro@Inject`] — `#[derive(Inject)]` generates constructor injection
+//!   code from struct fields (fields marked `#[inject]`,
+//!   `#[inject(owned)]`, `#[inject(provider)]`, `#[inject(key = "...")]` or
+//!   `#[inject(owned, key = "...")]`).
+//! - [`macro@inject`] — attribute macro placed on structs or trait impls to
+//!   auto-register services with the container.
+//! - [`macro@module`] — compile-time module scan that collects
+//!   `register!()` declarations.
+//! - [`macro@register`] — function-like placeholder used inside
+//!   `#[rust_dix::module]`.
+//!
+//! # Example
+//!
+//! Illustrative only (the macros generate code that references `rust_dix`, so
+//! this proc-macro crate's doctests cannot link the core crate; the same
+//! patterns are compiled in `rust-dix`' test suite):
+//!
+//! ```rust,ignore
+//! use rust_dix::{inject, Inject};
+//! use std::sync::Arc;
+//!
+//! struct Config;
+//! trait IWorker: Send + Sync {}
+//!
+//! #[derive(Inject)]
+//! struct Worker {
+//!     #[inject]
+//!     config: Arc<Config>,
+//! }
+//!
+//! #[inject(singleton)]
+//! impl IWorker for Worker {}
+//! ```
+//!
+//! # Engineering baseline
+//!
+//! MSRV **Rust 1.95**; `#![forbid(unsafe_code)]`; errors are emitted as
+//! compile errors instead of panics where possible. See the
+//! [repository security policy](https://github.com/Rust-Framework/rust-dix/blob/main/SECURITY.md).
 
 #![forbid(unsafe_code)]
 

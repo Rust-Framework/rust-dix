@@ -22,8 +22,8 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 | Crate | 作用 | 适用人群 |
 |-------|------|----------|
-| [`rust-dix`](./crates/core/) | 核心 DI 容器 —— 注册、构建、解析、作用域 | 任何希望实现松耦合、可测试和可插拔架构的 Rust 应用 |
-| [`rust-dix-macros`](./crates/macros/) | 过程宏 —— `#[derive(Inject)]`、`#[rust_dix::inject]`、`#[rust_dix::module]` | 希望用编译期代码生成替代手工装配的 `rust-dix` 使用者 |
+| [`rust-dix`](./crates/core/README.zh.md) | 核心 DI 容器 —— 注册、构建、解析、作用域 | 任何希望实现松耦合、可测试和可插拔架构的 Rust 应用 |
+| [`rust-dix-macros`](./crates/macros/README.zh.md) | 过程宏 —— `#[derive(Inject)]`、`#[rust_dix::inject]`、`#[rust_dix::module]` | 希望用编译期代码生成替代手工装配的 `rust-dix` 使用者 |
 
 ## 快速开始
 
@@ -42,7 +42,7 @@ use std::sync::Arc;
 struct Config;
 
 #[rust_dix::inject(transient)]
-struct Worker { config: Arc<Config> }
+struct Worker { #[inject] config: Arc<Config> }
 
 let provider = ServiceCollection::from_injected()
     .build()
@@ -94,27 +94,18 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 
 ## 容器语义（0.9.x）
 
-rust-dix 0.9.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下是最容易踩坑的语义规则：
+rust-dix 0.9.x 将单服务解析对齐 MEDI，同时保留构建期安全。以下五条最易踩坑（完整语义：
+[docs/rust-dix/09-reference/semantics-0.9.md](docs/rust-dix/09-reference/semantics-0.9.md)）：
 
 | 规则 | 行为 |
 |------|------|
-| **最后注册优先** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 返回该服务**最后注册**的实现（keyed 同 key 也是后注册生效）。`try_add*` 仍是"未注册才添加"。 |
-| **类型化键与 `AnyKey`** | keyed API 接受 `impl Into<ServiceKey>`；`ServiceKey::new(value)` 支持 enum/整数键（`ServiceKey::new(1u32) != "1"`）。精确 key 注册优先；`keyed_any_*` 兜底覆盖其它 key 并按 (服务注册/类型, 请求 key) 缓存。`get_all_keyed()` 不含兜底，且用 `ServiceKey::any_key()` 做单值解析非法。 |
-| **`get_all` 不含 keyed** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` 只返回**非 keyed** 注册，按注册顺序。keyed 实现用 `get_all_keyed::<T>()`（仅显式 key，不含 AnyKey 兜底）。两者都包含**已初始化**的 async singleton；同步枚举**未初始化**的 async singleton/transient 返回/触发 `AsyncServiceRequiresGetAsync`（`get_all` 以 typed payload panic；`Vec` 注入返回 `Err`）；async **scoped** 在 root 上会被严格 scope 校验静默省略（在 `Scope` 内枚举才 panic）。 |
-| **默认严格 scope 校验** | 从 root `ServiceProvider` 解析 Scoped 服务（直接、或经 Transient 链间接）返回 `Err(RdiError::ScopedFromRootProvider)`；应在 `provider.scope()` 内解析 Scoped。不可返回错误的 API（`get_optional`、`get_all`、`get_all_keyed`、`try_*`）把该服务视为不可解析（`None`/空）。**例外**：`get_owned` / `try_get_owned`（含 keyed owned）允许从 root 解析 Scoped —— 实例归调用方、不进缓存/不被跟踪；但其构造函数内部解析的 Scoped 依赖仍受校验。 |
-| **回到 0.7.x 的 root-scope 行为** | `build_with(ServiceProviderOptions::lenient())`（即 `validate_scopes: false`）允许 root 解析 Scoped 并缓存为根内单例。 |
-| **dispose 契约** | `Scope::dispose()` / Drop 按**创建逆序**释放 scope 内实例，再按**注册逆序**执行清理闭包；之后解析返回 `Err(RdiError::ScopeDisposed)`。`ServiceProvider::dispose()` 对 singleton 与 root scoped 实例做同样处理、清空 named 注册，之后解析返回 `Err(RdiError::ProviderDisposed)`。两者均幂等。 |
-| **确定性构建顺序** | build 期**同步 singleton 按注册顺序创建**、**async singleton 按依赖优先拓扑序递归初始化**，两者均确定、不依赖 `HashMap` 迭代顺序；构建与释放顺序可复现。 |
-| **async 环检测** | 无上下文的自引用/交叉递归按解析链检测；跨任务请把 `sp.async_context()` 捕获后 clone 进 spawned task 并经 ctx 解析——有环返回 `CircularDependency` 而不是死锁。 |
-| **async 依赖方向** | 同步 singleton 不能依赖 async 服务（build 期 `SyncSingletonDependsOnAsyncService`）；用 `get_async` 解析 async 服务，并让依赖方也保持 async。 |
-| **构造期解析被拒绝** | 在 build 期构造函数内通过注入的 provider 解析服务会返回类型化 `FactoryPanic`；请保存句柄、在方法中延迟解析。 |
+| **最后注册优先** | `get` / `get_keyed*` / `get_owned` / `get_async` 返回**最后注册**的实现（keyed 同 key 后注册生效）；`try_add*` = "未注册才添加"。 |
+| **默认严格 scope 校验** | root 解析 Scoped 返回 `ScopedFromRootProvider`，应在 `provider.scope()` 内解析；`get_owned`/keyed owned 是调用方持有例外（不进缓存/不跟踪，传递 Scoped 依赖仍校验）。 |
+| **类型化键与 `AnyKey`** | keyed API 接受 `impl Into<ServiceKey>`；精确 key 优先于 `keyed_any_*`；AnyKey 按 **(注册/类型, 请求 key)** 缓存；`get_all_keyed` 不含兜底；`any_key()` 不能做单值解析。 |
+| **异步解析与枚举** | async 服务用 `get_async`（同步 `get` → `AsyncServiceRequiresGetAsync`，`get_optional` → `None`）；跨任务环需 `AsyncFactoryContext`；枚举只含已初始化 async singleton（未初始化 → typed panic/`Err`）。 |
+| **诊断与基线** | `is_circular()` 为启发式；MSRV 1.95、`#![forbid(unsafe_code)]`、CI matrix + `cargo audit`，见 [SECURITY.md](SECURITY.md)。 |
 
-0.9.0 新增：`ServiceKey` / `KeyedService::any_key()`（类型化键 + `AnyKey` 兜底）、
-`keyed_any_*` 注册、`AsyncFactoryContext`（`provider.async_context()`）、
-`RdiError::{SyncSingletonDependsOnAsyncService, AsyncServiceRequiresGetAsync}` 与
-`is_circular()`（**启发式**；需要精确形态时优先匹配 typed 变体）、MSRV 1.95、
-`#![forbid(unsafe_code)]`、CI matrix + RustSec audit 与
-[SECURITY.md](SECURITY.md)。与 MEDI 的逐条差异见
+0.9 新增：`ServiceKey`/`AnyKey`、`AsyncFactoryContext`、精确诊断与安全基线。与 MEDI 的逐条差异见
 [docs/rust-dix/01-introduction/medi-differences.md](docs/rust-dix/01-introduction/medi-differences.md)。
 
 ## 什么时候应该使用 rust-dix？
@@ -562,9 +553,10 @@ async fn main() {
 
 ## 延伸阅读
 
-- [crates/core —— 核心库文档](./crates/core/README.md)
-- [crates/macros —— 过程宏文档](./crates/macros/README.md)
+- [crates/core —— 核心库文档（中文）](./crates/core/README.zh.md)
+- [crates/macros —— 过程宏文档（中文）](./crates/macros/README.zh.md)
 - [与 MEDI 的差异清单（scope 校验、dispose、keyed、get_all）](docs/rust-dix/01-introduction/medi-differences.md) —— .NET 迁移必读
+- [参考章：0.9 语义权威页 / 错误目录 / 生产检查清单](docs/rust-dix/09-reference/INDEX.md)
 - [业务场景教程](docs/rust-dix/08-best-practices/business-scenarios.md) —— 真实模式
 - [安全策略](./SECURITY.md) —— 漏洞上报、支持版本与安全边界
 - [变更日志](./CHANGELOG.md) —— 发布历史

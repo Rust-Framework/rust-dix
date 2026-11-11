@@ -44,7 +44,7 @@ use rust_dix::*;
 struct Config;
 
 #[rust_dix::inject(transient)]
-struct Worker { dep: Arc<Config> }
+struct Worker { #[inject] dep: Arc<Config> }
 ```
 
 **放置位置 2 — 在 trait impl 上**（注册为 `dyn Trait`，自动推断）：
@@ -53,7 +53,7 @@ struct Worker { dep: Arc<Config> }
 trait UserRepo { /* ... */ }
 
 #[rust_dix::inject(transient)]   // 先在 struct 上
-struct PgUserRepo { db: Arc<DbPool> }
+struct PgUserRepo { #[inject] db: Arc<DbPool> }
 
 #[rust_dix::inject]              // 再在 impl 上 — 注册为 `dyn UserRepo`
 impl UserRepo for PgUserRepo { /* ... */ }
@@ -91,6 +91,7 @@ struct UnitService;  // 单元结构体 — 支持！
 
 #[rust_dix::inject(transient)]
 struct NamedService {
+    #[inject]
     dep: Arc<UnitService>,
 }
 ```
@@ -243,33 +244,22 @@ rust_dix::register!(singleton: MyService);
 
 ### 行为说明（0.9.x）
 
-宏本身在 0.9.x 没有变化，但它们接入的容器语义变了：
+宏本身在 0.9.x 没有变化，但接入的容器语义如下（完整语义：
+[0.9 语义权威页](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md)）：
 
-- **单服务解析为"最后注册优先"**（对齐 MEDI）。同一类型注册两次（例如
-  `#[rust_dix::inject]` 自动注册 + 手动 `singleton` 覆盖）时，`get()` 返回
-  **后注册**的实现；需要"未注册才添加"请用 `try_add*`。
-- **`Vec<Arc<T>>` 注入只收集非 keyed 注册**（按注册顺序；不含 `AnyKey` 兜底）。它包含
-  **已初始化**的 async singleton；同步注入 `Vec` 时若 async singleton 未初始化（或服务是
-  async scoped/transient）返回 `Err(AsyncServiceRequiresGetAsync)`——async scoped/transient
-  请改用 `get_async` 逐项解析。
-- **keyed 注册仍需手动**：`#[inject]` 不表达 key。用 `keyed_*` / `keyed_any_*` +
-  `impl Into<ServiceKey>`（字符串或类型化 `ServiceKey`）。`get_all_keyed` 只列显式 key，
-  不含 `AnyKey` 兜底。字符串键用 `"x".into()` / `ServiceKey::from("x")`
-  （`ServiceKey::new("x")` 是 `&str` typed key，与 `keyed_singleton("x", …)` 的 `String`
-  key 不相等）。
-- **异步诊断**：含 `async_*` 注册的服务必须用 `get_async` 解析（同步解析返回
-  `AsyncServiceRequiresGetAsync`）；同步 singleton 不能依赖 async 服务（build 期
-  `SyncSingletonDependsOnAsyncService`）。脱离任务请传 `AsyncFactoryContext` 以获得跨任务
-  环检测。
-- **默认严格 scope 校验**：从 root provider 解析 Scoped 服务返回
-  `Err(RdiError::ScopedFromRootProvider)`。请求级服务标注 `#[inject(scoped)]`，
-  并在 `provider.scope()` 内解析。
-- **dispose 显式且有序**：`Scope::dispose()` / Drop 按创建逆序释放 scoped 实例；
-  `ServiceProvider::dispose()` 释放 singleton 与 root scoped 实例。构造期通过注入
-  provider 解析服务会返回类型化 `FactoryPanic`。
-
-> **MSRV**：Rust 1.95。两个 crate 均 `#![forbid(unsafe_code)]`；CI 跑测试 + RustSec
-> `cargo audit`，详见 `SECURITY.md`。
+- **最后注册优先**：同类型/同 key 注册两次时 `get`/`get_keyed` 返回后注册者；需要
+  "未注册才添加"用 `try_add*`。
+- **`Vec<Arc<T>>` 注入**：仅非 keyed（按注册顺序，不含 `AnyKey` 兜底），并包含**已初始化**
+  async singleton；未初始化 async（或 async scoped/transient）→
+  `Err(AsyncServiceRequiresGetAsync)`，async scoped/transient 请用 `get_async`。
+- **keyed 注册仍需手动**：`#[inject]` 不表达 key；用 `keyed_*`/`keyed_any_*` +
+  `impl Into<ServiceKey>`；字符串键用 `"x".into()`/`ServiceKey::from("x")`
+  （`ServiceKey::new("x")` 是 `&str`，与字符串注册的 `String` key 不相等）。
+- **async 与 scope**：同步解析 async 服务 → `AsyncServiceRequiresGetAsync`；同步 singleton
+  依赖 async 服务 → `SyncSingletonDependsOnAsyncService`；跨任务传 `AsyncFactoryContext`；
+  默认严格 scope 校验（root Scoped → `ScopedFromRootProvider`）。
+- **MSRV/安全**：Rust 1.95；两个 crate `#![forbid(unsafe_code)]`；CI 跑测试 + RustSec
+  `cargo audit`，详见 `SECURITY.md`。
 
 ---
 

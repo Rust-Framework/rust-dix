@@ -50,7 +50,7 @@ use rust_dix::*;
 struct Config;
 
 #[rust_dix::inject(transient)]
-struct Worker { dep: Arc<Config> }
+struct Worker { #[inject] dep: Arc<Config> }
 ```
 
 **Placement 2 — on a trait impl** (registers as `dyn Trait`, auto-detected):
@@ -59,7 +59,7 @@ struct Worker { dep: Arc<Config> }
 trait UserRepo { /* ... */ }
 
 #[rust_dix::inject(transient)]   // on the struct first
-struct PgUserRepo { db: Arc<DbPool> }
+struct PgUserRepo { #[inject] db: Arc<DbPool> }
 
 #[rust_dix::inject]              // then on the impl — registers as `dyn UserRepo`
 impl UserRepo for PgUserRepo { /* ... */ }
@@ -99,6 +99,7 @@ struct UnitService;  // unit struct — works!
 
 #[rust_dix::inject(transient)]
 struct NamedService {
+    #[inject]
     dep: Arc<UnitService>,
 }
 ```
@@ -268,39 +269,26 @@ rust_dix::register!(singleton: MyService);
 
 ### Behavior notes (0.9.x)
 
-The macros themselves are unchanged in 0.9.x, but the container semantics they
-feed into are:
+The macros themselves are unchanged in 0.9.x, but the container semantics they feed into
+are (full details:
+[0.9 semantics](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/semantics-0.9.md)):
 
-- **Single-service resolution is "last registration wins"** (MEDI parity). If the
-  same type is registered twice — e.g. an `#[rust_dix::inject]` auto-registration
-  plus a manual `singleton` override — the *last* registration is what `get()`
-  returns. Use `try_add*` when you want "only add if absent".
-- **`Vec<Arc<T>>` injection only collects non-keyed registrations** (registration
-  order; `AnyKey` fallbacks excluded). It includes **already-initialized** async
-  singletons; synchronously injecting `Vec` while an async singleton is uninitialized
-  (or for async scoped/transient) returns `Err(AsyncServiceRequiresGetAsync)` — resolve
-  async scoped/transient services with `get_async` instead.
+- **Last registration wins**: same type/key registered twice → the later one is returned by
+  `get`/`get_keyed`; use `try_add*` for "only add if absent".
+- **`Vec<Arc<T>>` injection**: non-keyed registrations only (registration order; `AnyKey`
+  fallbacks excluded), and includes **already-initialized** async singletons. Uninitialized
+  async (or async scoped/transient) → `Err(AsyncServiceRequiresGetAsync)`; resolve async
+  scoped/transient with `get_async`.
 - **Keyed registration stays manual**: `#[inject]` does not express keys. Use
-  `keyed_*` / `keyed_any_*` with `impl Into<ServiceKey>` (strings or typed
-  `ServiceKey` values). `get_all_keyed` lists explicit keys only; `AnyKey`
-  fallbacks are excluded. For string keys use `"x".into()` / `ServiceKey::from("x")`
-  (`ServiceKey::new("x")` is a `&str`-typed key and is *not* the `String` key stored
-  by `keyed_singleton("x", …)`).
-- **Async diagnostics**: types with `async_*` registrations must be resolved with
-  `get_async` (`AsyncServiceRequiresGetAsync` for sync resolution); sync singletons
-  must not depend on async services (`SyncSingletonDependsOnAsyncService` at build).
-  Propagate `AsyncFactoryContext` into spawned tasks for cross-task cycle detection.
-- **Strict scope validation is the default**: resolving a Scoped service from the
-  root provider returns `Err(RdiError::ScopedFromRootProvider)`. Annotate
-  request-scoped services with `#[inject(scoped)]` and resolve them inside
-  `provider.scope()`.
-- **Dispose is explicit and ordered**: `Scope::dispose()` / Drop releases scoped
-  instances in reverse creation order; `ServiceProvider::dispose()` releases
-  singletons and root-scoped instances. Constructor-time resolution through an
-  injected provider is rejected with a typed `FactoryPanic`.
-
-> **MSRV**: Rust 1.95. Both crates are `#![forbid(unsafe_code)]`; CI runs tests plus
-> RustSec `cargo audit` — see `SECURITY.md`.
+  `keyed_*` / `keyed_any_*` with `impl Into<ServiceKey>`; string keys use
+  `"x".into()` / `ServiceKey::from("x")` (`ServiceKey::new("x")` is a `&str` key, not the
+  `String` key stored by `keyed_singleton("x", …)`).
+- **Async & scope**: sync resolution of async services → `AsyncServiceRequiresGetAsync`;
+  sync singleton → async dependency → `SyncSingletonDependsOnAsyncService`; propagate
+  `AsyncFactoryContext` into spawned tasks. Strict scope validation is the default (root
+  Scoped → `ScopedFromRootProvider`).
+- **MSRV/safety**: Rust 1.95; both crates `#![forbid(unsafe_code)]`; CI runs tests plus
+  RustSec `cargo audit` — see `SECURITY.md`.
 
 ---
 

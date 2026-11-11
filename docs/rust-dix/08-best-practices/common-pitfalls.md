@@ -160,7 +160,7 @@ impl ServiceA {
 
 ### 现象
 
-0.8.0 起从根 Provider 解析 Scoped 服务直接报错，而不是像旧版本那样在根内缓存复用：
+0.8.0 起（0.9.x 同样适用）从根 Provider 解析 Scoped 服务直接报错，而不是像旧版本那样在根内缓存复用：
 
 ```
 Err(RdiError::ScopedFromRootProvider { service: "…Session" })
@@ -170,7 +170,7 @@ Err(RdiError::ScopedFromRootProvider { service: "…Session" })
 
 ### 原因
 
-0.8.0 默认开启严格 scope 校验（`ServiceProviderOptions::default()`，
+0.8.0 起默认开启严格 scope 校验（0.9.x 同样适用）（`ServiceProviderOptions::default()`，
 `validate_scopes: true`，对齐 ASP.NET Core 开发环境的 `ValidateScopes`）。root
 provider 解析 Scoped 服务（含经 Transient 链间接解析）返回
 `Err(ScopedFromRootProvider)`；不可返回错误的 API（`get_optional` / `get_all` /
@@ -483,25 +483,18 @@ struct OutboxWorker {
 
 ### 原因
 
-AnyKey 兜底（对齐 MEDI `KeyedService.AnyKey`）有以下语义（0.9.0）：
+AnyKey 兜底（对齐 MEDI `KeyedService.AnyKey`）要点（完整语义：
+[0.9 语义权威页](../09-reference/semantics-0.9.md#2-anykey-兜底)）：
 
-1. `get_all_keyed` **只列显式 key**，不含 AnyKey 兜底；单值不能用 `any_key()` 哨兵
-   （`get_keyed(any_key())` → `Err`，`is_registered_keyed(any_key())` → `false`）。
-2. singleton/scoped 兜底实例**按 (服务注册/类型, 被请求 key) 分别缓存**（同一注册 + 同一 key
-   复用，不同 key 或不同 AnyKey 注册各自独立；scoped 每 scope 每 (注册, key) 一份），
-   transient 每次新建。
-3. AnyKey 注册仅同步（`get_keyed_async` 回退同步路径），build 期不做 eager 初始化/单独校验；
-   `keyed_any_scoped` 被同步 singleton 依赖时仍按 captive dependency 拒绝。
-4. **validation 预填充**：build 期同步 singleton 按某请求 key 消费 AnyKey singleton 后，该
-   实例会写入 **(注册, 请求 key) 缓存**，运行时同注册同 key 复用**同一实例**（单次初始化、
-   多消费者共享一次构造）；不要以为 validation 期创建后运行时会再构建一次。
-5. **owned 例外**：AnyKey 的 scoped/transient `get_keyed_owned` / `try_get_keyed_owned` 在
-   strict root 下**允许**（不进缓存/不跟踪，传递依赖仍受 scope 校验）；不要以为会报
-   `ScopedFromRootProvider`。
-6. **嵌套 key 合法**：AnyKey 工厂内嵌套解析**不同请求 key** 不会误报环；只有同一注册 +
-   同一请求 key 的重入才是环。
-7. 工厂里的 `&ServiceKey` 可 `Debug`/`Display`/`Eq`/`Hash`，但**没有** typed downcast
-   访问器（擦除表示私有，属有意设计）；按 key 分支请用相等/hash 或闭包捕获类型信息。
+1. `get_all_keyed` 只列显式 key，不含兜底；`any_key()` 不能做单值解析
+   （`is_registered_keyed(any_key()) == false`）。
+2. singleton/scoped 实例**按 (注册/类型, 请求 key) 缓存**（同注册同 key 复用，不同 key 或不同
+   AnyKey 注册独立；scoped 每 scope 每份）；validation 期消费的 singleton 预填充缓存，运行时
+   同注册同 key 复用同一实例（单次构造）。
+3. owned 例外：scoped/transient 的 `get_keyed_owned`/`try_get_keyed_owned` 在 strict root
+   允许（不进缓存，传递依赖仍校验）；工厂内嵌套**不同**请求 key 合法。
+4. 仅同步注册、不 eager 初始化；`keyed_any_scoped` 被同步 singleton 捕获仍 captive；工厂
+   `&ServiceKey` 仅 `Debug`/`Display`/`Eq`/`Hash`，无 typed downcast 访问器。
 
 ### 排查
 
@@ -613,10 +606,10 @@ provider.get_keyed::<dyn ITrait>(ServiceKey::new(EnumKey::X))?;
 | `get_keyed(any_key())` 返回 Err | AnyKey 哨兵不能做单值解析 | 用具体 key（字符串/`ServiceKey::new`）解析 |
 | async 工厂 spawn 任务后 build hang | 未传 `AsyncFactoryContext`，解析链断开 | 工厂内 `sp.async_context()`，clone 进任务用 `ctx.get_async`；`is_circular()` 为启发式 |
 | `SyncSingletonDependsOnAsyncService` | 同步 singleton 依赖 async 服务 | 依赖方改 async singleton，或方法内 `ScopeFactory`/`get_async` 延迟解析 |
-| `AsyncServiceRequiresGetAsync` | 同步 `get`/`get_optional` 解析 async 服务 | 改用 `get_async`/`get_keyed_async` |
+| `AsyncServiceRequiresGetAsync` | 同步 `get` 解析 async 服务（`get_optional` 返回 `None`，不报错） | 改用 `get_async`/`get_keyed_async` |
 | `AsyncServiceRequiresBuildAsync` | 含 `async_*` 注册却调 `build()` | 改用 `build_async()` |
-| 编译失败：工具链低于 MSRV | 0.9.0 MSRV 为 Rust **1.95** | 升级工具链；CI 覆盖 1.95/stable 并跑 `cargo audit`/clippy 零警告 |
-| 后注册的实现没生效 | 0.8.0 为最后注册优先，先注册的被后注册覆盖 | 检查注册顺序；需要"未注册才添加"用 `try_add*` |
+| 编译失败：工具链低于 MSRV | 0.9.x MSRV 为 Rust **1.95** | 升级工具链；CI 覆盖 1.95/stable 并跑 `cargo audit`/clippy 零警告 |
+| 后注册的实现没生效 | 0.8.0 起为最后注册优先（0.9.x 同样适用），先注册的被后注册覆盖 | 检查注册顺序；需要"未注册才添加"用 `try_add*` |
 | dispose 后解析报 `ScopeDisposed` / `ProviderDisposed` | 容器/作用域已释放 | 不要把已 dispose 的 provider/scope 继续传递使用 |
 | 栈溢出 | 循环依赖 | 重构或延迟解析 |
 | 编译失败 | 元组结构体 | 改命名结构体 |

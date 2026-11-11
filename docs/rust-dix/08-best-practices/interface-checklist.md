@@ -48,7 +48,9 @@ pub struct User {
 // struct 用 #[derive(Inject)] 仅生成构造函数（不注册），impl 用 #[inject] 注册为 dyn IUserService
 #[derive(Inject)]
 pub struct UserService {
+    #[inject]
     db: Arc<dyn IDbContext>,       // 接口依赖
+    #[inject]
     logger: Arc<dyn ILogger>,      // 接口依赖
 }
 
@@ -117,12 +119,9 @@ let logger: Arc<dyn ILogger> = provider.get()?;  // Err: TypeId 不匹配
 
 | 场景 | 注册方式 |
 |------|---------|
-| 默认策略 | `.singleton::<dyn Trait>(...)` |
-| 替代策略 | `.keyed_singleton::<dyn Trait>("name", ...)` |
-| 类型化键 | `.keyed_singleton::<dyn Trait>(ServiceKey::new(EnumKey::A), ...)` |
-| 任意 key 兜底 | `.keyed_any_singleton::<dyn Trait>(\|_, key\| ...)`（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存） |
-| 批量获取（非 keyed） | `.get_all::<dyn Trait>()` |
-| 批量获取（显式 keyed） | `.get_all_keyed::<dyn Trait>()`（不含 AnyKey 兜底） |
+| 默认 + 替代策略 | `.singleton::<dyn Trait>(...)` + `.keyed_singleton::<dyn Trait>("name", ...)` |
+| 类型化键 / 任意 key 兜底 | `ServiceKey::new(EnumKey::A)` / `.keyed_any_singleton::<dyn Trait>(\|_, key\| ...)` |
+| 批量获取 | 非 keyed 用 `.get_all()`；显式 keyed 用 `.get_all_keyed()`（不含 AnyKey 兜底） |
 
 ```rust
 // ✅ 多实现注册（字符串或类型化 ServiceKey 均可）
@@ -135,7 +134,8 @@ ServiceCollection::new()
     .unwrap();
 ```
 
-> 注意：`get_all_keyed` 不含 AnyKey 兜底；`get_keyed(ServiceKey::any_key())` 非法。
+> AnyKey 语义（缓存维度、预填充、owned/嵌套例外）见
+> [0.9 语义权威页](../09-reference/semantics-0.9.md#2-anykey-兜底)。
 
 ### 多接口注册
 
@@ -269,7 +269,7 @@ fn handle_request(provider: &Arc<ServiceProvider>, req: Request) {
     handler.handle(&uow, req);
 } // scope Drop → 按创建逆序释放 scoped 实例
 
-// ❌ 错误：0.8.0 默认严格 scope 校验下，root provider 解析 Scoped 返回 Err
+// ❌ 错误：0.8.0 起默认严格 scope 校验（0.9.x 同样适用）下，root provider 解析 Scoped 返回 Err
 let provider = ServiceCollection::new()
     .scoped(|_| Arc::new(Session))
     .build()
@@ -341,7 +341,7 @@ fn test_create_user() {
 | 容器 | 是否只构建一次 |
 | 测试 | 是否可替换 mock |
 
-### 工程基线（0.9.0）
+### 工程基线（0.9.x）
 
 | 项 | 要求 |
 |----|------|

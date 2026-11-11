@@ -43,7 +43,7 @@ use std::sync::Arc;
 struct Config;
 
 #[rust_dix::inject(transient)]
-struct Worker { config: Arc<Config> }
+struct Worker { #[inject] config: Arc<Config> }
 
 let provider = ServiceCollection::from_injected()
     .build()
@@ -96,28 +96,19 @@ let pool: Arc<DbPool> = provider.get_async().await.unwrap();
 ## Container semantics (0.9.x)
 
 rust-dix 0.9.x aligns single-service resolution with MEDI while keeping build-time
-safety. The rules that most often surprise new users:
+safety. The five rules that most often surprise new users (full semantics:
+[docs/rust-dix/09-reference/semantics-0.9.md](docs/rust-dix/09-reference/semantics-0.9.md)):
 
 | Rule | Behavior |
 |------|----------|
-| **Last registration wins** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` return the **last** registration of a service (same key for keyed). `try_add*` still means "only add if absent". |
-| **Typed keys & `AnyKey`** | Keyed APIs accept `impl Into<ServiceKey>`; `ServiceKey::new(value)` enables enum/integer keys (`ServiceKey::new(1u32) != "1"`). Exact-key registrations win; an `AnyKey` fallback (`keyed_any_*`) covers other keys and caches per (registration/type, requested key). `get_all_keyed()` excludes the fallback, and resolving **with** `ServiceKey::any_key()` is invalid. |
-| **`get_all` is unkeyed-only** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` return **non-keyed** registrations in registration order. Use `get_all_keyed::<T>()` for keyed implementations (explicit keys only). Both include **already-initialized** async singletons; synchronously enumerating an uninitialized async singleton/transient yields `AsyncServiceRequiresGetAsync` (`get_all` panics with a typed payload; `Vec` injection returns `Err`); an async **scoped** service enumerated at the root is omitted by strict scope validation (panics only inside a `Scope`). |
-| **Strict scope validation (default)** | Resolving a Scoped service from the root `ServiceProvider` (directly or through a transient chain) returns `Err(RdiError::ScopedFromRootProvider)`. Resolve Scoped services inside `provider.scope()`. APIs that cannot return an error (`get_optional`, `get_all`, `get_all_keyed`, `try_*`) treat that service as unresolvable (`None`/empty). **Exception**: `get_owned` / `try_get_owned` (and keyed owned) may resolve a Scoped service from the root — the instance is caller-owned, never cached or tracked; Scoped dependencies resolved *inside* its constructor still obey validation. |
-| **Opting into 0.7.x root-scope behavior** | `build_with(ServiceProviderOptions::lenient())` (i.e. `validate_scopes: false`) lets the root provider resolve and cache Scoped services as root-local singletons. |
-| **Dispose contracts** | `Scope::dispose()` / `Drop` releases the scope's instances in reverse creation order, then runs cleanup closures in reverse registration order; afterwards resolution returns `Err(RdiError::ScopeDisposed)`. `ServiceProvider::dispose()` does the same for singletons and root-scoped instances, clears the named registry, and afterwards returns `Err(RdiError::ProviderDisposed)`. Both are idempotent. |
-| **Deterministic build order** | Sync singletons are created in registration order; async singletons are initialized in a dependency-first topological order. Both are deterministic and independent of `HashMap` iteration order, so construction and disposal order are reproducible. |
-| **Async cycle detection** | Context-free self/cross recursion is detected via the per-resolution chain. For detached tasks, capture `sp.async_context()` inside the factory and resolve through the cloned context — cycles then return `CircularDependency` instead of dead-locking. |
-| **Async dependency direction** | A sync singleton must not depend on an async service (`SyncSingletonDependsOnAsyncService` at build); resolve async services with `get_async` and make dependents async. |
-| **Constructor-time resolution is rejected** | Resolving through an injected provider inside a build-time constructor returns a typed `FactoryPanic`; store the handle and resolve lazily in methods. |
+| **Last registration wins** | `get` / `get_keyed*` / `get_owned` / `get_async` return the last registration (same key for keyed); `try_add*` = "only add if absent". |
+| **Strict scope validation (default)** | Root resolution of Scoped returns `ScopedFromRootProvider`; resolve inside `provider.scope()`. Owned `get_owned`/keyed owned is the caller-owned exception (not cached/tracked; transitive Scoped deps still validated). |
+| **Typed keys & `AnyKey`** | Keyed APIs take `impl Into<ServiceKey>`; exact key wins over `keyed_any_*`; AnyKey caches per **(registration/type, requested key)**; `get_all_keyed` excludes fallbacks; `any_key()` is invalid for single resolution. |
+| **Async: resolve & enumerate** | Async services use `get_async` (sync `get` → `AsyncServiceRequiresGetAsync`, `get_optional` → `None`); cross-task cycles need `AsyncFactoryContext`; enumeration includes initialized async singletons only (uninitialized → typed panic/`Err`). |
+| **Diagnostics & baseline** | `is_circular()` is heuristic; MSRV 1.95, `#![forbid(unsafe_code)]`, CI matrix + `cargo audit`, see [SECURITY.md](SECURITY.md). |
 
-New in 0.9.0: `ServiceKey` / `KeyedService::any_key()` (typed keys + `AnyKey` fallback),
-`keyed_any_*` registration, `AsyncFactoryContext` (`provider.async_context()`),
-`RdiError::{SyncSingletonDependsOnAsyncService, AsyncServiceRequiresGetAsync}` and
-`is_circular()` (a **heuristic** — prefer matching the typed variant when the exact shape
-matters), MSRV 1.95, `#![forbid(unsafe_code)]`, CI matrix + RustSec audit and
-[SECURITY.md](SECURITY.md). For a full MEDI comparison see
-[docs/rust-dix/01-introduction/medi-differences.md](docs/rust-dix/01-introduction/medi-differences.md).
+New in 0.9: `ServiceKey`/`AnyKey`, `AsyncFactoryContext`, precise diagnostics, MSRV 1.95 and
+the security baseline. MEDI comparison: [medi-differences](docs/rust-dix/01-introduction/medi-differences.md).
 
 ## When should you use rust-dix?
 
@@ -278,7 +269,7 @@ assert!(provider.get_keyed::<dyn IDbConnection>(ServiceKey::from("1")).is_err())
 receives the requested key, and singleton/scoped fallback instances are cached
 **per (registration/type, requested key)** — same registration + key reuses one instance;
 different keys or different `AnyKey` registrations stay independent (scoped: per scope per
-(registration, key))::
+(registration, key))
 
 ```rust
 let provider = ServiceCollection::new()
@@ -584,6 +575,7 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 - [crates/core — core library docs](./crates/core/README.md)
 - [crates/macros — procedural macro docs](./crates/macros/README.md)
 - [Differences from MEDI (scope validation, dispose, keyed, get_all)](docs/rust-dix/01-introduction/medi-differences.md) — read this if you come from .NET
+- [Reference: 0.9 semantics, RdiError catalog, production checklist](docs/rust-dix/09-reference/INDEX.md)
 - [Business scenario tutorials](docs/rust-dix/08-best-practices/business-scenarios.md) — real-world patterns
 - [Security policy](./SECURITY.md) — vulnerability reporting, supported versions, security boundaries
 - [Changelog](./CHANGELOG.md) — release history

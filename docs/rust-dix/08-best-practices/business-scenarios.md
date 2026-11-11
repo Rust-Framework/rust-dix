@@ -600,16 +600,14 @@ impl OutboxWorker {
 
 | 主题 | 0.9.x 行为 | 场景中的影响 |
 |------|-----------|--------------|
-| 单服务解析 | 最后注册优先 | 测试/组合根用"后注册 mock"覆盖默认实现；需要"未注册才添加"用 `try_add*` |
-| 多实现收集 | `get_all` 仅非 keyed；keyed 用 `get_all_keyed`（不含 AnyKey 兜底）；含已初始化 async singleton，同步枚举未初始化 async singleton/transient → `AsyncServiceRequiresGetAsync`（async scoped 在 root 被 scope 校验省略） | 观察者广播（场景 4/5）把广播目标注册为非 keyed；async scoped/transient 用 `get_async` 逐项解析 |
-| 类型化键 / AnyKey | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 兜底（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、validation 预填充复用、AnyKey owned 在 root 允许、嵌套不同 key 合法）；字符串键用 `from/into` | 多租户/策略选择可用 enum 键；任意 key 场景用 AnyKey 兜底 |
-| Scope 校验 | 默认严格：root 解析 Scoped 报 `ScopedFromRootProvider`（owned 例外，含 AnyKey scoped/transient owned） | 场景 1/3 的请求级服务必须在 `provider.scope()` 内解析 |
-| 释放契约 | `Scope::dispose()` / Drop 逆序释放；新增 `ServiceProvider::dispose()` | Web 服务器关闭、后台 worker 停止时显式释放 |
-| 构建顺序 | **同步 singleton 按注册顺序创建**；async singleton 依赖驱动递归初始化（注册顺序无关） | 异步基础设施（场景 1 的 DbPool/Redis）按依赖关系初始化，依赖图需无环 |
-| async 诊断/环检测 | 同步解析/枚举 async 服务报 `AsyncServiceRequiresGetAsync`；同步 singleton 不能依赖 async 服务；跨任务传 `AsyncFactoryContext`，环返回 `CircularDependency` | 场景 6 后台任务若在 spawn 任务中解析依赖，需传 ctx；`is_circular()` 为启发式判定 |
-| 工程基线 | MSRV **1.95**、`#![forbid(unsafe_code)]`、CI matrix + RustSec `cargo audit`、`SECURITY.md` | CI/部署环境按 1.95 配置 |
+| 单服务/多实现 | 最后注册优先；`get_all`/`Vec` 仅非 keyed，keyed 用 `get_all_keyed` | 测试用后注册 mock；观察者广播注册为非 keyed |
+| 类型化键/AnyKey | keyed API 取 `impl Into<ServiceKey>`；AnyKey 按 (注册/类型, key) 缓存、预填充/owned/嵌套有例外 | 多租户/策略用 enum 键；"任意 key"用 `keyed_any_*` |
+| Scope/释放 | 默认严格（owned 例外）；dispose 逆序幂等 | 请求级服务在 scope 内解析；关闭时显式 dispose |
+| async | 同步解析 async → `AsyncServiceRequiresGetAsync`；跨任务传 `AsyncFactoryContext` | 场景 6 后台任务 spawn 内解析需传 ctx |
+| 基线 | MSRV 1.95、`forbid(unsafe_code)`、CI/audit、`SECURITY.md` | CI/部署按 1.95 配置 |
 
-> 逐条差异与迁移见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
+完整语义见 [0.9 语义权威页](../09-reference/semantics-0.9.md)，错误处理见
+[错误目录](../09-reference/error-catalog.md)。
 
 ## 生命周期选择速查
 

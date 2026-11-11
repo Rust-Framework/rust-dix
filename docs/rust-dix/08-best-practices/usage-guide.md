@@ -398,21 +398,17 @@ fn build() -> Result<ServiceProvider, RdiError> {
 
 ## 8. 0.9.x 语义要点（必读）
 
-0.8.0 起容器语义对齐 MEDI；**0.9.0** 新增类型化键 / `AnyKey` 兜底 / `AsyncFactoryContext` /
-精确诊断，并把 async 环检测升级为解析链。以下要点直接影响本文的注册与解析建议：
+**0.8.0 起（0.9.x 同样适用）**容器语义对齐 MEDI；0.9 新增类型化键 / `AnyKey` 兜底 /
+`AsyncFactoryContext` / 精确诊断。以下 5 条直接影响本文建议，完整语义见
+[0.9 语义权威页](../09-reference/semantics-0.9.md)：
 
 | 主题 | 0.9.x 行为 | 对本指南的影响 |
 |------|-----------|----------------|
-| 单服务解析 | **最后注册优先**（`get` / `get_keyed` / `get_owned` / `get_async`） | 覆盖 mock / 默认实现：后注册的生效；要"未注册才添加"用 `try_add*` |
-| 多实现收集 | `get_all` / `#[inject] Vec<Arc<T>>` **仅非 keyed**，按注册顺序；含**已初始化** async singleton，同步枚举未初始化 async singleton/transient → `AsyncServiceRequiresGetAsync`（`get_all` typed panic，`Vec` 注入 `Err`；async scoped 在 root 被 scope 校验省略） | keyed 策略实现用 `get_all_keyed`；观察者广播用非 keyed 注册；async scoped/transient 用 `get_async` 逐项解析 |
-| 类型化键 / AnyKey | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 兜底（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、枚举不含兜底、单值 any_key 非法）；`ServiceKey::new("x")`（&str）≠ 字符串注册的 `String` key | 语义稳定的 key 用 `ServiceKey::new(enum)`；需要"任意 key"时用 `keyed_any_*` 而非手写回退；字符串键用 `"x".into()` |
-| Scope 校验 | 默认严格：root 解析 Scoped 返回 `Err(ScopedFromRootProvider)`（`get_owned`/`try_get_owned` 例外：owned 不缓存，可从 root 取） | 请求级服务在 `provider.scope()` 内解析；不要再依赖"根 Provider 即 root scope" |
-| 旧行为兼容 | `build_with(ServiceProviderOptions::lenient())` | 仅确需 root 级 Scoped 单例化时使用 |
-| 释放契约 | `Scope::dispose()` / Drop 按创建逆序释放；新增 `ServiceProvider::dispose()`；之后解析返回 `ScopeDisposed` / `ProviderDisposed` | 应用关闭时显式 `provider.dispose()`；请求级 scope 显式 dispose 或依赖 Drop |
-| async singleton | 依赖驱动递归初始化、**注册顺序无关**；有环返回 `CircularDependency`（不 hang） | 异步基础设施按依赖关系注册即可；确保依赖图无环 |
-| async 解析/诊断 | 同步解析 async 服务报 `AsyncServiceRequiresGetAsync`；同步 singleton 不能依赖 async 服务；跨任务传 `AsyncFactoryContext` | 用 `get_async` 解析 async 服务；跨任务环检测必须传 ctx |
-| 构建顺序 | **同步 singleton 按注册顺序创建**；async singleton 按依赖优先拓扑序，两者均确定 | 不再需要为"HashMap 顺序"做防御性设计 |
-| 工程基线 | MSRV **1.95**、`#![forbid(unsafe_code)]`、CI matrix + RustSec `cargo audit`、`SECURITY.md` | CI/发布环境按 1.95 配置；安全策略见 `SECURITY.md` |
+| 单服务解析 | 最后注册优先（`get`/`get_keyed`/`get_owned`/`get_async`） | 覆盖 mock/默认实现：后注册生效；"未注册才添加"用 `try_add*` |
+| 多实现收集 | `get_all`/`Vec` 仅非 keyed；keyed 用 `get_all_keyed`（不含 AnyKey 兜底） | 观察者广播用非 keyed；keyed 策略显式解析 |
+| 类型化键/AnyKey | `impl Into<ServiceKey>`；AnyKey 按 (注册/类型, key) 缓存、预填充/owned/嵌套有例外 | 语义稳定 key 用 `ServiceKey::new(enum)`；字符串键用 `"x".into()` |
+| Scope/释放 | 默认严格（root Scoped → `ScopedFromRootProvider`，owned 例外）；dispose 逆序幂等 | 请求级服务在 `scope()` 内解析；关闭时显式 `dispose()` |
+| async/基线 | 同步解析 async → `AsyncServiceRequiresGetAsync`；跨任务传 `AsyncFactoryContext`；MSRV 1.95 + CI/audit | 用 `get_async`；跨任务环必须传 ctx |
 
 ```rust
 use rust_dix::*;

@@ -32,27 +32,18 @@
 
 ## 核心机制
 
-所有行为型模式的基础：
+所有行为型模式的基础：非 keyed 多实现用 `get_all` 广播，keyed 实现按 key 单取或用
+`get_all_keyed` 批量（不含 `AnyKey` 兜底）。单服务解析遵循"最后注册优先"。
 
 ```rust
 // 广播目标：同一 trait 的非 keyed 多实现
-ServiceCollection::new()
-    .singleton::<dyn Handler>(|_| Arc::new(Handler1))
-    .singleton::<dyn Handler>(|_| Arc::new(Handler2))
-    .singleton::<dyn Handler>(|_| Arc::new(Handler3))
-    .build()
-    .unwrap();
-
-// 单实现解析：最后注册优先（返回 Handler3）
-let last: Arc<dyn Handler> = provider.get().unwrap();
-
-// 批量获取：只含非 keyed 注册，按注册顺序（Handler1/2/3）
 let all: Vec<Arc<dyn Handler>> = provider.get_all();
+// 策略/责任链：按 key 取（字符串或 ServiceKey::new(enum)）
+let one: Arc<dyn Handler> = provider.get_keyed("retry").unwrap();
 ```
 
-> keyed 服务（如策略/责任链处理器）不会出现在 `get_all` 中：按 key 用 `get_keyed`
-> （字符串或 `ServiceKey::new(enum)`），批量取显式 keyed 用 `get_all_keyed`（不含
-> `AnyKey` 兜底）。需要"任意 key 兜底"时用 `keyed_any_*`。
+> 完整语义（类型化键/AnyKey 缓存/async 枚举）见
+> [0.9 语义权威页](../09-reference/semantics-0.9.md)；模式小节仍规划中。
 
 ## 下一步
 

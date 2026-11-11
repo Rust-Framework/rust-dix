@@ -2,7 +2,7 @@
 
 ## 本书定位
 
-**rust-dix 开发者手册** 是 rust-dix 依赖注入框架的权威指南。本书以**面向接口开发**为核心主线，讲解如何利用 DI 容器实现松耦合、可测试、可扩展的 Rust 应用架构。
+**rust-dix 开发者手册** 是 rust-dix 依赖注入（DI）框架的权威指南。本书以**面向接口开发**为核心主线，讲解如何利用 DI 容器实现松耦合、可测试、可扩展的 Rust 应用架构。
 
 ## rust-dix 是什么
 
@@ -21,11 +21,11 @@ rust-dix 是一个受 Microsoft.Extensions.DependencyInjection (MEDI) 启发的 
 
 | 读者类型 | 推荐阅读路径 |
 |---------|-------------|
-| Rust 初学者 | 第一、二章 → 第三章 → 第四章 |
+| Rust 初学者 | 第一、二章 → 第三章 → 第五章 → 第八章（第四章规划中） |
 | 有 DI 经验的开发者 | 第三章 → 第五章 → 第八章 |
-| 架构设计者 | 第三章 → 第五章 → 第七章 → 第八章 |
-| .NET 转 Rust 开发者 | 第一章 (MEDI 对照) → 第四章 → 第五章 |
-| 测试工程师 | 第三章 → 第六章 → 第八章 |
+| 架构设计者 | 第三章 → 第五章 → 第八章（第七章规划中） |
+| .NET 转 Rust 开发者 | 第一章 (MEDI 对照) → 第五章 → 第八章（第四章规划中） |
+| 测试工程师 | 第三章 → 第八章（第六章规划中） |
 
 ## 核心概念
 
@@ -76,8 +76,10 @@ composition_root/   # 组合根：基础设施配置
 2. [第三章 面向接口编程范式](03-interface-oriented/INDEX.md)（面向接口范式）
 3. [第五章 设计模式实践](05-design-patterns/INDEX.md)（章节页；策略 / 工厂 / 装饰器等小节规划中）
 4. [第八章 最佳实践](08-best-practices/INDEX.md)（最佳实践）
+5. [第九章 参考与附录](09-reference/INDEX.md)（语义权威页 / 错误目录 / 生产检查清单）
 
-> 第四章「服务注册与解析」、第六章「测试策略」、第七章「高级特性」整体**规划中**，尚未发布。
+> 第四章「服务注册与解析」、第六章「测试策略」、第七章「高级特性」整体**规划中**，尚未发布；
+> 参考章已发布，遇到语义/错误/上线问题先查参考章。
 
 ### 架构设计路径
 
@@ -90,19 +92,16 @@ composition_root/   # 组合根：基础设施配置
 ## 本书的特色
 
 1. **概念对照表**：每个章节都有 MEDI / rust-dix 对照，帮助 .NET 开发者快速迁移
-2. **代码即文档**：所有示例代码均可编译运行，配合测试验证
+2. **代码即文档**：核心示例由 `crates/core/tests/` 与 `lib.rs` doctest 验证；书中标注
+   `...` 或依赖上下文的片段为示意代码，不保证独立编译
 3. **反模式警示**：明确指出常见错误做法及其修正方案
 4. **渐进式披露**：从简单用法开始，逐步引入高级特性
 
 ## 版本说明
 
-本书基于 rust-dix **0.9.0** 版本编写。0.9.0 新增：**类型化 keyed 键**（`ServiceKey`）、
-**`AnyKey` 兜底注册**（对齐 MEDI `KeyedService.AnyKey`）、**`AsyncFactoryContext`**
-（跨任务异步环检测，环检测升级为解析链）、精确诊断
-（`SyncSingletonDependsOnAsyncService` / `AsyncServiceRequiresGetAsync` / `RdiError::is_circular()`），
-并将 MSRV 提升到 **1.95**、CI 增加测试矩阵与 RustSec `cargo audit`、提供 `SECURITY.md`。
-0.8.x 的核心语义（最后注册优先、`get_all` 不含 keyed、严格 scope 校验、确定性 dispose）
-继续有效。与 MEDI 的逐条差异见
+本书基于 rust-dix **0.9.x** 编写（当前 0.9.1 为文档补丁，无行为变更）。0.9 的完整语义
+（类型化键 / `AnyKey` / async 链式环检测 / 诊断 / MSRV 1.95 / 安全基线）见
+[参考章 · 0.9 语义权威页](09-reference/semantics-0.9.md)，与 MEDI 的逐条差异见
 [与 MEDI 的差异清单](01-introduction/medi-differences.md)。
 
 ---

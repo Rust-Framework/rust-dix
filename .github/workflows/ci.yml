@@ -26,6 +26,18 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
+      - name: Manifest encoding (no UTF-8 BOM)
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          manifests = [Path("Cargo.toml"), *Path("crates").glob("*/Cargo.toml")]
+          bad = [str(p) for p in manifests if p.read_bytes().startswith(b"\xef\xbb\xbf")]
+          if bad:
+              raise SystemExit(f"UTF-8 BOM found in manifests: {bad}")
+          print(f"manifest encoding OK ({len(manifests)} files, no BOM)")
+          PY
+
       - name: Formatting
         if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check

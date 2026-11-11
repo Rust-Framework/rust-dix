@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-11-11
+
+> **English** · **简体中文**
+
+### English
+
+#### Documentation (no behavior change)
+- Fixed non-compilable `#[inject]` / `#[derive(Inject)]` examples (missing field attributes
+  such as `#[inject]` / `#[inject(owned)]`) across README, `crates/core`, `crates/macros`
+  and the interface-oriented/checklist pages. Corrected quick-start snippets were verified
+  with a `cargo check` probe crate (Arc dependency, owned bare dependency, trait-impl
+  registration).
+- Added the **Reference** chapter (docs `09-reference/`): `semantics-0.9` (single authority
+  for 0.9 semantics), an `RdiError` catalog, and the production deployment checklist
+  (moved from `docs/production-deployment-checklist.md` and now linked from the book,
+  `docs/README.md` and `INDEX.json`).
+- Deduplicated repeated 0.9 semantics into at most 5-line contextual summaries that link to
+  the authoritative page; `crates/*` READMEs use absolute GitHub URLs (crates.io-safe).
+- Corrected `get_optional` semantics for uninitialized async services (`None`, not
+  `AsyncServiceRequiresGetAsync`); completed missing API docs (`ServiceKey::is_any`,
+  `ServiceProviderOptions::new`/`with_validate_scopes`/`Default`,
+  `IServiceResolver::get_all_any_result`/`try_get_keyed_any_result`,
+  `try_get_keyed_owned`, `#[inject(key)]`/`#[inject(owned, key)]`); fixed the double-
+  registration "correct way" example, the over-claim that every snippet compiles, the
+  `docs/README.md` tree/published-count, `INDEX.json` metadata/summaries and the Chinese
+  README links to the Chinese crate READMEs.
+- Rewrote the `rust-dix` / `rust-dix-macros` crate rustdoc/docs.rs homepages for the 0.9
+  semantics and re-checked links/anchors (`BROKEN=0`, anchor miss=0).
+
+#### Notes
+- **No runtime, API, MSRV or behavior change.** `Cargo.toml` version is bumped only so the
+  documentation patch can be republished; upgrading from 0.9.0 carries no risk.
+- Repository CI/publish workflows now verify that manifests are UTF-8 **without BOM** before
+  fmt/clippy/doc/test gates (prevents a release-blocking encoding regression).
+
+### 简体中文
+
+#### 文档（无行为变更）
+- 修正 README、`crates/core`、`crates/macros` 与面向接口/清单页中**不能编译**的
+  `#[inject]` / `#[derive(Inject)]` 示例（缺字段 `#[inject]` / `#[inject(owned)]` 等）。
+  修正后的 quick-start 片段已用临时 `cargo check` probe crate 验证（Arc 依赖、owned 裸依赖、
+  trait impl 注册三类）。
+- 新增**参考章**（docs `09-reference/`）：`semantics-0.9`（0.9 语义唯一权威页）、
+  `RdiError` 错误目录、生产部署检查清单（自 `docs/production-deployment-checklist.md`
+  迁入，并登记到目录、`docs/README.md` 与 `INDEX.json`，修掉孤儿页）。
+- 去重重复的 0.9 语义表：各页仅保留 **≤5 行**情境摘要并链接权威页；`crates/*` README
+  对 docs 的链接改用**绝对 GitHub URL**（crates.io 可点）。
+- 修正未初始化 async 服务的 `get_optional` 语义（返回 `None`，非
+  `AsyncServiceRequiresGetAsync`）；补齐 API 文档（`ServiceKey::is_any`、
+  `ServiceProviderOptions::new`/`with_validate_scopes`/`Default`、
+  `IServiceResolver::get_all_any_result`/`try_get_keyed_any_result`、
+  `try_get_keyed_owned`、`#[inject(key)]`/`#[inject(owned, key)]`）；修正双重注册"正确做法"
+  错误范式、`所有示例可编译` 过度宣称、`docs/README.md` 目录树/已发布章数、`INDEX.json`
+  元数据与 summaries、中文 README 指向中文 crate README。
+- 重写 `rust-dix` / `rust-dix-macros` 的 crate rustdoc/docs.rs 首页以匹配 0.9 语义，
+  并复核链接/锚点（`BROKEN=0`、锚点 miss=0）。
+
+#### 说明
+- **无运行时、API、MSRV 或行为变更**。`Cargo.toml` 版本号提升仅用于重新发布文档补丁；
+  从 0.9.0 升级无风险。
+- 仓库 CI/发布工作流新增 **manifest 无 UTF-8 BOM** 校验（在 fmt/clippy/doc/test 门禁前执行），
+  防止编码回归阻塞发布。
+
 ## [0.9.0] - 2026-11-11
 
 > **English** · **简体中文**
@@ -22,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AnyKey` fallback registrations (MEDI `KeyedService.AnyKey`)**:
   `keyed_any_singleton` / `keyed_any_scoped` / `keyed_any_transient`. The factory receives
   the requested key (`Fn(&dyn IServiceResolver, &ServiceKey) -> Arc<T>`). Exact-key
-  registrations take precedence; Otherwise the fallback is used. Singleton/scoped
+  registrations take precedence; otherwise the fallback is used. Singleton/scoped
   fallback instances are cached **per (registration/type, requested key)** — the same
   registration + key reuses one instance, different keys or different `AnyKey`
   registrations get independent instances; scoped: one per scope per (registration, key).
@@ -700,6 +763,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 跨 DLL 插件支持 (IServiceLocator)
 - 多接口注册支持
 
+[0.9.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.9.0
 [0.8.1]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Rust-Framework/rust-dix/releases/tag/v0.8.0

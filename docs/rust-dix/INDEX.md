@@ -69,9 +69,10 @@
 - 责任链模式：处理器链（规划中）
 - 更多模式速查（规划中）
 
-> 本章章节页已发布（含模式与 0.9.x 语义速查）；具体模式小节规划中。
+> 本章章节页已发布（模式总览 + 语义速查链接）；具体模式小节规划中。
 > 多实现/键控服务的现行用法见
-> [多实现与键控服务](03-interface-oriented/multiple-implementations.md)。
+> [多实现与键控服务](03-interface-oriented/multiple-implementations.md)，
+> 完整 0.9 语义以 [0.9 语义权威页](09-reference/semantics-0.9.md) 为准。
 
 ---
 
@@ -112,3 +113,14 @@
 - [常见陷阱与排查](08-best-practices/common-pitfalls.md)
 - 性能优化建议（规划中）
 - [反模式警示](08-best-practices/anti-patterns.md)
+
+---
+
+## 附录 · 参考
+
+### [第九章 参考与附录](09-reference/INDEX.md)
+
+- [0.9 语义权威页](09-reference/semantics-0.9.md)（类型化键/`AnyKey`、async 与环检测、枚举、诊断、工程基线）
+- [RdiError 错误目录](09-reference/error-catalog.md)（全部错误变体与处理建议）
+- [生产环境部署检查清单](09-reference/production-checklist.md)（逐项上线检查）
+- [与 MEDI 的差异清单](01-introduction/medi-differences.md)（逐条对照与迁移）

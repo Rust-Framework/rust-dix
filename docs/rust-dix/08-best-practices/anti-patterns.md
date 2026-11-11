@@ -27,7 +27,9 @@ pub struct CreateUserHandler {
 // Handler 依赖接口：struct 用 #[derive(Inject)] 仅生成构造函数，impl 用 #[inject] 注册为 trait
 #[derive(Inject)]
 pub struct CreateUserHandler {
+    #[inject]
     user_svc: Arc<dyn IUserService>,  // 接口
+    #[inject]
     logger: Arc<dyn ILogger>,         // 接口
 }
 
@@ -276,7 +278,7 @@ fn main() {
 
 ### ⚠️ 语义澄清（0.9.x）
 
-0.8.0 默认开启严格 scope 校验（`ServiceProviderOptions::validate_scopes = true`）。
+0.8.0 起默认开启严格 scope 校验（0.9.x 同样适用）（`ServiceProviderOptions::validate_scopes = true`）。
 从根 Provider 解析 Scoped 服务返回 `Err(RdiError::ScopedFromRootProvider)`：
 
 ```rust
@@ -506,6 +508,10 @@ tokio::spawn(async move { sp.get_async::<Dep>().await });
 | 同步枚举未初始化 async（`get_all`/`Vec`） | typed panic 或 `Err(AsyncServiceRequiresGetAsync)`（async scoped 在 root 被 scope 校验省略） | async scoped/transient 用 `get_async` 逐项解析 |
 | 以为 AnyKey scoped/transient owned 会被 root scope 拒绝 | owned 是例外，strict root 下允许 | 直接用 `get_keyed_owned`；不进缓存，传递依赖仍受校验 |
 | 跨任务解析不传 `AsyncFactoryContext` | 跨任务环可能死锁 | 工厂内 `sp.async_context()` 并 clone 进任务 |
+
+> 0.9 完整语义（类型化键/AnyKey/async 枚举/诊断）见
+> [0.9 语义权威页](../09-reference/semantics-0.9.md)；错误处理见
+> [错误目录](../09-reference/error-catalog.md)。
 | Handler 直接调用 | 绕过 DI | 通过 Mediator 或注入服务 |
 | struct 与 impl 同时用 `#[inject]` | 双重注册，可绕过接口 | struct 用 `#[derive(Inject)]`，impl 用 `#[inject]` |
 

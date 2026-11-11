@@ -1,16 +1,16 @@
 {
   "meta": {
-    "title": "Rust DI Framework",
+    "title": "rust-dix 开发者手册",
     "subtitle": "面向接口·键控服务·设计模式落地",
-    "docTitle": "Rust DI Framework 开发者手册",
-    "description": "面向接口的 Rust 依赖注入框架 — 三种生命周期、键控服务、循环依赖检测与过程宏自动注册。 | Interface-oriented DI for Rust — lifetimes, keyed services, circular dependency detection, and proc-macro auto-registration.",
+    "docTitle": "rust-dix 开发者手册",
+    "description": "rust-dix 开发者手册：面向接口的 Rust 依赖注入（DI）框架 — 三种生命周期、类型化键控服务与 AnyKey、异步环检测与诊断、过程宏自动注册、0.9 语义权威页与生产检查清单。 | rust-dix developer guide — interface-oriented DI for Rust.",
     "category": "library",
-    "tags": ["rust", "di", "dependency-injection", "interface-oriented", "design-patterns"],
+    "tags": ["rust", "rust-dix", "di", "dependency-injection", "interface-oriented", "typed-keys", "anykey", "async", "design-patterns"],
     "repoUrl": "https://github.com/Rust-Framework/rust-dix",
     "demoUrl": "",
     "featured": true,
     "sortOrder": 2,
-    "version": "0.9.0",
+    "version": "0.9.1",
     "language": "zh-CN",
     "author": "Start",
     "logo": "logo.svg",
@@ -27,13 +27,13 @@
       "chapters": [
         {
           "id": "01-introduction",
-          "title": "认识 Rust DI Framework",
+          "title": "第一章 认识 rust-dix",
           "subtitle": "框架定位、核心概念与适用场景",
           "sections": [
             {
               "id": "medi-differences",
               "title": "与 MEDI 的差异清单",
-              "summary": "scope 校验、dispose、keyed 与 get_all 语义差异及迁移",
+              "summary": "scope 校验、dispose、keyed/AnyKey、get_all 与 async 枚举差异；0.7.x/0.8.x 迁移速查（0.9.x）",
               "readingTime": 12,
               "difficulty": "intermediate"
             }
@@ -66,7 +66,7 @@
             {
               "id": "multiple-implementations",
               "title": "多实现与键控服务",
-              "summary": "策略模式、keyed_singleton/get_all_keyed",
+              "summary": "策略模式、keyed_singleton/get_all_keyed、类型化键与 AnyKey",
               "readingTime": 12,
               "difficulty": "intermediate"
             }
@@ -105,7 +105,7 @@
             {
               "id": "usage-guide",
               "title": "用法指南与决策矩阵",
-              "summary": "导入约定、场景推荐、构造函数策略与 0.8.0 语义要点",
+              "summary": "导入约定、场景推荐、构造函数策略与 0.9 语义要点",
               "readingTime": 14,
               "difficulty": "intermediate"
             },
@@ -119,7 +119,7 @@
             {
               "id": "common-pitfalls",
               "title": "常见陷阱与排查",
-              "summary": "高频错误与解决方案",
+              "summary": "高频错误与解决方案（含 0.9 async 枚举/AnyKey 陷阱）",
               "readingTime": 12,
               "difficulty": "intermediate"
             },
@@ -128,6 +128,40 @@
               "title": "反模式警示",
               "summary": "错误做法与正确方案对比",
               "readingTime": 14,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-reference",
+      "title": "附录 · 参考",
+      "chapters": [
+        {
+          "id": "09-reference",
+          "title": "参考与附录",
+          "subtitle": "0.9 语义权威页、错误目录与生产部署检查清单",
+          "sections": [
+            {
+              "id": "semantics-0.9",
+              "title": "0.9 语义权威页",
+              "summary": "类型化键/AnyKey、async 环检测、枚举、诊断与工程基线的唯一权威说明",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "error-catalog",
+              "title": "RdiError 错误目录",
+              "summary": "全部错误变体、触发条件、处理建议与 is_circular 启发式",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "production-checklist",
+              "title": "生产环境部署检查清单",
+              "summary": "上线前逐项检查（生命周期、async、AnyKey、供应链与安全）",
+              "readingTime": 12,
               "difficulty": "intermediate"
             }
           ]

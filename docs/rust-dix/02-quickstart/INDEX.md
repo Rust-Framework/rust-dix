@@ -85,15 +85,15 @@ logger.log("Hello, rust-dix!");
 
 | 规则 | 说明 |
 |------|------|
-| **最后注册优先** | `get` / `get_optional` / `get_owned` / `get_keyed*` / `get_async` 返回**最后注册**的实现；`try_add*` 仍是"未注册才添加" |
-| **`get_all` 不含 keyed** | `get_all::<T>()` / `#[inject] Vec<Arc<T>>` 只含非 keyed 注册；keyed 用 `get_all_keyed::<T>()`（不含 `AnyKey` 兜底）；两者含已初始化 async singleton，同步枚举未初始化 async singleton/transient → `AsyncServiceRequiresGetAsync`（async scoped 在 root 被 scope 校验省略） |
-| **类型化键 / AnyKey** | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 提供兜底（精确 key 优先、按 (服务注册/类型, 请求 key) 缓存、单值 `any_key()` 非法）；validation 预填充实例运行时复用；AnyKey owned 在 root 允许；嵌套不同 key 合法；字符串键用 `from/into`（`ServiceKey::new("x")` 与 `String` key 不等） |
-| **默认严格 scope 校验** | 从 root provider 解析 Scoped 返回 `Err(RdiError::ScopedFromRootProvider)`；请求级服务必须在 `provider.scope()` 内解析（例外：`get_owned`/`try_get_owned` 可从 root 取 Scoped，owned 不缓存，但其 Scoped 依赖仍受校验） |
-| **需要旧行为时显式开启** | `build_with(ServiceProviderOptions::lenient())` 恢复 0.7.x 的 root-scope 语义 |
-| **显式释放** | `Scope::dispose()`（Drop 兜底）/ `ServiceProvider::dispose()` 按创建逆序释放；dispose 后解析分别返回 `ScopeDisposed` / `ProviderDisposed` |
-| **异步诊断/环检测** | 同步解析/枚举 async 服务报 `AsyncServiceRequiresGetAsync`；同步 singleton 不能依赖 async 服务（`SyncSingletonDependsOnAsyncService`）；跨任务请传 `AsyncFactoryContext`，环返回 `CircularDependency`；`is_circular()` 为启发式 |
+| **最后注册优先** | `get` / `get_keyed*` / `get_owned` / `get_async` 返回最后注册；`try_add*` = 未注册才添加 |
+| **严格 scope 校验** | root 解析 Scoped 返回 `ScopedFromRootProvider`，请求级服务在 `provider.scope()` 内解析；owned/`get_owned` 例外 |
+| **类型化键 / AnyKey** | keyed API 接受 `impl Into<ServiceKey>`；`keyed_any_*` 兜底（精确优先、按 (注册/类型, key) 缓存、单值 `any_key()` 非法、字符串键用 `from/into`） |
+| **异步解析/枚举** | 同步解析 async 服务 → `AsyncServiceRequiresGetAsync`；枚举含已初始化 async singleton；跨任务传 `AsyncFactoryContext` |
+| **释放/诊断** | `dispose()` 逆序释放、幂等；`is_circular()` 为启发式；诊断错误见参考章 |
 
-> 逐条差异（含 MEDI 默认值对照）见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
+完整语义与边界（尤其 async 枚举、AnyKey owned/预填充、错误目录）见
+[0.9 语义权威页](../09-reference/semantics-0.9.md) 与
+[与 MEDI 的差异清单](../01-introduction/medi-differences.md)。
 
 ## 异步容器（推荐 Web 应用使用）
 

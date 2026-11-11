@@ -24,6 +24,14 @@ jobs:
 
       - name: Pre-publish gates
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          manifests = [Path("Cargo.toml"), *Path("crates").glob("*/Cargo.toml")]
+          bad = [str(p) for p in manifests if p.read_bytes().startswith(b"\xef\xbb\xbf")]
+          if bad:
+              raise SystemExit(f"UTF-8 BOM found in manifests: {bad}")
+          print(f"manifest encoding OK ({len(manifests)} files, no BOM)")
+          PY
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
           RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps

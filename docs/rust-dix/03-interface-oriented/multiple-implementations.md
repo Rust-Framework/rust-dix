@@ -246,25 +246,15 @@ let admin: Arc<dyn IStorage> = provider.get_keyed("admin").unwrap();     // 精�
 let tenant: Arc<dyn IStorage> = provider.get_keyed("tenant-42").unwrap(); // 兜底，按注册+key 缓存
 ```
 
-> 注意：
-> - `get_all_keyed` **不包含** AnyKey 兜底（只列显式 key）；枚举还包含**已初始化**的
->   async singleton，同步枚举未初始化 async singleton/transient 会得到
->   `AsyncServiceRequiresGetAsync`（`get_all` typed panic；`Vec` 注入 `Err`），async scoped
->   在 root 被 scope 校验省略（Scope 内枚举才 panic），async scoped/transient 请用
->   `get_async` 逐项解析。
-> - 用 `ServiceKey::any_key()` 做**单值解析**非法（`get_keyed(any_key())` → `Err`；
->   `is_registered_keyed(any_key())` → `false`）。
-> - AnyKey 注册仅同步（`get_keyed_async` 回退同步路径），build 期不做 eager 初始化/单独校验；
->   `keyed_any_scoped` 被同步 singleton 依赖时仍按 captive dependency 拒绝。
-> - **validation 预填充**：build 期同步 singleton 按某请求 key 消费 AnyKey singleton 时，
->   实例写入 **(注册, 请求 key) 缓存**，运行时同一注册 + 同一 key 复用**同一实例**（单次初始化、
->   多消费者共享一次构造）。
-> - **owned 例外**：AnyKey 的 scoped/transient `get_keyed_owned` / `try_get_keyed_owned` 在
->   strict root 下允许（不进缓存/不跟踪，传递依赖仍受 scope 校验）。
-> - **嵌套 key 合法**：AnyKey 工厂内嵌套解析**不同请求 key** 不会误报环；只有同一注册 +
->   同一请求 key 的重入才是环。
-> - `&ServiceKey` 可 `Debug`/`Display`/`Eq`/`Hash`，但**没有** typed downcast 访问器
->   （擦除表示私有，属有意设计）；按 key 分支请用相等/hash 或闭包捕获类型信息。
+> 注意（完整语义见 [0.9 语义权威页](../09-reference/semantics-0.9.md#2-anykey-兜底)）：
+> - `get_all_keyed` 不含 AnyKey 兜底；`ServiceKey::any_key()` 不能做单值解析
+>   （`is_registered_keyed(any_key())` → `false`）。枚举 async 的边界见参考页 §4。
+> - AnyKey 仅同步注册、不做 eager 初始化/单独校验；`keyed_any_scoped` 被同步 singleton
+>   依赖仍按 captive dependency 拒绝。
+> - validation 预填充：build 期消费的 singleton 写入 **(注册, key) 缓存**，运行时同注册同 key
+>   复用同一实例（单次构造）；owned 的 scoped/transient 在 strict root 允许（owned 例外）。
+> - 工厂内嵌套解析**不同请求 key** 合法；只有同注册 + 同 key 才是环；`&ServiceKey` 无 typed
+>   downcast 访问器（用 `Debug`/`Display`/`Eq`/`Hash`）。
 
 ## 最佳实践
 

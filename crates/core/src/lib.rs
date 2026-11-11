@@ -32,28 +32,43 @@
 //! logger.log("Hello");
 //! ```
 //!
-//! # Keyed services (strategy pattern)
+//! # Keyed services: typed keys and `AnyKey` fallbacks
+//!
+//! Keys can be any `Any + Send + Sync + Eq + Hash + Debug` value
+//! ([`ServiceKey::new`]); string keys (`"fast"`) remain supported and are stored
+//! as `String` keys. Key equality includes the value type, so
+//! `ServiceKey::new(1u32)` is **not** equal to `"1"`; use
+//! `ServiceKey::from("name")` / `"name".into()` for string-keyed registrations.
+//!
+//! A registration with [`KeyedService::any_key`] (or
+//! [`ServiceKey::any_key`]) acts as a fallback for keys that have no exact
+//! registration. Singleton/scoped fallback instances are cached per
+//! **(registration, requested key)**; `get_all_keyed` never enumerates them.
 //!
 //! ```rust
 //! use rust_dix::*;
 //! use std::sync::Arc;
 //!
-//! trait Strategy: Send + Sync { fn execute(&self) -> &'static str; }
+//! #[derive(Debug, PartialEq, Eq, Hash)]
+//! enum Kind { Fast, Safe }
 //!
-//! struct FastStrategy;
-//! impl Strategy for FastStrategy { fn execute(&self) -> &'static str { "fast" } }
-//!
-//! struct SafeStrategy;
-//! impl Strategy for SafeStrategy { fn execute(&self) -> &'static str { "safe" } }
+//! trait Strategy: Send + Sync { fn name(&self) -> &'static str; }
+//! struct Fast;
+//! impl Strategy for Fast { fn name(&self) -> &'static str { "fast" } }
+//! struct Fallback;
+//! impl Strategy for Fallback { fn name(&self) -> &'static str { "fallback" } }
 //!
 //! let provider = ServiceCollection::new()
-//!     .keyed_singleton::<dyn Strategy>("fast", |_| Arc::new(FastStrategy))
-//!     .keyed_singleton::<dyn Strategy>("safe", |_| Arc::new(SafeStrategy))
+//!     .keyed_singleton::<dyn Strategy>(ServiceKey::new(Kind::Fast), |_| Arc::new(Fast))
+//!     .keyed_any_singleton::<dyn Strategy>(|_, _| Arc::new(Fallback))
 //!     .build()
 //!     .unwrap();
 //!
-//! let fast: Arc<dyn Strategy> = provider.get_keyed("fast").unwrap();
-//! assert_eq!(fast.execute(), "fast");
+//! let fast = provider.get_keyed::<dyn Strategy>(ServiceKey::new(Kind::Fast)).unwrap();
+//! assert_eq!(fast.name(), "fast");
+//! // No exact registration for "unknown": the AnyKey fallback is used.
+//! let fallback = provider.get_keyed::<dyn Strategy>("unknown").unwrap();
+//! assert_eq!(fallback.name(), "fallback");
 //! ```
 //!
 //! # Build-time validation
@@ -85,60 +100,112 @@
 //! }
 //! ```
 //!
-//! # Async support
+//! # Async services
 //!
 //! For services that require async initialization (e.g., database
-//! connections, remote config loading), use `build_async()` and
-//! the `async_*` registration methods. `build_async()` returns
-//! `Arc<ServiceProvider>` so that `provider_arc()` is available for
-//! async resolution:
+//! connections, remote config loading), use `build_async()` and the `async_*`
+//! registration methods. Async singletons are initialized **dependency-first**
+//! (registration order does not matter), so a factory may `await` another async
+//! singleton registered later. `build_async()` returns `Arc<ServiceProvider>`.
 //!
-//! ```rust,ignore
+//! Async resolution is **chain-based**: each `get_async()` future captures the
+//! current resolution chain when constructed, so self/cross dependency cycles
+//! are reported as [`RdiError::CircularDependency`] instead of dead-locking.
+//! To detect cycles across detached tasks, propagate
+//! [`AsyncFactoryContext`] (see [`ServiceProvider::async_context`]) into the
+//! spawned task; without it, a fully detached task cannot inherit the chain.
+//!
+//! ```rust
 //! use rust_dix::*;
 //! use std::sync::Arc;
 //!
-//! struct DbPool { conn: String }
+//! struct DbPool { url: String }
 //!
-//! async fn connect_to_db() -> DbPool {
-//!     // async connection setup...
-//!     DbPool { conn: "connected".into() }
-//! }
+//! async fn connect() -> DbPool { DbPool { url: "sqlite::memory:".into() } }
 //!
-//! # async fn run() {
-//! let provider = ServiceCollection::new()
-//!     .async_singleton(|_| Box::pin(async {
-//!         Arc::new(connect_to_db().await)
-//!     }))
-//!     .build_async()
-//!     .await
-//!     .unwrap();
+//! let provider = futures::executor::block_on(
+//!     ServiceCollection::new()
+//!         .async_singleton(|_| Box::pin(async { Arc::new(connect().await) }))
+//!         .build_async(),
+//! )
+//! .unwrap();
 //!
-//! let pool: Arc<DbPool> = provider.get_async().await.unwrap();
-//! # }
+//! let pool: Arc<DbPool> = futures::executor::block_on(provider.get_async()).unwrap();
+//! assert_eq!(pool.url, "sqlite::memory:");
 //! ```
 //!
 //! # Features
 //!
 //! - **Three lifetimes**: Singleton, Scoped, Transient
-//! - **Keyed services**: multiple implementations of the same trait by key
-//!   - `keyed_singleton(key, factory)` — shared globally
-//!   - `keyed_scoped(key, factory)` — shared within scope
-//!   - `keyed_transient(key, factory)` — new instance each time
+//! - **Keyed services**: multiple implementations by key
+//!   - string keys (`"fast"`) and typed keys ([`ServiceKey::new`], e.g. enums)
+//!   - [`KeyedService::any_key`] / [`ServiceKey::any_key`] fallback registrations
+//!     (`keyed_any_singleton` / `keyed_any_scoped` / `keyed_any_transient`)
+//!   - per-`(registration, requested key)` caching for AnyKey fallbacks; exact
+//!     registrations take precedence; `get_all_keyed` excludes fallbacks
 //! - **Constructor injection**: `#[derive(Inject)]` on structs
-//! - **Attribute-based auto-registration**: `#[rust_dix::inject]` on structs or trait impls
-//! - **Compile-time module scanning**: `#[rust_dix::module]` collects `register!()` declarations
+//! - **Attribute-based auto-registration**: `#[rust_dix::inject]` on structs or
+//!   trait impls (`#[inject(key = "...")]`, `#[inject(owned)]`,
+//!   `#[inject(owned, key = "...")]` supported)
+//! - **Compile-time module scanning**: `#[rust_dix::module]` collects
+//!   `register!()` declarations
 //! - **Cross-DLL support**: named service registry for cdylib plugins
-//! - **Layered containers**: child-first resolution via `ServiceProviderWrapper`
-//! - **Build-time validation**: circular dependency detection during `build()`
+//! - **Layered containers**: child-first resolution via
+//!   [`ServiceProviderWrapper`]
+//! - **Build-time validation**: sync/async dependency checks (cycles, captive
+//!   dependencies, sync singleton depending on async services) during build
+//! - **Async resolution with cycle detection**: [`ServiceProvider::get_async`] /
+//!   [`ServiceProvider::get_keyed_async`]; propagate [`AsyncFactoryContext`] into
+//!   detached tasks so cross-task cycles also return
+//!   [`RdiError::CircularDependency`]
 //! - **Scope validation**: scoped services cannot be resolved from the root
 //!   provider by default (MEDI `ValidateScopes` parity; opt out with
-//!   [`ServiceProviderOptions::lenient`])
+//!   [`ServiceProviderOptions::lenient`]); `get_owned` /
+//!   `get_keyed_owned` are the documented exception
 //! - **Deterministic lifecycle**: eager singletons are created in registration
-//!   order; [`ServiceProvider::dispose`] / [`Scope::dispose`] release cached
-//!   instances in reverse creation order
+//!   order (async singletons dependency-first); [`ServiceProvider::dispose`] /
+//!   [`Scope::dispose`] release cached instances in reverse creation order
 //! - **MEDI registration semantics**: the last registration wins for a single
 //!   service; `get_all` returns unkeyed implementations in registration order
 //!   (`get_all_keyed` for keyed ones)
+//! - **Typed diagnostics**: [`RdiError`] exposes dedicated variants such as
+//!   `SyncSingletonDependsOnAsyncService` and `AsyncServiceRequiresGetAsync`,
+//!   plus [`RdiError::is_circular`] (heuristic for factory-panic-wrapped cycles)
+//! - **Engineering baseline**: MSRV **1.95**, `#![forbid(unsafe_code)]`,
+//!   fmt/clippy/doc `-D warnings` + tests + RustSec `cargo audit` in CI
+//!
+//! # Diagnostics
+//!
+//! Prefer matching the typed [`RdiError`] variants over strings:
+//!
+//! ```rust
+//! use rust_dix::*;
+//! use std::sync::Arc;
+//!
+//! struct A;
+//! struct B;
+//! let result = ServiceCollection::new()
+//!     .singleton(|r| {
+//!         let _ = r.get_any(std::any::type_name::<B>());
+//!         Arc::new(A)
+//!     })
+//!     .singleton(|r| {
+//!         let _ = r.get_any(std::any::type_name::<A>());
+//!         Arc::new(B)
+//!     })
+//!     .build();
+//!
+//! let err = result.err().expect("cycle must be rejected");
+//! assert!(err.is_circular());
+//! if let RdiError::CircularDependency(cycle) = err {
+//!     assert!(cycle.contains("->"));
+//! }
+//! ```
+//!
+//! Sync resolution of an async service returns
+//! `RdiError::AsyncServiceRequiresGetAsync` (use `get_async` / `get_keyed_async`);
+//! registering `async_*` services and calling [`ServiceCollection::build`]
+//! returns `RdiError::AsyncServiceRequiresBuildAsync`.
 //!
 //! # Crate layout
 //!
@@ -150,8 +217,18 @@
 //! | [`IServiceResolver`] | Resolution trait (implemented by `ServiceProvider` & `Scope`) |
 //! | [`ServiceProviderWrapper`] | Child-first layered container |
 //! | [`ServiceLifetime`] | Enum: Singleton, Scoped, Transient |
+//! | [`ServiceKey`] / [`KeyedService`] | Typed keys and the `AnyKey` sentinel |
+//! | [`AsyncFactoryContext`] | Propagate the async resolution chain into tasks |
+//! | [`ServiceProviderOptions`] | Scope-validation options (`lenient()`) |
 //! | [`IProvider`] | Unified trait for resolution + named registry |
-//! | [`RdiError`] | Error types (includes `CircularDependency`) |
+//! | [`RdiError`] | Typed errors (cycles, disposed, async diagnostics, ...) |
+//!
+//! # MSRV and security
+//!
+//! - MSRV: **Rust 1.95** (`rust-version` in `Cargo.toml`, verified in CI).
+//! - `#![forbid(unsafe_code)]` in both `rust-dix` and `rust-dix-macros`.
+//! - No network/filesystem access; containers only manage in-memory services.
+//! - Release/security policy: <https://github.com/Rust-Framework/rust-dix/blob/main/SECURITY.md>
 //!
 //! # Proc-macros
 //!

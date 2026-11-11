@@ -25,8 +25,10 @@ pub trait IUserService: Send + Sync {
 }
 
 // handlers/user.rs — 实现层
-#[rust_dix::inject(singleton)]
+// struct 用 #[derive(Inject)] 仅生成构造函数（不注册），impl 用 #[inject] 注册为 trait
+#[derive(Inject)]
 pub struct UserService {
+    #[inject]
     db: Arc<dyn IDbContext>,  // 依赖接口，不依赖具体类型
 }
 
@@ -34,8 +36,9 @@ pub struct UserService {
 impl IUserService for UserService { ... }
 
 // handlers/user_handler.rs — Handler 注入接口
-#[rust_dix::inject(singleton)]
+#[derive(Inject)]
 pub struct CreateUserHandler {
+    #[inject]
     user_svc: Arc<dyn IUserService>,  // 接口依赖
 }
 
