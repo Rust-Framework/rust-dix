@@ -19,3 +19,42 @@ thiserror = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+
+# ---------------------------------------------------------------------------
+# Build profiles tuned for disk usage (`target/` size).
+#
+# Two things made `target/` grow to tens of gigabytes:
+#   1. full debug info for *every* dependency, which on Windows emits one PDB
+#      per dependency and per test binary (hundreds of MB per test binary);
+#   2. incremental compilation caches for test/bench units, which cargo leaves
+#      behind as orphaned `target/<profile>/incremental/*-<hash>` directories
+#      whenever features/rustflags/toolchain change (one copy per hash).
+#
+# What these profiles do:
+#   * local crates keep line tables, so panics and backtraces still print
+#     `file:line` (no regression in debuggability);
+#   * dependencies carry no debug info (they are read, not single-stepped);
+#   * `test`/`bench` units stop using incremental compilation, which removes
+#     the largest and most frequently orphaned cache category;
+#   * plain `dev`/`check` builds keep incremental compilation, so the
+#     edit-compile loop stays fast.
+#
+# Reclaiming space: `scripts/clean-target.ps1` prunes stale artifacts and
+# incremental sessions (multi-repo: `-Path . ../rust-ef ../rust-webx`), while
+# `cargo clean` removes everything. See `docs/DEVELOPMENT.md`.
+# ---------------------------------------------------------------------------
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test.package."*"]
+debug = false
+
+[profile.bench]
+incremental = false

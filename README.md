@@ -610,6 +610,7 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 - [Reference: current (0.10) semantics, RdiError catalog, production checklist](docs/rust-dix/09-reference/INDEX.md)
 - [Extension points & boundaries (macro key `From`, custom resolver, async AnyKey)](https://github.com/Rust-Framework/rust-dix/blob/main/docs/rust-dix/09-reference/extension-points.md)
 - [Business scenario tutorials](docs/rust-dix/08-best-practices/business-scenarios.md) — real-world patterns
+- [Development & build-artifact hygiene](docs/DEVELOPMENT.md) — why `target/` grows to tens of GB, the tuned Cargo profiles, and the `scripts/clean-target.ps1` pruner
 - [Security policy](./SECURITY.md) — vulnerability reporting, supported versions, security boundaries
 - [Changelog](./CHANGELOG.md) — release history
 - [Integration tests](crates/core/tests/) — real-world usage patterns

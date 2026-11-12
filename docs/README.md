@@ -36,6 +36,7 @@ docs/
 - [RdiError 错误目录](rust-dix/09-reference/error-catalog.md) — 错误变体与处理建议
 - [生产环境部署检查清单](rust-dix/09-reference/production-checklist.md) — 上线逐项检查（原 `docs/production-deployment-checklist.md`，已迁入参考章）
 - [与 MEDI 的差异清单](rust-dix/01-introduction/medi-differences.md) — .NET 迁移必读
+- [开发环境与磁盘占用治理（target/）](DEVELOPMENT.md) — profile 调优、清理脚本与实测数据
 - [变更日志](../CHANGELOG.md) / [安全策略](../SECURITY.md) — 版本历史与漏洞上报
 
 ## 阅读
