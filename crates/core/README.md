@@ -19,7 +19,7 @@ container inspired by Microsoft.Extensions.DependencyInjection (MEDI).
 
 ```toml
 [dependencies]
-rust-dix = "0.10"
+rust-dix = "1.0"
 ```
 
 > **MSRV**: Rust **1.95**. Both crates are `#![forbid(unsafe_code)]`; CI runs a
