@@ -93,3 +93,37 @@ fn composite_resolution() {
     let composite: Arc<common::CompositeService> = p.get().unwrap();
     assert_eq!(composite.logger.prefix, "comp");
 }
+
+// ── DIX-2: `Arc<dyn Trait>` instances ──
+
+pub trait IClock: Send + Sync {
+    fn now(&self) -> u64;
+}
+
+pub struct FakeClock(pub u64);
+
+impl IClock for FakeClock {
+    fn now(&self) -> u64 {
+        self.0
+    }
+}
+
+#[test]
+fn instance_dyn_registers_trait_object() {
+    let p = ServiceCollection::new()
+        .instance_dyn::<dyn IClock>(Arc::new(FakeClock(42)))
+        .build()
+        .unwrap();
+    let clock: Arc<dyn IClock> = p.get().unwrap();
+    assert_eq!(clock.now(), 42);
+}
+
+#[test]
+fn instance_accepts_unsized_trait_object() {
+    let p = ServiceCollection::new()
+        .instance::<dyn IClock>(Arc::new(FakeClock(7)))
+        .build()
+        .unwrap();
+    let clock: Arc<dyn IClock> = p.get().unwrap();
+    assert_eq!(clock.now(), 7);
+}
