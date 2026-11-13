@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-11-13
+
+> **English** · **简体中文**
+
+### English
+
+#### Added
+- **`instance_dyn<T: ?Sized>` / `instance<T: ?Sized>`**: `Arc<dyn Trait>` can now be registered
+  and resolved directly (`svc.instance_dyn::<dyn IClock>(Arc::new(FakeClock))`), so port
+  implementations no longer need a newtype wrapper.
+- **Typed resolution inside factory closures**: `IServiceResolver::get_arc(TypeId)` is dyn-safe,
+  and `IServiceResolverExt::resolve_arc<T>()` gives a typed, `?Sized`-friendly wrapper. A factory
+  can write `let db: Arc<DbContext> = resolver.resolve_arc()?;` instead of `get_any(type_name)`
+  plus a downcast.
+- **Build-time factory resolution fixed**: `ValidationResolver` now forwards `get_by_type_id`,
+  so factories that run during `build()` resolve typed services instead of always returning `None`.
+
+#### Fixed
+- **Derive/inject macros resolve the real dependency name** (`proc-macro-crate`): generated paths
+  no longer hard-code `::rust_dix::…`, so `dix = { package = "rust-dix" }` works without the
+  `extern crate dix as rust_dix;` shim. `#[rust_dix::module]`'s `register!` is matched on the last
+  path segment, so renamed paths (`di::register!`) work too.
+
+#### Migration
+- Remove the `extern crate dix as rust_dix;` shims added for 0.10 (the `rust_dix` names in docs are
+  historical; the macros now emit the resolved name).
+
+### 简体中文
+
+#### 新增
+- **`instance_dyn<T: ?Sized>` / `instance<T: ?Sized>`**：`Arc<dyn Trait>` 可直接注册与解析
+  （`svc.instance_dyn::<dyn IClock>(Arc::new(FakeClock))`），端口实现不再需要 newtype 包装。
+- **工厂闭包内的类型化解析**：`IServiceResolver::get_arc(TypeId)`（dyn 安全）+
+  `IServiceResolverExt::resolve_arc<T>()`；工厂内可写
+  `let db: Arc<DbContext> = resolver.resolve_arc()?;`，替代 `get_any(type_name)` + downcast。
+- **build 期工厂解析修复**：`ValidationResolver` 补齐 `get_by_type_id`，build 期工厂不再恒返回 `None`。
+
+#### 修复
+- **派生宏按真实依赖名解析**（`proc-macro-crate`）：不再硬编码 `::rust_dix::…`，
+  `dix = { package = "rust-dix" }` 改名后无需 `extern crate` 垫片；`register!` 改为末段匹配，
+  `di::register!` 等别名路径可用。
+
+#### 迁移
+- 删除 0.10 时期为改名添加的 `extern crate dix as rust_dix;` 垫片。
+
 ## [0.10.0] - 2026-11-11
 
 > **English** · **简体中文**
