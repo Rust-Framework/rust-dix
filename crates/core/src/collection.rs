@@ -260,8 +260,8 @@ impl ServiceCollection {
     /// Register a singleton instance of an already-created service.
     ///
     /// `T` may be unsized, so an existing trait-object `Arc<dyn Trait>` can be
-    /// registered and resolved with `get::<dyn Trait>()`; see
-    /// [`instance_dyn`](Self::instance_dyn) for the dynamic-dispatch spelling.
+    /// registered directly (`instance::<dyn IClock>(Arc::new(FakeClock))`) and
+    /// resolved with `get::<dyn IClock>()`.
     pub fn instance<T: ?Sized + Send + Sync + 'static>(mut self, v: Arc<T>) -> Self {
         let ff: ServiceFactory = Arc::new(move |_| Arc::new(v.clone()));
         self.descriptors.push(ServiceDescriptor {
@@ -274,14 +274,6 @@ impl ServiceCollection {
             lifetime: ServiceLifetime::Singleton,
         });
         self
-    }
-
-    /// Register a shared singleton for a trait object (`Arc<dyn Trait>`).
-    ///
-    /// Alias for [`instance`](Self::instance) that spells out the dynamic
-    /// dispatch case; `T` may be `dyn Trait`.
-    pub fn instance_dyn<T: ?Sized + Send + Sync + 'static>(self, v: Arc<T>) -> Self {
-        self.instance(v)
     }
 
     pub fn singleton_value<T: Send + Sync + 'static>(self, v: T) -> Self {
