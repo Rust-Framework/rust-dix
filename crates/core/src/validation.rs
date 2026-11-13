@@ -348,6 +348,18 @@ impl IServiceResolver for ValidationResolver<'_> {
         self.resolve_entry_for(entry, Some(&requested))
     }
 
+    /// TypeId 直查：与 [`Self::get_any`] 的常规服务路径一致。
+    ///
+    /// 必需覆盖：build 期间的 singleton 工厂收到的就是本 resolver，
+    /// [`IServiceResolver::get_by_type_id`]（及其 typed 封装
+    /// [`IServiceResolverExt::resolve_arc`](crate::IServiceResolverExt::resolve_arc)）
+    /// 依赖它；不覆盖时工厂内 TypeId 解析会恒为 `None`。内置服务
+    /// （`ScopeFactory`/`ServiceProvider`）仍由 [`Self::get_any`] 的字符串路径兜底。
+    fn get_by_type_id(&self, tid: std::any::TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.unkeyed_entry(tid)
+            .and_then(|entry| self.resolve_entry_for(entry, None))
+    }
+
     fn get_keyed_any_key(
         &self,
         key: &str,

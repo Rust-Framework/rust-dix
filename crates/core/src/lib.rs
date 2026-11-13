@@ -340,6 +340,9 @@ pub use entry::ServiceLifetime;
 /// Core resolution trait. Both [`ServiceProvider`] and [`Scope`] implement this.
 pub use entry::IServiceResolver;
 
+/// Typed, dyn-safe resolution for factory closures (`resolver.resolve_arc::<T>()`).
+pub use entry::IServiceResolverExt;
+
 /// A scoped service provider — created via [`ServiceProvider::scope`].
 ///
 /// Analogous to `IServiceScope` in MEDI.

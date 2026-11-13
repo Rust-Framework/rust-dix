@@ -56,7 +56,7 @@ use rust_dix as di;    // 之后写 #[di::inject]、di::register!()
 | 多实现运行时路由 | keyed + 属性宏/闭包 | 一个接口多实现，策略模式 |
 | 类型化键 / 任意 key 兜底 | `ServiceKey::new(value)` + `keyed_any_*` | 键语义稳定（enum/整数）或需要 AnyKey 兜底 |
 | 集中声明式配置 | `#[module]` + `register!()` | 注册声明与服务模块放在一起 |
-| 已有实例 / 配置值 | `singleton_value(T)` / `instance(Arc<T>)` | 免写工厂闭包 |
+| 已有实例 / 配置值 | `singleton_value(T)` / `instance(Arc<T>)` / `instance::<dyn Trait>(…)` | 免写工厂闭包；trait object 实例直接注册 |
 | 条件可选注册 | `try_add(...)` | 已注册则跳过，不覆盖 |
 | 复杂工厂 / 运行时参数 | 手动闭包 `\|p\| Arc::new(...)` | 需要计算逻辑或外部参数 |
 
@@ -88,16 +88,16 @@ let provider = ServiceCollection::new()
     .build()?;
 
 // 场景 7：复杂工厂 —— 手动闭包。闭包参数是 &dyn IServiceResolver；
-// 泛型 get::<T>() 带 Self: Sized，不能直接在 trait object 上调用，
-// 这里用 get_any + downcast 解析配置（或让 #[derive(Inject)] 生成构造函数）。
+// 泛型 get::<T>() 带 Self: Sized，不能直接在 trait object 上调用。
+// 用 resolve_arc::<T>()（需 use rust_dix::IServiceResolverExt as _;）：
+// 类型安全、不依赖字符串类型名；`?` 写在 fallible helper 内，工厂用
+// inject_arc 包装以保留 typed 错误。
+fn build_pool(r: &dyn IServiceResolver) -> Result<Arc<Pool>, RdiError> {
+    let cfg: Arc<Config> = r.resolve_arc()?;
+    Ok(Arc::new(Pool::connect(&cfg.url)))
+}
 let provider = ServiceCollection::new()
-    .singleton(|r| {
-        let cfg = r
-            .get_any(std::any::type_name::<Config>())
-            .expect("Config registered at composition root");
-        let cfg: Arc<Config> = Arc::clone(&*cfg.downcast::<Arc<Config>>().unwrap());
-        Arc::new(Pool::connect(&cfg.url))
-    })
+    .singleton(|r| inject_arc(build_pool(r)))
     .build()?;
 ```
 
@@ -154,10 +154,23 @@ struct Config { port: u16 }
 
 > **工厂闭包的解析约束**：注册闭包（`.singleton(f)` 等）的参数类型是
 > `&dyn IServiceResolver`，而泛型 `get::<T>()` / `get_owned::<T>()` 带
-> `Self: Sized` 约束，**不能直接在 trait object 上调用**。闭包内解析依赖有三种正确
-> 方式：① 用 `#[derive(Inject)]` / `#[inject]` 生成的构造函数（tests 中的
-> `|r| __rdi_construct_T(r)`，该函数为 `#[doc(hidden)]` 内部面）；② 用
-> `get_any` + `downcast` 手动解析；③ 在闭包外解析好依赖，以 `Arc` 捕获进闭包。
+> `Self: Sized` 约束，**不能直接在 trait object 上调用**。闭包内解析依赖的正确
+> 方式：① 首选 `resolver.resolve_arc::<T>()`（需 `use rust_dix::IServiceResolverExt as _;`，
+> 类型安全、支持 `dyn Trait`、框架级失败返回 `Err` 而非 panic）；② 用
+> `#[derive(Inject)]` / `#[inject]` 生成的构造函数（tests 中的
+> `|r| __rdi_construct_T(r)`，该函数为 `#[doc(hidden)]` 内部面）；③ 在闭包外解析好
+> 依赖，以 `Arc` 捕获进闭包。sync 工厂闭包**返回 `Arc<T>`（不可失败）**，所以 `?`
+> 只能写在返回 `Result` 的 helper 里，再用 `dix::inject_arc(helper(r))` 注册以保留 typed 错误：
+>
+> ```rust
+> fn build_handler(resolver: &dyn IServiceResolver) -> Result<Arc<Handler>, RdiError> {
+>     let repo: Arc<dyn IOrderRepo> = resolver.resolve_arc()?;  // 这里可以 ?
+>     Ok(Arc::new(Handler::new(repo)))
+> }
+> let provider = ServiceCollection::new()
+>     .singleton(|r| inject_arc(build_handler(r)))
+>     .build()?;
+> ```
 
 ### 三种方式对比
 

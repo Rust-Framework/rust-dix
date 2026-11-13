@@ -79,6 +79,7 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
     let (inner, kind) = classify_field(&field.ty);
     let field_name = fnm.to_string();
     let consumer_ty = quote! { ::std::any::type_name::<#consumer>() };
+    let dix = crate::crate_path::dix_crate_path();
 
     if !attrs.inject && !attrs.provider {
         return Ok(quote! { #fnm: ::std::default::Default::default() });
@@ -91,7 +92,7 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
             ));
         }
         return Ok(quote! {
-            #fnm: ::rust_dix::macros_support::resolve_provider(
+            #fnm: #dix::macros_support::resolve_provider(
                 resolver,
                 #consumer_ty,
                 #field_name,
@@ -106,21 +107,21 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
             FieldKind::OptionArc => {
                 if let Some(k) = key {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_option_keyed_arc::<#inner>(
+                        #fnm: #dix::macros_support::resolve_option_keyed_arc::<#inner>(
                             resolver,
                             #k,
                         )
                     })
                 } else {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_option_arc::<#inner>(resolver)
+                        #fnm: #dix::macros_support::resolve_option_arc::<#inner>(resolver)
                     })
                 }
             }
             FieldKind::Arc => {
                 if let Some(k) = key {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_keyed_arc::<#inner>(
+                        #fnm: #dix::macros_support::resolve_keyed_arc::<#inner>(
                             resolver,
                             #k,
                             #consumer_ty,
@@ -129,7 +130,7 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
                     })
                 } else {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_arc::<#inner>(
+                        #fnm: #dix::macros_support::resolve_arc::<#inner>(
                             resolver,
                             #consumer_ty,
                             #field_name,
@@ -145,7 +146,7 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
                     ));
                 }
                 Ok(quote! {
-                    #fnm: ::rust_dix::macros_support::resolve_vec_arc::<#inner>(
+                    #fnm: #dix::macros_support::resolve_vec_arc::<#inner>(
                         resolver,
                         #consumer_ty,
                         #field_name,
@@ -162,21 +163,21 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
             FieldKind::OptionOwned => {
                 if let Some(k) = key {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_option_keyed_owned::<#inner>(
+                        #fnm: #dix::macros_support::resolve_option_keyed_owned::<#inner>(
                             resolver,
                             #k,
                         )
                     })
                 } else {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_option_owned::<#inner>(resolver)
+                        #fnm: #dix::macros_support::resolve_option_owned::<#inner>(resolver)
                     })
                 }
             }
             FieldKind::Owned => {
                 if let Some(k) = key {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_keyed_owned::<#inner>(
+                        #fnm: #dix::macros_support::resolve_keyed_owned::<#inner>(
                             resolver,
                             #k,
                             #consumer_ty,
@@ -185,7 +186,7 @@ pub(crate) fn gen_field_init(field: &Field, consumer: &syn::Ident) -> syn::Resul
                     })
                 } else {
                     Ok(quote! {
-                        #fnm: ::rust_dix::macros_support::resolve_owned::<#inner>(
+                        #fnm: #dix::macros_support::resolve_owned::<#inner>(
                             resolver,
                             #consumer_ty,
                             #field_name,

@@ -29,7 +29,7 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 ```toml
 [dependencies]
-rust-dix = "0.10"
+rust-dix = "1.0"
 ```
 
 ### 同步应用

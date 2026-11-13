@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.10"
+rust-dix = "1.0"
 ```
 
 > **MSRV**：Rust **1.95**。两个 crate 均 `#![forbid(unsafe_code)]`；CI 跑测试矩阵 +

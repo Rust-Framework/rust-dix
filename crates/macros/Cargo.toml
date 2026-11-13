@@ -6,6 +6,11 @@ rust-version.workspace = true
 description = "Procedural macros for rust-dix — a Rust dependency injection framework"
 license.workspace = true
 repository.workspace = true
+# The rename regression test needs a *renamed* dev-dependency on the core crate
+# (`dix = { package = "rust-dix", … }`), which Cargo strips from published
+# packages. Keep the test repo-only so the published crate never ships a test
+# target whose dev-dependency is missing.
+exclude = ["tests/"]
 
 [lib]
 proc-macro = true
@@ -14,3 +19,12 @@ proc-macro = true
 syn.workspace = true
 quote.workspace = true
 proc-macro2.workspace = true
+# DIX-1: resolve the real dependency name of `rust-dix` (renamed or not).
+proc-macro-crate = "3.5"
+
+[dev-dependencies]
+# DIX-1 regression: the macros must work when the dependency is renamed. This
+# dev-dependency is intentionally *renamed* (`dix`) so `tests/rename.rs`
+# reproduces Travel's `dix = { package = "rust-dix" }` setup without the
+# `extern crate dix as rust_dix;` shim.
+dix = { package = "rust-dix", path = "../core" }

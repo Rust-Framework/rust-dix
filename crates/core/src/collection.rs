@@ -257,7 +257,12 @@ impl ServiceCollection {
         self
     }
 
-    pub fn instance<T: Send + Sync + 'static>(mut self, v: Arc<T>) -> Self {
+    /// Register a singleton instance of an already-created service.
+    ///
+    /// `T` may be unsized, so an existing trait-object `Arc<dyn Trait>` can be
+    /// registered directly (`instance::<dyn IClock>(Arc::new(FakeClock))`) and
+    /// resolved with `get::<dyn IClock>()`.
+    pub fn instance<T: ?Sized + Send + Sync + 'static>(mut self, v: Arc<T>) -> Self {
         let ff: ServiceFactory = Arc::new(move |_| Arc::new(v.clone()));
         self.descriptors.push(ServiceDescriptor {
             type_id: std::any::TypeId::of::<T>(),

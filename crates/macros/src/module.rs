@@ -30,6 +30,7 @@ impl Parse for LT {
 pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
     let mn = m.ident.clone();
     let fn_n = format_ident!("__rdi_build_provider_{}", mn);
+    let dix = crate::crate_path::dix_crate_path();
     let is = match &m.content {
         Some((_, i)) => i.clone(),
         None => return Err(syn::Error::new_spanned(m, "body required")),
@@ -39,17 +40,23 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
     for i in &is {
         match i {
             syn::Item::Macro(mc) => {
-                let ps = mc
+                // Match `register!`, `rust_dix::register!` and
+                // `<resolved crate>::register!` (renamed dependency). The
+                // function-like macro exists only for this DSL, so matching the
+                // final path segment also covers aliases such as
+                // `use rust_dix as di; di::register!(…)`.
+                let is_register = mc
                     .mac
                     .path
                     .segments
-                    .iter()
-                    .map(|s| s.ident.to_string())
-                    .collect::<Vec<_>>()
-                    .join("::");
-                if ps == "register" || ps == "rust_dix::register" {
-                    if let Ok(r) = syn::parse2::<ID>(mc.mac.tokens.clone()) {
-                        rs.push(r);
+                    .last()
+                    .is_some_and(|s| s.ident == "register");
+                if is_register {
+                    match syn::parse2::<ID>(mc.mac.tokens.clone()) {
+                        Ok(r) => rs.push(r),
+                        // Not a registration declaration after all — keep it in
+                        // the module body instead of silently swallowing it.
+                        Err(_) => cl.push(i.clone()),
                     }
                 } else {
                     cl.push(i.clone());
@@ -64,23 +71,23 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
             IK::N { lt, ty, imp } => {
                 let mt = lmt(*lt);
                 if let Some(imp_ty) = imp {
-                    ch.push(quote!{ .#mt::<#ty>(|_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt::<#ty>(|_: &dyn #dix::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
                 } else {
-                    ch.push(quote!{ .#mt(|_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt(|_: &dyn #dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
                 }
             }
             IK::K { key, lt, ty, imp } => {
                 let mt = kmt(*lt);
                 if let Some(imp_ty) = imp {
-                    ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn #dix::IServiceResolver| ::std::sync::Arc::new(<#imp_ty as ::std::default::Default>::default())) });
                 } else {
-                    ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
+                    ch.push(quote!{ .#mt::<#ty>(#key,|_:&dyn #dix::IServiceResolver| ::std::sync::Arc::new(<#ty as ::std::default::Default>::default())) });
                 }
             }
             IK::F { lt, f } => {
                 let mt = lmt(*lt);
                 ch.push(
-                    quote! { .#mt(move |_: &dyn rust_dix::IServiceResolver| ::std::sync::Arc::new(#f)) },
+                    quote! { .#mt(move |_: &dyn #dix::IServiceResolver| ::std::sync::Arc::new(#f)) },
                 );
             }
         }
@@ -88,8 +95,8 @@ pub(crate) fn expand_md(mut m: ItemMod) -> syn::Result<TokenStream2> {
     vd(&rs)?;
     let bi: syn::Item = syn::parse2(quote! {
         #[doc(hidden)]
-        pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<rust_dix::ServiceProvider>, rust_dix::RdiError> {
-            rust_dix::ServiceCollection::new() #(#ch)* .build()
+        pub fn #fn_n() -> ::std::result::Result<::std::sync::Arc<#dix::ServiceProvider>, #dix::RdiError> {
+            #dix::ServiceCollection::new() #(#ch)* .build()
         }
     })
     .unwrap();

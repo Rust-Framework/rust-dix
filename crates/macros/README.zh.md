@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-dix = "0.10"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
+rust-dix = "1.0"       # 所有宏都被重新导出——通常不需要直接依赖 rust-dix-macros
 ```
 
 > **注意**：你很少需要直接添加 `rust-dix-macros` 依赖。`rust-dix` crate 已经重新导出了
