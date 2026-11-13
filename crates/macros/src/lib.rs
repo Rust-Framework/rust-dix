@@ -24,9 +24,11 @@
 //!
 //! # Example
 //!
-//! Illustrative only (the macros generate code that references `rust_dix`, so
-//! this proc-macro crate's doctests cannot link the core crate; the same
-//! patterns are compiled in `rust-dix`' test suite):
+//! Illustrative only (this proc-macro crate's doctests cannot link the core
+//! crate; the same patterns are compiled in `rust-dix`' test suite and in
+//! `tests/rename.rs`). Expansions reference `rust-dix` through its *real*
+//! dependency name (`proc-macro-crate`), so a renamed dependency such as
+//! `dix = { package = "rust-dix" }` needs no `extern crate` shim:
 //!
 //! ```rust,ignore
 //! use rust_dix::{inject, Inject};
@@ -57,6 +59,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
 
+mod crate_path;
 mod field_init;
 mod inject_attr;
 mod inject_derive;

@@ -3,6 +3,7 @@ use quote::quote;
 
 pub(crate) fn expand_inject_derive(input: syn::DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
+    let dix = crate::crate_path::dix_crate_path();
     let try_fn = quote::format_ident!("__rdi_try_construct_{}", name);
     let fn_name = quote::format_ident!("__rdi_construct_{}", name);
     let constructor_body = match &input.data {
@@ -23,20 +24,20 @@ pub(crate) fn expand_inject_derive(input: syn::DeriveInput) -> syn::Result<Token
             #[doc(hidden)]
             #[allow(non_snake_case)]
             pub fn #try_fn(
-                resolver: &dyn rust_dix::IServiceResolver,
-            ) -> ::std::result::Result<::std::sync::Arc<#name>, rust_dix::RdiError> {
+                resolver: &dyn #dix::IServiceResolver,
+            ) -> ::std::result::Result<::std::sync::Arc<#name>, #dix::RdiError> {
                 ::std::result::Result::Ok(::std::sync::Arc::new(#constructor_body))
             }
 
     /// Infallible inject constructor for `ServiceCollection` factories.
     ///
-    /// Prefer `__rdi_try_construct_*` when you need typed [`rust_dix::RdiError`].
+    /// Prefer `__rdi_try_construct_*` when you need typed `RdiError`.
     /// Failures panic with `RdiError` as the payload so `ServiceProvider::get`
     /// can recover a typed error via `catch_unwind`.
     #[doc(hidden)]
     #[allow(non_snake_case)]
-    pub fn #fn_name(resolver: &dyn rust_dix::IServiceResolver) -> ::std::sync::Arc<#name> {
-        rust_dix::inject_arc(#try_fn(resolver))
+    pub fn #fn_name(resolver: &dyn #dix::IServiceResolver) -> ::std::sync::Arc<#name> {
+        #dix::inject_arc(#try_fn(resolver))
     }
         })
 }
