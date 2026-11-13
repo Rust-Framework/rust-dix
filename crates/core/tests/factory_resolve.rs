@@ -8,7 +8,8 @@
 //! Covered here:
 //! - `resolver.resolve_arc::<T>()` in a fallible factory helper (`?` works);
 //! - `resolver.resolve_arc::<dyn Trait>()`;
-//! - dyn-safe `resolver.get_arc(TypeId)`;
+//! - existing dyn-safe `resolver.get_by_type_id(TypeId)` (no extra API needed);
+//! - `resolve_arc` reports framework-level failures as `Err`, never panics;
 //! - `get_any` stays available (source compatibility).
 
 mod common;
@@ -60,7 +61,7 @@ fn factory_resolves_typed_dependencies() {
 }
 
 #[test]
-fn get_arc_by_type_id_resolves_inside_factory() {
+fn get_by_type_id_resolves_inside_factory() {
     let p = ServiceCollection::new()
         .singleton(|_| {
             Arc::new(common::Logger {
@@ -69,7 +70,7 @@ fn get_arc_by_type_id_resolves_inside_factory() {
         })
         .singleton(|r| {
             let erased = r
-                .get_arc(TypeId::of::<common::Logger>())
+                .get_by_type_id(TypeId::of::<common::Logger>())
                 .expect("registered");
             let arc = erased.downcast::<Arc<common::Logger>>().expect("shape");
             Arc::new(Publisher {
@@ -93,4 +94,25 @@ fn resolve_arc_reports_missing_dependency_typed() {
     let err = p.resolve_arc::<common::MyService>().unwrap_err();
     let text = err.to_string();
     assert!(text.contains("MyService"), "unexpected error: {text}");
+}
+
+#[test]
+fn resolve_arc_returns_err_for_registered_but_unresolvable_service() {
+    // A scoped service cannot be resolved from the root provider under strict
+    // scope validation. The container's `get` reports a typed error; the
+    // dyn-aware `resolve_arc` must match that contract instead of leaking the
+    // internal `panic_any(RdiError)` used by `get_by_type_id`.
+    let p = ServiceCollection::new()
+        .scoped(|_| Arc::new(common::MyService { value: 1 }))
+        .build()
+        .unwrap();
+
+    assert!(
+        p.get::<common::MyService>().is_err(),
+        "scoped-at-root must be a typed error"
+    );
+    assert!(
+        p.resolve_arc::<common::MyService>().is_err(),
+        "resolve_arc must return Err, not panic, for framework-level failures"
+    );
 }

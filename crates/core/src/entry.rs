@@ -121,21 +121,6 @@ pub trait IServiceResolver: Send + Sync {
         None
     }
 
-    /// Resolve a service by `TypeId`, still type-erased.
-    ///
-    /// Dyn-safe counterpart of [`Self::get`] for factory closures, which only
-    /// receive `&dyn IServiceResolver`: `get`/`get_keyed` carry a `Self: Sized`
-    /// bound and cannot be called through the trait object. Prefer the typed
-    /// [`IServiceResolverExt::resolve_arc`] wrapper whenever the type is known
-    /// statically — it needs no stringified type name and no manual downcast.
-    ///
-    /// Returns `None` when no unkeyed registration exists. A registered service
-    /// that cannot be resolved at this point (strict-scope validation, disposed
-    /// provider/scope, circular dependency) panics with a typed [`RdiError`]
-    /// payload, exactly like [`Self::get_by_type_id`].
-    fn get_arc(&self, type_id: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.get_by_type_id(type_id)
-    }
     /// TypeId 直查 keyed 版本（默认 `None`）。
     ///
     /// 覆盖实现须遵循 trait 级 panic 契约（见 [`Self::get_by_type_id`]）。
@@ -379,7 +364,12 @@ pub trait IServiceResolver: Send + Sync {
 /// Factories are passed `&dyn IServiceResolver`; the generic methods on
 /// [`IServiceResolver`] cannot be called on the trait object, so this extension
 /// restores type safety inside factories (no stringified type names, no manual
-/// `downcast`):
+/// `downcast`). Bring it into scope with `use rust_dix::IServiceResolverExt as _;`
+/// (or `use rust_dix::*;`).
+///
+/// Sync factory closures return `Arc<T>`, so `?` belongs in a fallible helper
+/// (or use `.unwrap()`/`.expect()`); the helper result is then wrapped with
+/// [`inject_arc`](crate::inject_arc) to keep the typed error:
 ///
 /// ```
 /// use rust_dix::*;
@@ -390,36 +380,52 @@ pub trait IServiceResolver: Send + Sync {
 ///     config: Arc<Config>,
 /// }
 ///
+/// fn build_handler(resolver: &dyn IServiceResolver) -> Result<Arc<Handler>, RdiError> {
+///     let config: Arc<Config> = resolver.resolve_arc()?; // `?` works here
+///     Ok(Arc::new(Handler { config }))
+/// }
+///
 /// let collection = ServiceCollection::new()
 ///     .singleton(|_| Arc::new(Config))
-///     .singleton(|resolver| {
-///         let config: Arc<Config> = resolver.resolve_arc().expect("Config is registered");
-///         Arc::new(Handler { config })
-///     });
+///     .singleton(|r| inject_arc(build_handler(r)));
 /// let _ = collection;
 /// ```
 pub trait IServiceResolverExt {
     /// Resolve `T` (concrete or `dyn Trait`) as a shared instance.
     ///
-    /// Equivalent to [`IServiceResolver::get`] for containers, but dyn-safe so
-    /// it can be used through the `&dyn IServiceResolver` handed to factories.
-    /// Returns [`RdiError::ServiceNotFound`] when nothing is registered;
-    /// framework-level failures (strict-scope violation, disposed container,
-    /// circular dependency) keep their typed [`RdiError`].
+    /// Intended for factory closures — the only place where a resolver is seen
+    /// as `&dyn IServiceResolver`. On a container (`ServiceProvider`, `Scope`)
+    /// prefer the inherent `get`/`get_optional`, which are the primary API and
+    /// avoid the extra dyn-aware path.
+    ///
+    /// Returns `Err(RdiError::ServiceNotFound)` when nothing is registered.
+    /// Services that are registered but not resolvable *at this point*
+    /// (strict-scope validation, disposed container/scope, circular dependency)
+    /// are also reported as `Err` — the typed `RdiError` payload of the
+    /// [`IServiceResolver::get_by_type_id`] panic contract is caught and
+    /// converted, so this method never panics for framework-level failures.
     fn resolve_arc<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError>;
 }
 
 impl<R: IServiceResolver + ?Sized> IServiceResolverExt for R {
     fn resolve_arc<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Arc<T>, RdiError> {
         let ty = std::any::type_name::<T>();
-        self.get_arc(TypeId::of::<T>())
-            .or_else(|| self.get_any(ty))
+        let tid = TypeId::of::<T>();
+        // `get_by_type_id` follows the trait panic contract (registered but not
+        // resolvable → typed `RdiError` payload panic). Catch it here so the
+        // typed API surfaces an ordinary `Err`, matching `IServiceResolver::get`.
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.get_by_type_id(tid).or_else(|| self.get_any(ty))
+        }))
+        .map_err(|payload| RdiError::from_panic_payload(ty, payload))?;
+        found
             .and_then(|a| a.downcast::<Arc<T>>().ok().map(|d| Arc::clone(&*d)))
             .ok_or_else(|| RdiError::not_found(ty, None))
     }
 }
 
-pub struct ServiceEntry {    pub cache_key: usize,
+pub struct ServiceEntry {
+    pub cache_key: usize,
     pub key: Option<ServiceKey>,
     pub type_name: &'static str, // kept for IServiceResolver string-based resolution
     /// Primary sync factory (typed, resolver-only).

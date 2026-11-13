@@ -109,16 +109,6 @@ impl IClock for FakeClock {
 }
 
 #[test]
-fn instance_dyn_registers_trait_object() {
-    let p = ServiceCollection::new()
-        .instance_dyn::<dyn IClock>(Arc::new(FakeClock(42)))
-        .build()
-        .unwrap();
-    let clock: Arc<dyn IClock> = p.get().unwrap();
-    assert_eq!(clock.now(), 42);
-}
-
-#[test]
 fn instance_accepts_unsized_trait_object() {
     let p = ServiceCollection::new()
         .instance::<dyn IClock>(Arc::new(FakeClock(7)))
