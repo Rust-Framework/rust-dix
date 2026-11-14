@@ -117,3 +117,26 @@ fn instance_accepts_unsized_trait_object() {
     let clock: Arc<dyn IClock> = p.get().unwrap();
     assert_eq!(clock.now(), 7);
 }
+
+#[test]
+fn instance_trait_object_resolves_through_resolve_arc() {
+    // The factory-facing typed API (`resolve_arc`) must see the same instance
+    // that `instance::<dyn Trait>` registered — no newtype wrapper in between.
+    let clock: Arc<dyn IClock> = Arc::new(FakeClock(9));
+    let p = ServiceCollection::new()
+        .instance::<dyn IClock>(Arc::clone(&clock))
+        .build()
+        .unwrap();
+
+    let via_get: Arc<dyn IClock> = p.get().unwrap();
+    let via_resolve: Arc<dyn IClock> = p.resolve_arc().unwrap();
+    assert!(
+        Arc::ptr_eq(&via_get, &clock),
+        "get returns the registered instance"
+    );
+    assert!(
+        Arc::ptr_eq(&via_resolve, &clock),
+        "resolve_arc returns the registered instance"
+    );
+    assert_eq!(via_resolve.now(), 9);
+}

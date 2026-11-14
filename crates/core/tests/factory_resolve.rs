@@ -10,6 +10,8 @@
 //! - `resolver.resolve_arc::<dyn Trait>()`;
 //! - existing dyn-safe `resolver.get_by_type_id(TypeId)` (no extra API needed);
 //! - `resolve_arc` reports framework-level failures as `Err`, never panics;
+//! - the same typed `Err` contract inside a factory closure (unregistered /
+//!   scoped-at-root) and on a disposed provider;
 //! - `get_any` stays available (source compatibility).
 
 mod common;
@@ -114,5 +116,76 @@ fn resolve_arc_returns_err_for_registered_but_unresolvable_service() {
     assert!(
         p.resolve_arc::<common::MyService>().is_err(),
         "resolve_arc must return Err, not panic, for framework-level failures"
+    );
+}
+
+/// Captures the typed outcome of a factory-closure `resolve_arc` call without
+/// panicking, so the assertion observes the `Err` value itself.
+struct ResolutionProbe {
+    err: RdiError,
+}
+
+#[derive(Debug)]
+struct ScopedOnly;
+
+#[test]
+fn resolve_arc_inside_factory_reports_missing_dependency_typed() {
+    let p = ServiceCollection::new()
+        .transient(|r| {
+            let err = r
+                .resolve_arc::<common::MyService>()
+                .expect_err("MyService is not registered");
+            Arc::new(ResolutionProbe { err })
+        })
+        .build()
+        .unwrap();
+
+    let probe: Arc<ResolutionProbe> = p.get().unwrap();
+    match &probe.err {
+        RdiError::ServiceNotFound { ty, .. } => {
+            assert!(ty.contains("MyService"), "unexpected type: {ty}");
+        }
+        other => panic!("expected ServiceNotFound, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_arc_inside_factory_reports_scope_violation_typed() {
+    // The transient itself resolves at the root; its scoped dependency must be
+    // rejected there with the typed error instead of panicking through the
+    // factory closure.
+    let p = ServiceCollection::new()
+        .scoped(|_| Arc::new(ScopedOnly))
+        .transient(|r| {
+            let err = r
+                .resolve_arc::<ScopedOnly>()
+                .expect_err("a scoped service cannot be resolved from the root provider");
+            Arc::new(ResolutionProbe { err })
+        })
+        .build()
+        .unwrap();
+
+    let probe: Arc<ResolutionProbe> = p.get().unwrap();
+    assert!(
+        matches!(&probe.err, RdiError::ScopedFromRootProvider { .. }),
+        "unexpected error: {:?}",
+        probe.err
+    );
+}
+
+#[test]
+fn resolve_arc_on_disposed_provider_is_typed_err() {
+    let p = ServiceCollection::new()
+        .singleton(|_| Arc::new(FakeClock) as Arc<dyn IClock>)
+        .build()
+        .unwrap();
+    p.dispose();
+
+    assert!(
+        matches!(
+            p.resolve_arc::<dyn IClock>(),
+            Err(RdiError::ProviderDisposed)
+        ),
+        "a disposed provider must surface ProviderDisposed, not panic or ServiceNotFound"
     );
 }
