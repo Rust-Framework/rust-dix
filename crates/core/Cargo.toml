@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "rust-dix: A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 readme = "README.md"
 include = ["README.md", "src/**/*", "tests/**/*", "examples/**/*"]
 categories = ["rust-patterns", "asynchronous"]

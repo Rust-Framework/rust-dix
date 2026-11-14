@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://crates.io/crates/rust-dix"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix.svg?style=flat-square"></a>
   <a href="https://docs.rs/rust-dix"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix?style=flat-square"></a>
+  <a href="https://rust-framework.github.io/rust-dix/"><img alt="Documentation" src="https://img.shields.io/badge/docs-mdBook-blue.svg?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
@@ -18,6 +19,9 @@
 Microsoft.Extensions.DependencyInjection (MEDI). It provides a service container
 with constructor injection, scoped lifetimes, async initialization, and
 compile-time validation — all with zero `unsafe` code.
+
+**[Online documentation](https://rust-framework.github.io/rust-dix/)** — the full
+developer handbook (mdBook, Chinese), built from `docs/rust-dix/`.
 
 ## Crate overview
 

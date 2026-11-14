@@ -41,6 +41,7 @@ docs/
 
 ## 阅读
 
+- **在线站点**：<https://rust-framework.github.io/rust-dix/>（mdBook，由 `.github/workflows/docs.yml` 自动构建部署；本地预览：`python scripts/gen-mdbook-summary.py && mdbook serve docs/rust-dix`）
 - [前言](rust-dix/FOREWORD.md) — 本书定位、读者画像与阅读路径
 - [全书目录](rust-dix/INDEX.md)
 - [与 MEDI 的差异清单](rust-dix/01-introduction/medi-differences.md) — scope 校验、dispose、keyed、get_all、async 枚举逐条对照
@@ -55,4 +56,5 @@ docs/
 ## 维护
 
 编辑 `docs/rust-dix/` 下的 Markdown 即可；Docbit 启动时会自动确保 `INDEX.json` 存在。
-新增页面需同时更新 `docs/rust-dix/INDEX.md`、`INDEX.json`（仅登记已发布页）与本文件的目录树。
+新增页面需同时更新 `docs/rust-dix/INDEX.md`、`INDEX.json`（仅登记已发布页）与本文件的目录树；
+章节/小节变动后运行 `python scripts/gen-mdbook-summary.py` 重新生成 `SUMMARY.md`（`docs.yml` 会校验一致）。

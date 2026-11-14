@@ -99,7 +99,7 @@
 - 编译期模块扫描（规划中）
 
 > 本章尚未发布；过程宏的现行文档见
-> [rust-dix-macros README](../../crates/macros/README.md)。
+> [rust-dix-macros README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.md)。
 
 ---
 

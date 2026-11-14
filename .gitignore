@@ -3,6 +3,9 @@ target/
 **/*.rs.bk
 /Cargo.lock
 
+# mdBook build output (docs site is deployed by .github/workflows/docs.yml)
+docs/rust-dix/book/
+
 # IDE / AI agent helpers (do not publish)
 .cursor/
 .trae/

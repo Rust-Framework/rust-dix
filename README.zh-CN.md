@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://crates.io/crates/rust-dix"><img alt="Crates.io" src="https://img.shields.io/crates/v/rust-dix.svg?style=flat-square"></a>
   <a href="https://docs.rs/rust-dix"><img alt="Docs" src="https://img.shields.io/docsrs/rust-dix?style=flat-square"></a>
+  <a href="https://rust-framework.github.io/rust-dix/"><img alt="Documentation" src="https://img.shields.io/badge/docs-mdBook-blue.svg?style=flat-square"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
@@ -17,6 +18,8 @@
 **rust-dix** 是一个 Rust 依赖注入框架，灵感来自
 Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数注入、
 作用域生命周期（Scoped）、异步初始化和编译期校验的服务容器 —— 全程零 `unsafe` 代码。
+
+**[在线文档](https://rust-framework.github.io/rust-dix/)** —— 完整开发者手册（mdBook，中文），由 `docs/rust-dix/` 构建。
 
 ## Crate 总览
 

@@ -172,6 +172,6 @@ let b: Arc<dyn IStorage> = provider.get_keyed("tenant-2")?; // 另一实例
   [迁移速查](../01-introduction/medi-differences.md#12-迁移速查07x--010x)。
 - 生产部署检查：见 [生产环境部署检查清单](production-checklist.md)（原
   `docs/production-deployment-checklist.md` 已迁入参考章）。
-- API 细节：见 [crates/core README](../../../crates/core/README.md) 与 docs.rs API 文档。
+- API 细节：见 [crates/core README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/core/README.md) 与 docs.rs API 文档。
 
 
