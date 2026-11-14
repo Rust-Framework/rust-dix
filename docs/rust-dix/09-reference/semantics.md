@@ -1,9 +1,9 @@
-﻿# 参考 · 当前版本语义（0.10）
+# 参考 · 当前版本语义（1.0）
 
-> **单一权威源**：本页是 rust-dix **0.10.x** 容器语义的唯一权威说明。其它章节只保留
+> **单一权威源**：本页是 rust-dix **1.0.x** 容器语义的唯一权威说明。其它章节只保留
 > 情境摘要并链接回本页；两者冲突时以本页为准。
 >
-> 适用版本：**0.10.0**。与 MEDI 的逐条对照
+> 适用版本：**1.0.0**。与 MEDI 的逐条对照
 > 见 [与 MEDI 的差异清单](../01-introduction/medi-differences.md)，从 0.9 升级的动作见
 > [迁移速查](../01-introduction/medi-differences.md#12-迁移速查07x--010x)；扩展边界（宏 key
 > From、自定义 resolver、async AnyKey workaround）见 [扩展契约](extension-points.md)。

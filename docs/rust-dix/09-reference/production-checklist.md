@@ -1,7 +1,7 @@
 # 生产环境部署检查清单
 
-> 适用于 `rust-dix` **v0.10.x**（当前 0.10.0，特性发布：宏 key 表达式 / typed resolver /
-> 扩展契约）。基于源码静态分析 + 运行时行为验证编写。
+> 适用于 `rust-dix` **v1.0.x**（当前 1.0.0；1.0 冻结 0.10 的 DI 契约并补齐严格 scope /
+> trait-object `instance` / typed `resolve_arc` / 改名宏兼容）。基于源码静态分析 + 运行时行为验证编写。
 > 0.9 引入、0.10 继续适用：类型化 keyed 键 / `AnyKey` 兜底 / `AsyncFactoryContext`（跨任务环检测）/
 > 精确诊断，并把 async 环检测升级为解析链；MSRV **1.95**，两个 crate 均
 > `#![forbid(unsafe_code)]`，CI 含 RustSec `cargo audit`，安全策略见 `SECURITY.md`。
