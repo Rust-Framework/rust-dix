@@ -28,4 +28,4 @@ proc-macro-crate = "3.5"
 # dev-dependency is intentionally *renamed* (`dix`) so `tests/rename.rs`
 # reproduces Travel's `dix = { package = "rust-dix" }` setup without the
 # `extern crate dix as rust_dix;` shim.
-dix = { package = "rust-dix", path = "../core" }
+dix = { package = "rust-dix", path = "../dix" }

@@ -1,28 +1,17 @@
 [package]
-name = "rust-dix"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-description = "rust-dix: A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-readme = "README.md"
-include = ["README.md", "src/**/*", "tests/**/*", "examples/**/*"]
-categories = ["rust-patterns", "asynchronous"]
-keywords = ["di", "dependency-injection", "ioc", "rust-dix", "service-provider"]
-
-[dependencies]
-thiserror.workspace = true
-inventory = "0.3"
-rust-dix-macros = { path = "../macros", version = "1.0.0" }
-futures = "0.3"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
-
-[features]
-default = []
+name = "rust-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+description = "rust-core: shared contract types for the Rust Framework (application error carrier + stable error codes)"
+license = "MIT"
+repository = "https://github.com/Rust-Framework/rust-dix"
+homepage = "https://rust-framework.github.io/rust-dix/"
 
 [lib]
+name = "rust_core"
 doc = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

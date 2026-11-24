@@ -46,6 +46,18 @@ jobs:
         if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: rust-core stays contract-only
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        # The contract layer must not pull a framework or an async/runtime stack;
+        # it is serde/serde_json only (feedback §32 and plan §3.6).
+        run: |
+          if cargo tree -p rust-core -e normal --prefix none \
+            | grep -Eq '^(rust-dix|rust-ef|rust-webx|tokio|hyper|async-trait) '; then
+            echo "error: rust-core depends on a framework/runtime crate" >&2
+            exit 1
+          fi
+          echo "ok: rust-core is contract-only"
+
       - name: Documentation (deny warnings)
         if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
         env:

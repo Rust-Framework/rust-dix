@@ -27,7 +27,8 @@ developer handbook (mdBook, Chinese), built from `docs/rust-dix/`.
 
 | Crate | What it does | Who needs it |
 |-------|-------------|--------------|
-| [`rust-dix`](./crates/core/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
+| [`rust-core`](./crates/core/) | Framework-neutral contract layer — `AppError`/`ErrorKind`/`FieldProblem`, stable error codes, `PagedRequest`/`PagedResult`, `CursorPage`, `OperationResult` | Any Rust framework (web, ORM, DI) that shares one wire/contract vocabulary; no I/O, no async, serde only |
+| [`rust-dix`](./crates/dix/) | Core DI container — register, build, resolve, scope | Any Rust application that wants loose coupling, testability, and pluggable architecture |
 | [`rust-dix-macros`](./crates/macros/) | Procedural macros — `#[derive(Inject)]`, `#[rust_dix::inject]`, `#[rust_dix::module]` | Anyone using `rust-dix` who wants compile-time code generation instead of manual wiring |
 
 ## Quick Start
@@ -549,7 +550,7 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
 
 For common design patterns (Strategy, Factory, Decorator, Observer, Chain of
 Responsibility, Pipeline, Plugin, Composite, Proxy, Feature Toggle), see the
-[patterns test suite](crates/core/tests/patterns.rs).
+[patterns test suite](crates/dix/tests/patterns.rs).
 
 ## Real-world example: Web application
 
@@ -604,11 +605,11 @@ async fn main() {
 }
 ```
 
-Full runnable example: [`async_integration.rs`](crates/core/tests/async_integration.rs)
+Full runnable example: [`async_integration.rs`](crates/dix/tests/async_integration.rs)
 
 ## Further reading
 
-- [crates/core — core library docs](./crates/core/README.md)
+- [crates/dix — core library docs](./crates/dix/README.md)
 - [crates/macros — procedural macro docs](./crates/macros/README.md)
 - [Differences from MEDI (scope validation, dispose, keyed, get_all)](docs/rust-dix/01-introduction/medi-differences.md) — read this if you come from .NET
 - [Reference: current (0.10) semantics, RdiError catalog, production checklist](docs/rust-dix/09-reference/INDEX.md)
@@ -617,7 +618,7 @@ Full runnable example: [`async_integration.rs`](crates/core/tests/async_integrat
 - [Development & build-artifact hygiene](docs/DEVELOPMENT.md) — why `target/` grows to tens of GB, the tuned Cargo profiles, and the `scripts/clean-target.ps1` pruner
 - [Security policy](./SECURITY.md) — vulnerability reporting, supported versions, security boundaries
 - [Changelog](./CHANGELOG.md) — release history
-- [Integration tests](crates/core/tests/) — real-world usage patterns
+- [Integration tests](crates/dix/tests/) — real-world usage patterns
 
 ## License
 

@@ -3,7 +3,7 @@ import os
 import re
 import glob
 
-TEST_DIR = os.path.join(os.path.dirname(__file__), "crates", "core", "tests")
+TEST_DIR = os.path.join(os.path.dirname(__file__), "crates", "dix", "tests")
 
 # Each pattern: (regex, replacement_template)
 # Using negative lookbehind (?<!\w) to ensure we don't match try_get, etc.

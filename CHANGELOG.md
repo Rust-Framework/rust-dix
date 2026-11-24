@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-24
+
+> **English** · **简体中文**
+
+Additive release: rust-dix now converts its typed container error into the shared
+`rust_core::AppError` carrier, so a `?` in a handler/worker that returns the framework result type
+works without an application-side `map_di_error`. Container messages stay operator-only; the client
+sees the hidden `500 dependency_injection`.
+
+#### English
+
+##### Added
+- **`impl From<RdiError> for rust_core::AppError`** — every container failure (missing service,
+  keyed miss, cycle, scope violation, factory panic, async/owned restriction, disposed provider)
+  maps to `ErrorKind::Di` / `dependency_injection` / `500`, `public_detail() = None`, and the
+  original `RdiError::to_string()` as the operator-only detail.
+- New `rust-core` dependency (`crates/core`, version 0.1, published first); `crates/core` is the
+  shared contract layer also used by rust-ef/rust-webx.
+
+##### Changed
+- Workspace version 1.0.0 → 1.1.0 (additive: new trait impl + new dependency; no public item was
+  removed). `publish.sh` publishes `rust-core` before the DI crates.
+
+#### 简体中文
+
+##### 新增
+- **`impl From<RdiError> for rust_core::AppError`**：所有容器失败（缺服务、keyed 未注册、循环依赖、
+  scope 违规、工厂 panic、async/owned 限制、provider 已释放）统一映射为 `ErrorKind::Di` /
+  `dependency_injection` / 500，`public_detail() = None`，原始 `RdiError::to_string()` 只进
+  operator detail。Handler/后台任务返回框架结果类型时可直接 `?`，不再需要应用侧 `map_di_error`。
+- 新增 `rust-core` 依赖（`crates/core`，0.1，先发布）；它是 rust-ef/rust-webx 共用的契约层。
+
+##### 变更
+- workspace 版本 1.0.0 → 1.1.0（加性：新增 trait impl + 新依赖，未删除公开项）。
+  `publish.sh` 先发布 `rust-core` 再发布 DI crates。
+
+## [rust-core 0.1.0] - 2026-11-24
+
+> **English** · **简体中文**
+
+New crate in this repository: **`rust-core`** (`crates/core`, lib `rust_core`) is the
+framework-neutral contract layer shared by rust-webx / rust-ef / rust-dix. It contains only data
+shapes and classification logic — no I/O, no async, no framework behavior; it depends only on
+`serde` + `serde_json`.
+
+#### English
+
+##### Added
+- **`AppError` / `ErrorKind` / `FieldProblem` / `Result`** — the single application error carrier:
+  `kind`, `code`, sanitized `detail`, log-only `operator`, `retryable`, optional explicit `status`,
+  field problems and RFC 9457-style `extensions`; constructors for validation/auth/not-found/
+  conflict/retryable-conflict/429/unavailable/internal/DI, plus `status_code()`/`code()`/
+  `retryable()`/`public_detail()`.
+- **`error_codes`** — the stable machine-readable registry (23 codes) and status fallbacks, moved
+  from rust-webx so every framework shares one table.
+- **Pagination/cursor/business-envelope contracts** — `PagedRequest` (no clamping helpers,
+  `offset()` in `u64`), `PagedResult<T>` as a **flat operation envelope**
+  `{success,status,message,items,total}` (it composes `OperationResult<()>`; no request echo),
+  `KeysetRequest`/`Cursor`/`CursorPage<T>`/`CursorError`, and `OperationResult<T>`.
+  `PagedResult`/`CursorPage` have no `T: Serialize` struct-level bound, so a query terminal can
+  return entity pages and map them later.
+- `rust-dix` moved from `crates/core` to `crates/dix`; the package name/lib name are unchanged.
+  `publish.sh` publishes `rust-core` before the DI crates.
+
+#### 简体中文
+
+##### 新增
+- **`AppError` / `ErrorKind` / `FieldProblem` / `Result`**：唯一的应用错误载体（kind/code/脱敏
+  detail/仅日志 operator/retryable/可选显式 status/字段错误/extensions），提供校验、认证、404、
+  409、可重试冲突、429、503、500、DI 等构造器与 `status_code()/code()/retryable()/public_detail()`。
+- **`error_codes`**：稳定的机器码注册表（23 项）与状态兜底，从 rust-webx 迁入，三框架共用一份。
+- **分页/游标/业务信封契约**：`PagedRequest`（无夹紧辅助、`offset()` 用 `u64`）、
+  `PagedResult<T>` 作为**扁平业务信封** `{success,status,message,items,total}`（组合
+  `OperationResult<()>`，无请求回声）、`KeysetRequest`/`Cursor`/`CursorPage<T>`/`CursorError`、
+  `OperationResult<T>`；`PagedResult`/`CursorPage` 没有结构体级 `T: Serialize` bound，查询终端
+  可返回实体页稍后映射。
+- `rust-dix` 目录从 `crates/core` 迁到 `crates/dix`（package/lib 名不变）；`publish.sh` 先发布
+  `rust-core` 再发布 DI crates。
+
 ## [1.0.0] - 2026-11-13
 
 > **English** · **简体中文**

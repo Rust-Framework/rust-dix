@@ -141,4 +141,4 @@ impl IServiceResolver for MyResolver {
   `rdi-E004` 是宏编译错误，见 [crates/macros README 行为说明](https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.md)
 - [多实现与键控服务](../03-interface-oriented/multiple-implementations.md)
 - [crates/macros README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.md)
-- [crates/core README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/core/README.md)
+- [crates/dix README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/dix/README.md)

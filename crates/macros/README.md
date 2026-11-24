@@ -14,7 +14,7 @@
   <a href="https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.zh.md"><strong>中文</strong></a>
 </p>
 
-`rust-dix-macros` provides procedural macros for the [`rust-dix`](../core/) DI
+`rust-dix-macros` provides procedural macros for the [`rust-dix`](../dix/) DI
 framework. These macros shift work from runtime to compile time, eliminating
 boilerplate and letting you declare DI configuration as close to your types
 as possible.
@@ -312,7 +312,7 @@ semantics they feed into (full details:
 
 ### Relationship with rust-dix
 
-`rust-dix-macros` is a companion to [`rust-dix`](../core/). You can use `rust-dix`
+`rust-dix-macros` is a companion to [`rust-dix`](../dix/). You can use `rust-dix`
 without any macros — just write factory closures manually — and everything
 works. The macros exist to eliminate repetition when you have many services
 or want to declare DI configuration declaratively.

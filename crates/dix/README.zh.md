@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Rust-Framework/rust-dix/blob/main/crates/core/README.md"><strong>English</strong></a>
+  <a href="https://github.com/Rust-Framework/rust-dix/blob/main/crates/dix/README.md"><strong>English</strong></a>
 </p>
 
 `rust-dix` 是 rust-dix 框架的核心 crate — 一个受 Microsoft.Extensions.DependencyInjection

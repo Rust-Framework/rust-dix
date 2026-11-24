@@ -1,0 +1,29 @@
+[package]
+name = "rust-dix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "rust-dix: A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+include = ["README.md", "src/**/*", "tests/**/*", "examples/**/*"]
+categories = ["rust-patterns", "asynchronous"]
+keywords = ["di", "dependency-injection", "ioc", "rust-dix", "service-provider"]
+
+[dependencies]
+thiserror.workspace = true
+inventory = "0.3"
+rust-dix-macros = { path = "../macros", version = "1.1.0" }
+rust-core = { workspace = true }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+
+[features]
+default = []
+
+[lib]
+doc = true

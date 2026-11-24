@@ -2,7 +2,7 @@
 //! dependency name instead of hardcoding `::rust_dix`.
 //!
 //! `rust-dix-macros`'s manifest declares the core crate as
-//! `dix = { package = "rust-dix", path = "../core" }`. If any expansion still
+//! `dix = { package = "rust-dix", path = "../dix" }`. If any expansion still
 //! emits `::rust_dix::…`, this file fails to compile — exactly the failure
 //! Travel hit before adding `extern crate dix as rust_dix;` shims.
 //!

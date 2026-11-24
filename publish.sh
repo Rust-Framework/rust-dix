@@ -3,10 +3,10 @@ set -euo pipefail
 
 # ──────────────────────────────────────────────
 # rust-dix — One-command publish script
-# Publishes rust-dix-macros first, then rust-dix.
+# Publishes rust-core first, then rust-dix-macros and rust-dix.
 #
 # Usage:
-#   ./publish.sh                  # publish both crates
+#   ./publish.sh                  # publish all three crates
 #   ./publish.sh --dry-run        # dry run
 #   CARGO_REGISTRY_TOKEN=xxx ./publish.sh  # token via env
 # ──────────────────────────────────────────────
@@ -88,7 +88,7 @@ echo ""
 echo "    ✓ All checks passed"
 echo ""
 
-# ── Step 2: Publish rust-dix-macros ──
+# ── Step 2: Publish helpers ──
 
 publish_crate() {
   local dir="$1" crate="$2" ver="$3" attempt log
@@ -113,6 +113,22 @@ publish_crate() {
   return 1
 }
 
+# ── Step 3: Publish rust-core ──
+# The contract layer is independent of the DI container and must be on
+# crates.io before rust-dix / rust-ef / rust-webx can depend on it.
+CORE_DIR="crates/core"
+CORE_VER=$(grep '^version ' "$CORE_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+publish_crate "$CORE_DIR" rust-core "$CORE_VER"
+
+if [ -z "$DRY_RUN" ]; then
+    echo "    Waiting 15s for crates.io index to refresh..."
+    sleep 15
+fi
+
+echo ""
+
+# ── Step 4: Publish rust-dix-macros ──
+
 MACROS_DIR="crates/macros"
 MACROS_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
 publish_crate "$MACROS_DIR" rust-dix-macros "$MACROS_VER"
@@ -124,9 +140,9 @@ fi
 
 echo ""
 
-# ── Step 3: Publish rust-dix ──
+# ── Step 5: Publish rust-dix ──
 
-RDI_DIR="crates/core"
+RDI_DIR="crates/dix"
 RDI_VER=$(grep '^version ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
 publish_crate "$RDI_DIR" rust-dix "$RDI_VER"
 
@@ -134,6 +150,7 @@ echo ""
 echo "============================================"
 echo "  Done!"
 echo ""
+echo "  https://crates.io/crates/rust-core"
 echo "  https://crates.io/crates/rust-dix"
 echo "  https://crates.io/crates/rust-dix-macros"
 echo "============================================"

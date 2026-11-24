@@ -4,11 +4,12 @@ resolver = "2"
 
 members = [
     "crates/core",
+    "crates/dix",
     "crates/macros",
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -20,6 +21,7 @@ thiserror = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+rust-core = { version = "0.1", path = "crates/core" }
 
 # ---------------------------------------------------------------------------
 # Build profiles tuned for disk usage (`target/` size).

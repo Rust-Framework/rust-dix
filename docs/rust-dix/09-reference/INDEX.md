@@ -24,4 +24,4 @@
 - [第一章 · 与 MEDI 的差异清单](../01-introduction/medi-differences.md)（逐条语义对照与迁移速查）
 - [第三章 · 多实现与键控服务](../03-interface-oriented/multiple-implementations.md)（typed key / AnyKey 用法）
 - [第八章 · 最佳实践](../08-best-practices/INDEX.md)（清单、陷阱与反模式）
-- [crates/core README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/core/README.md)（API 参考）
+- [crates/dix README](https://github.com/Rust-Framework/rust-dix/blob/main/crates/dix/README.md)（API 参考）

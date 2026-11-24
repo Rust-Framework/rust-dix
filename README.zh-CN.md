@@ -25,7 +25,8 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 | Crate | 作用 | 适用人群 |
 |-------|------|----------|
-| [`rust-dix`](./crates/core/README.zh.md) | 核心 DI 容器 —— 注册、构建、解析、作用域 | 任何希望实现松耦合、可测试和可插拔架构的 Rust 应用 |
+| [`rust-core`](./crates/core/) | 框架中立的契约层 —— `AppError`/`ErrorKind`/`FieldProblem`、稳定错误码、`PagedRequest`/`PagedResult`、`CursorPage`、`OperationResult` | 任何需要共享同一套 wire/契约词汇的 Rust 框架（Web/ORM/DI）；无 I/O、无 async，只依赖 serde |
+| [`rust-dix`](./crates/dix/README.zh.md) | 核心 DI 容器 —— 注册、构建、解析、作用域 | 任何希望实现松耦合、可测试和可插拔架构的 Rust 应用 |
 | [`rust-dix-macros`](./crates/macros/README.zh.md) | 过程宏 —— `#[derive(Inject)]`、`#[rust_dix::inject]`、`#[rust_dix::module]` | 希望用编译期代码生成替代手工装配的 `rust-dix` 使用者 |
 
 ## 快速开始
@@ -528,7 +529,7 @@ fn handle_request(provider: &Arc<ServiceProvider>) {
 
 有关常见设计模式（Strategy、Factory、Decorator、Observer、Chain of
 Responsibility、Pipeline、Plugin、Composite、Proxy、Feature Toggle），请参阅
-[模式测试套件](crates/core/tests/patterns.rs)。
+[模式测试套件](crates/dix/tests/patterns.rs)。
 
 ## 真实示例：Web 应用
 
@@ -583,11 +584,11 @@ async fn main() {
 }
 ```
 
-完整可运行示例：[`async_integration.rs`](crates/core/tests/async_integration.rs)
+完整可运行示例：[`async_integration.rs`](crates/dix/tests/async_integration.rs)
 
 ## 延伸阅读
 
-- [crates/core —— 核心库文档（中文）](./crates/core/README.zh.md)
+- [crates/dix —— 核心库文档（中文）](./crates/dix/README.zh.md)
 - [crates/macros —— 过程宏文档（中文）](./crates/macros/README.zh.md)
 - [与 MEDI 的差异清单（scope 校验、dispose、keyed、get_all）](docs/rust-dix/01-introduction/medi-differences.md) —— .NET 迁移必读
 - [参考章：当前版本语义 / 错误目录 / 生产检查清单](docs/rust-dix/09-reference/INDEX.md)
@@ -595,7 +596,7 @@ async fn main() {
 - [业务场景教程](docs/rust-dix/08-best-practices/business-scenarios.md) —— 真实模式
 - [安全策略](./SECURITY.md) —— 漏洞上报、支持版本与安全边界
 - [变更日志](./CHANGELOG.md) —— 发布历史
-- [集成测试](crates/core/tests/) —— 真实用法范例
+- [集成测试](crates/dix/tests/) —— 真实用法范例
 
 ## 许可证
 

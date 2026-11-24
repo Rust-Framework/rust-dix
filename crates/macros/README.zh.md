@@ -14,7 +14,7 @@
   <a href="https://github.com/Rust-Framework/rust-dix/blob/main/crates/macros/README.md"><strong>English</strong></a>
 </p>
 
-`rust-dix-macros` 为 [`rust-dix`](../core/) DI 框架提供过程宏。
+`rust-dix-macros` 为 [`rust-dix`](../dix/) DI 框架提供过程宏。
 这些宏将工作从运行时移到编译期，消除样板代码，让你在类型定义处就近声明 DI 配置。
 
 ```toml
@@ -285,7 +285,7 @@ rust_dix::register!(singleton: MyService);
 
 ### 与 rust-dix 的关系
 
-`rust-dix-macros` 是 [`rust-dix`](../core/) 的伴侣 crate。你可以完全不使用宏，
+`rust-dix-macros` 是 [`rust-dix`](../dix/) 的伴侣 crate。你可以完全不使用宏，
 手动写工厂闭包，一切仍然正常工作。宏的存在是为了在服务数量多的时候消除重复代码，
 或者让你用声明式的方式配置 DI。
 
