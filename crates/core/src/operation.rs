@@ -12,7 +12,7 @@
 //!
 //! async fn handle(&mut self, req: UpdateUserRequest) -> ActionResult<OperationResult<UserDto>> {
 //!     let user = self.update(req).await?;
-//!     Ok(OperationResult::ok(user, "user updated"))
+//!     Ok(OperationResult::success("user updated").with_result(user))
 //! }
 //! ```
 //!
@@ -67,21 +67,6 @@ pub struct OperationResult<T = ()> {
 }
 
 impl<T> OperationResult<T> {
-    /// A successful result carrying `result`, with the default business status
-    /// `0`.
-    pub fn ok(result: T, message: impl Into<String>) -> Self {
-        Self::ok_with_status(0, result, message)
-    }
-    /// A successful result carrying `result` and an explicit business status.
-    pub fn ok_with_status(status: i32, result: T, message: impl Into<String>) -> Self {
-        Self {
-            success: true,
-            status,
-            message: message.into(),
-            result: Some(result),
-        }
-    }
-
     /// A failed result with the business status that explains why. No payload is
     /// attached.
     pub fn failed(status: i32, message: impl Into<String>) -> Self {
@@ -115,14 +100,9 @@ impl OperationResult<()> {
     ///
     /// The JSON body is `{"success":true,"status":0,"message":"..."}`.
     pub fn success(message: impl Into<String>) -> Self {
-        Self::success_with_status(0, message)
-    }
-
-    /// A successful result with no payload and an explicit business status.
-    pub fn success_with_status(status: i32, message: impl Into<String>) -> Self {
         Self {
             success: true,
-            status,
+            status: 0,
             message: message.into(),
             result: None,
         }

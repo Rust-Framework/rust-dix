@@ -18,11 +18,11 @@ fn unit_result_omits_the_result_member() {
 
 #[test]
 fn generic_result_carries_the_payload_and_its_business_status() {
-    let value = serde_json::to_value(OperationResult::ok_with_status(
-        7,
-        UserDto { id: 7 },
-        "created",
-    ))
+    let value = serde_json::to_value(
+        OperationResult::success("created")
+            .with_status(7)
+            .with_result(UserDto { id: 7 }),
+    )
     .expect("serialize");
     assert_eq!(
         value,
@@ -35,7 +35,8 @@ fn generic_result_carries_the_payload_and_its_business_status() {
     );
 
     let default_status =
-        serde_json::to_value(OperationResult::ok(UserDto { id: 1 }, "ok")).expect("serialize");
+        serde_json::to_value(OperationResult::success("ok").with_result(UserDto { id: 1 }))
+            .expect("serialize");
     assert_eq!(default_status["status"], 0);
 }
 
@@ -56,7 +57,7 @@ fn failed_result_keeps_the_business_status_and_drops_the_payload() {
 
 #[test]
 fn setters_adjust_an_outcome_decided_while_the_operation_runs() {
-    let mut outcome = OperationResult::success_with_status(3, "published");
+    let mut outcome = OperationResult::success("published").with_status(3);
     outcome = outcome.with_status(1001).with_message("already published");
     // The fields stay public for in-place adjustment too.
     outcome.status = 1001;
@@ -90,7 +91,9 @@ fn with_result_attaches_the_payload_to_a_unit_envelope() {
 
 #[test]
 fn envelope_round_trips_through_json() {
-    let outcome = OperationResult::ok_with_status(7, UserDto { id: 7 }, "created");
+    let outcome = OperationResult::success("created")
+        .with_status(7)
+        .with_result(UserDto { id: 7 });
     let encoded = serde_json::to_string(&outcome).expect("serialize");
     let decoded: serde_json::Value = serde_json::from_str(&encoded).expect("deserialize value");
 

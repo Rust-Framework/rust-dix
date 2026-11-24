@@ -25,6 +25,10 @@ sees the hidden `500 dependency_injection`.
   shared contract layer also used by rust-ef/rust-webx.
 
 ##### Changed
+- **`OperationResult` constructors converged (rust-core 0.1)**: `ok`, `ok_with_status` and
+  `success_with_status` are removed; use `success(message).with_status(..).with_result(value)` or
+  `failed(status, message)`. The payload/status-bearing forms remain one builder chain.
+
 - Workspace version 1.0.0 → 1.1.0 (additive: new trait impl + new dependency; no public item was
   removed). `publish.sh` publishes `rust-core` before the DI crates.
 
