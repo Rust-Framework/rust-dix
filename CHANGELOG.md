@@ -65,11 +65,16 @@ shapes and classification logic — no I/O, no async, no framework behavior; it 
 - **`error_codes`** — the stable machine-readable registry (23 codes) and status fallbacks, moved
   from rust-webx so every framework shares one table.
 - **Pagination/cursor/business-envelope contracts** — `PagedRequest` (no clamping helpers,
-  `offset()` in `u64`), `PagedResult<T>` as a **flat operation envelope**
-  `{success,status,message,items,total}` (it composes `OperationResult<()>`; no request echo),
-  `KeysetRequest`/`Cursor`/`CursorPage<T>`/`CursorError`, and `OperationResult<T>`.
-  `PagedResult`/`CursorPage` have no `T: Serialize` struct-level bound, so a query terminal can
-  return entity pages and map them later.
+  `offset()` in `u64`), `PagedResult<T>` as a **flat page envelope**
+  `{success,status,message,items,total}` (the outcome fields are direct members — no nested
+  `operation` object; no request echo), `KeysetRequest`/`Cursor`/`CursorPage<T>`/`CursorError`,
+  and `OperationResult<T>`. `PagedResult`/`CursorPage` have no `T: Serialize` struct-level bound,
+  so a query terminal can return entity pages and map them later.
+- **`IPatchable<TPatch>`** (`persistence` module) — the framework-neutral vocabulary for
+  incremental updates: an entity implements it once per patch request type
+  (`UpdateOrderRequest`, `CancelOrderRequest`, …), and `patch` overwrites only the fields the
+  request carries, leaving the rest untouched. rust-core declares the contract only; entities,
+  DTOs and mapping bodies stay in the business crate, and no ORM type is involved.
 - `rust-dix` moved from `crates/core` to `crates/dix`; the package name/lib name are unchanged.
   `publish.sh` publishes `rust-core` before the DI crates.
 
@@ -81,10 +86,14 @@ shapes and classification logic — no I/O, no async, no framework behavior; it 
   409、可重试冲突、429、503、500、DI 等构造器与 `status_code()/code()/retryable()/public_detail()`。
 - **`error_codes`**：稳定的机器码注册表（23 项）与状态兜底，从 rust-webx 迁入，三框架共用一份。
 - **分页/游标/业务信封契约**：`PagedRequest`（无夹紧辅助、`offset()` 用 `u64`）、
-  `PagedResult<T>` 作为**扁平业务信封** `{success,status,message,items,total}`（组合
-  `OperationResult<()>`，无请求回声）、`KeysetRequest`/`Cursor`/`CursorPage<T>`/`CursorError`、
-  `OperationResult<T>`；`PagedResult`/`CursorPage` 没有结构体级 `T: Serialize` bound，查询终端
-  可返回实体页稍后映射。
+  `PagedResult<T>` 作为**扁平页信封** `{success,status,message,items,total}`（结果字段是
+  结构体直接成员，不再嵌套 `operation`，无请求回声）、`KeysetRequest`/`Cursor`/`CursorPage<T>`/
+  `CursorError`、`OperationResult<T>`；`PagedResult`/`CursorPage` 没有结构体级 `T: Serialize`
+  bound，查询终端可返回实体页稍后映射。
+- **`IPatchable<TPatch>`**（`persistence` 模块）：增量更新（patch）的框架无关词汇。实体为每种
+  patch 请求类型（`UpdateOrderRequest`、`CancelOrderRequest` 等）实现一次，`patch` 只覆盖
+  请求携带的字段，其余保持不变。rust-core 只声明契约，实体、DTO 与映射实现留在业务 crate，
+  不涉及任何 ORM 类型。
 - `rust-dix` 目录从 `crates/core` 迁到 `crates/dix`（package/lib 名不变）；`publish.sh` 先发布
   `rust-core` 再发布 DI crates。
 

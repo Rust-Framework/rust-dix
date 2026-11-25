@@ -24,7 +24,7 @@
 //! `(created_at DESC, id DESC)`); without a tie-breaker, rows with equal sort
 //! values can be skipped or repeated at page boundaries.
 //!
-//! `rust-webx` 3.0 only re-exports these types — it must not define a second
+//! `rust-webx` only re-exports these types — it must not define a second
 //! copy.
 
 use serde::{Deserialize, Serialize};

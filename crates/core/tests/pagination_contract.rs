@@ -104,6 +104,10 @@ fn paged_result_serializes_as_one_flat_operation_envelope() {
     // request it sent. The operation fields are the shared envelope.
     let object = value.as_object().expect("object");
     assert_eq!(object.len(), 5);
+    assert!(
+        !object.contains_key("operation"),
+        "the outcome is flattened, not nested"
+    );
     assert!(!object.contains_key("page"));
     assert!(!object.contains_key("page_size"));
     assert!(!object.contains_key("total_pages"));
@@ -114,13 +118,12 @@ fn paged_result_can_override_the_operation_outcome() {
     let page = PagedResult::new(vec![1, 2], 2)
         .with_status(1001)
         .with_message("already listed");
-    assert!(page.success());
-    assert_eq!(page.status(), 1001);
-    assert_eq!(page.message(), "already listed");
-    assert_eq!(page.operation().status, 1001);
+    assert!(page.success);
+    assert_eq!(page.status, 1001);
+    assert_eq!(page.message, "already listed");
 
     let failed = PagedResult::<u32>::failed(4004, "filter rejected");
-    assert!(!failed.success());
+    assert!(!failed.success);
     assert!(failed.items.is_empty());
     assert_eq!(failed.total, 0);
     let value = serde_json::to_value(&failed).expect("serialize");
@@ -139,7 +142,7 @@ fn paged_result_has_no_serialize_bound_on_entities() {
     let mapped = page.map_items(|entity| format!("row-{}", entity.id));
     assert_eq!(mapped.items, vec!["row-1".to_string(), "row-2".to_string()]);
     assert_eq!(mapped.total, 9, "map_items keeps the total");
-    assert!(mapped.success(), "map_items preserves the outcome");
+    assert!(mapped.success, "map_items preserves the outcome");
 
     let value = serde_json::to_value(&mapped).expect("serialize mapped page");
     assert_eq!(

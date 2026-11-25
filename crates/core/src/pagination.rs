@@ -2,7 +2,7 @@
 //!
 //! [`PagedRequest`] is the **request** side and [`PagedResult<T>`] the
 //! **response** side of classic page/offset pagination; both are framework
-//! contracts, not web types. `rust-webx` 3.0 only re-exports them — it must not
+//! contracts, not web types. `rust-webx` only re-exports them — it must not
 //! define a second copy.
 //!
 //! There is deliberately **no normalization state** in [`PagedRequest`]:
@@ -12,8 +12,6 @@
 //! defaults and limits.
 
 use serde::{Deserialize, Serialize};
-
-use crate::operation::OperationResult;
 
 /// Default 1-based page number (the binding layer applies it when the query
 /// parameter is absent).
@@ -63,18 +61,20 @@ impl PagedRequest {
     }
 }
 
-/// One offset-pagination page **and its business outcome**.
+/// One offset-pagination page **and its business outcome, flattened into one
+/// struct**.
 ///
-/// The operation envelope is the base: `PagedResult<T>` composes
-/// [`OperationResult<()>`] (Rust has no inheritance) and flattens it on the wire,
-/// so the JSON is one flat envelope:
+/// The outcome fields (`success`/`status`/`message`) are direct members of the
+/// page, not a nested [`OperationResult`](crate::operation::OperationResult):
+/// a page is not "an operation that happens to carry items", and composition
+/// would leak a second way to reach the same three values (`page.operation.status`
+/// vs `page.status`). The Rust shape and the wire shape are therefore identical:
 ///
 /// ```json
 /// {"success":true,"status":0,"message":"ok","items":[...],"total":120}
 /// ```
 ///
-/// The page keeps its own `{items, total}` shape inside that envelope, and the
-/// endpoint can override the operation fields with [`with_status`]/[`with_message`]:
+/// The endpoint can override the outcome with [`with_status`]/[`with_message`]:
 ///
 /// ```ignore
 /// let page = query.to_page(&req.paging).await?;          // success/0/"ok"
@@ -90,12 +90,19 @@ impl PagedRequest {
 /// The page part still carries no request echo: there is no `page`, `page_size`
 /// or `total_pages` member; a client computes `total_pages = ceil(total / page_size)`
 /// from the request it just sent.
+///
+/// [`with_status`]: PagedResult::with_status
+/// [`with_message`]: PagedResult::with_message
 #[derive(Debug, Clone, Serialize)]
 pub struct PagedResult<T> {
-    /// The shared operation outcome (`success`/`status`/`message`), flattened on
-    /// the wire.
-    #[serde(flatten)]
-    pub operation: OperationResult<()>,
+    /// Whether the operation achieved its goal.
+    pub success: bool,
+    /// Business status code, defined by the caller (the constructors use `0`
+    /// when no explicit code is given). It is not an HTTP status: the transport
+    /// layer never reads it.
+    pub status: i32,
+    /// Human-readable outcome for the caller (UI toast, CLI output, logs).
+    pub message: String,
     /// Rows of this page.
     pub items: Vec<T>,
     /// Total number of rows matching the filter, independent of paging.
@@ -106,7 +113,9 @@ impl<T> PagedResult<T> {
     /// A successful page with the default business status `0` and message `"ok"`.
     pub fn new(items: Vec<T>, total: u64) -> Self {
         Self {
-            operation: OperationResult::success("ok"),
+            success: true,
+            status: 0,
+            message: "ok".to_string(),
             items,
             total,
         }
@@ -115,7 +124,9 @@ impl<T> PagedResult<T> {
     /// A failed operation (no rows, total `0`); a failure is not a page.
     pub fn failed(status: i32, message: impl Into<String>) -> Self {
         Self {
-            operation: OperationResult::failed(status, message),
+            success: false,
+            status,
+            message: message.into(),
             items: Vec::new(),
             total: 0,
         }
@@ -123,34 +134,14 @@ impl<T> PagedResult<T> {
 
     /// Override the business status (the constructors use `0`).
     pub fn with_status(mut self, status: i32) -> Self {
-        self.operation = self.operation.with_status(status);
+        self.status = status;
         self
     }
 
     /// Override the client-facing message.
     pub fn with_message(mut self, message: impl Into<String>) -> Self {
-        self.operation = self.operation.with_message(message);
+        self.message = message.into();
         self
-    }
-
-    /// Whether the operation succeeded.
-    pub fn success(&self) -> bool {
-        self.operation.success
-    }
-
-    /// The business status code (never the HTTP status).
-    pub fn status(&self) -> i32 {
-        self.operation.status
-    }
-
-    /// The client-facing message.
-    pub fn message(&self) -> &str {
-        &self.operation.message
-    }
-
-    /// The composed operation envelope (for generic envelope handling).
-    pub fn operation(&self) -> &OperationResult<()> {
-        &self.operation
     }
 
     /// Map the page rows to another response type, keeping `total` and the
@@ -160,7 +151,9 @@ impl<T> PagedResult<T> {
     /// `Serialize`, only the mapped page does.
     pub fn map_items<U>(self, map: impl FnMut(T) -> U) -> PagedResult<U> {
         PagedResult {
-            operation: self.operation,
+            success: self.success,
+            status: self.status,
+            message: self.message,
             items: self.items.into_iter().map(map).collect(),
             total: self.total,
         }

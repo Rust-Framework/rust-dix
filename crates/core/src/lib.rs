@@ -9,7 +9,8 @@
 //!   ([`error_codes::ERROR_CODES`]);
 //! * pagination contracts: [`PagedRequest`] / [`PagedResult`] (offset) and
 //!   [`KeysetRequest`] / [`Cursor`] / [`CursorPage`] / [`CursorError`] (keyset);
-//! * the business result envelope [`OperationResult`].
+//! * the business result envelope [`OperationResult`];
+//! * the persistence vocabulary [`IPatchable`] (incremental entity updates).
 //!
 //! It deliberately contains no web, ORM or DI vocabulary: `rust-webx`,
 //! `rust-ef` and `rust-dix` keep their own diagnostic types and convert into
@@ -17,7 +18,7 @@
 //! `framework → rust-core` one-way and lets the frameworks version
 //! independently.
 //!
-//! `rust-webx` 3.0 only **re-exports** these contract types (keeping the
+//! `rust-webx` only **re-exports** these contract types (keeping the
 //! `webx_core::pagination` / `webx_core::keyset` / `webx_core::operation` paths
 //! usable); it must not define a second copy. `rust-ef` consumes
 //! [`PagedRequest`]/[`PagedResult`] directly for its `to_page` terminal, which is
@@ -56,6 +57,7 @@ pub mod error_codes;
 pub mod keyset;
 pub mod operation;
 pub mod pagination;
+pub mod persistence;
 
 pub use error::{AppError, ErrorKind, FieldProblem, Result};
 pub use error_codes::{
@@ -64,3 +66,4 @@ pub use error_codes::{
 pub use keyset::{Cursor, CursorError, CursorPage, KeysetRequest, MAX_CURSOR_BYTES};
 pub use operation::OperationResult;
 pub use pagination::{PagedRequest, PagedResult, DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE};
+pub use persistence::IPatchable;

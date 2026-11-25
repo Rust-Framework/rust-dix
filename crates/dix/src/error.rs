@@ -139,7 +139,7 @@ impl RdiError {
 /// the full container message as the operator-only detail.
 ///
 /// This lets `?` work in any function returning `rust_core::Result<T>` (or the
-/// 3.0 `webx::Error` alias) without a local `map_di_error` helper.
+/// 2.9.1 `webx::Error` alias) without a local `map_di_error` helper.
 impl From<RdiError> for rust_core::AppError {
     fn from(error: RdiError) -> Self {
         rust_core::AppError::di(error.to_string())

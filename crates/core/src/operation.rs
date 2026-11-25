@@ -24,7 +24,7 @@
 //! `{"success":true,"status":0,"message":"ok"}`; `OperationResult<T>` adds the
 //! `result` member.
 //!
-//! `rust-webx` 3.0 only re-exports this type — it must not define a second copy.
+//! `rust-webx` only re-exports this type — it must not define a second copy.
 //!
 //! The outcome is often decided while the operation runs, so the envelope can be
 //! adjusted after it is created — fields are public and [`with_status`] /
