@@ -21,6 +21,18 @@ Microsoft.Extensions.DependencyInjection (MEDI)。它提供了带有构造函数
 
 **[在线文档](https://rust-framework.github.io/rust-dix/)** —— 完整开发者手册（mdBook，中文），由 `docs/rust-dix/` 构建。
 
+> **如果你来自 .NET，怀念 `IServiceCollection` / `IServiceProvider`、作用域生命周期和构造函数注入，那么 rust-dix 就是为 Rust 重写的同一套模型。**
+
+### 适合谁
+
+- **从 .NET 迁到 Rust 的团队。** MEDI 的词汇可以一一对应：`ServiceCollection` → `ServiceCollection`，`AddSingleton`/`AddScoped`/`AddTransient` → `singleton`/`scoped`/`transient`（或 `#[inject(singleton)]`），`BuildServiceProvider` → `build()`，`CreateScope` → `provider.scope()`，`GetService<T>` → `get::<T>()` / `get_owned::<T>()`。
+- **需要真实生命周期、而不是一个全局 `Arc` 注册表的应用。** 单例、按请求作用域、瞬态三种生命周期；从根容器解析作用域服务会得到类型化的 `ScopedFromRootProvider` 错误，而不是一条被悄悄共享的连接。
+- **框架作者。** rust-dix 是 `rust-webx`（Handler、端点适配器）与 `rust-ef`（`DbContext` 解析）背后的 DI 内核。
+
+### 和谁比
+
+大多数 Rust 代码靠手写完成依赖注入：`Arc<T>` 字段、`OnceCell` 全局变量，或者一个贯穿所有 Handler 的 `AppState` 结构体。这在你需要作用域生命周期、类型化 key、按测试替换实现，或者要求「单例绝不能捕获作用域依赖」之前都没问题。rust-dix 提供 MEDI 的容器模型——类型化解析、`build()` 返回错误而不是 panic、作用域、键控服务、零 `unsafe`——且不需要运行期反射层。
+
 ## Crate 总览
 
 | Crate | 作用 | 适用人群 |

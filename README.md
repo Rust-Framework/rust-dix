@@ -23,6 +23,18 @@ compile-time validation — all with zero `unsafe` code.
 **[Online documentation](https://rust-framework.github.io/rust-dix/)** — the full
 developer handbook (mdBook, Chinese), built from `docs/rust-dix/`.
 
+> **If you come from .NET and miss `IServiceCollection` / `IServiceProvider`, scoped lifetimes and constructor injection, rust-dix is that model rewritten for Rust.**
+
+### Who it is for
+
+- **.NET teams moving to Rust.** The MEDI vocabulary maps directly: `ServiceCollection` → `ServiceCollection`, `AddSingleton`/`AddScoped`/`AddTransient` → `singleton`/`scoped`/`transient` (or `#[inject(singleton)]`), `BuildServiceProvider` → `build()`, `CreateScope` → `provider.scope()`, `GetService<T>` → `get::<T>()` / `get_owned::<T>()`.
+- **Applications that need real lifetimes, not a global `Arc` registry.** Singletons, per-request scopes and transients, where resolving a scoped service from the root provider is a typed `ScopedFromRootProvider` error instead of a silently shared connection.
+- **Framework authors.** rust-dix is the DI core behind `rust-webx` (handlers, endpoint adapters) and behind `DbContext` resolution in `rust-ef`.
+
+### How it compares
+
+Most Rust code does DI by hand: `Arc<T>` fields, `OnceCell` globals, or an `AppState` struct threaded through every handler. That works until you need scoped lifetimes, typed keys, per-test fakes, or a guarantee that a singleton never captured a scoped dependency. rust-dix gives you the MEDI container model — typed resolution, `build()` that returns an error instead of panicking, scopes, keyed services, zero `unsafe` — without a runtime reflection layer.
+
 ## Crate overview
 
 | Crate | What it does | Who needs it |
